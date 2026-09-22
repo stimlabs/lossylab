@@ -58,6 +58,8 @@ namespace lossylab::json
     static_assert(Writable<Capabilities>);
     static_assert(Writable<StreamInfo>);
     static_assert(Writable<ProbeResult>);
+    static_assert(Writable<TileGrid>);
+    static_assert(Writable<JpegInfo>);
     static_assert(Writable<ParameterSet>);
     static_assert(Writable<SliceInfo>);
     static_assert(Writable<HeaderInfo>);

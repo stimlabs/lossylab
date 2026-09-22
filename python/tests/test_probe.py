@@ -130,6 +130,42 @@ def test_a_single_avif_reports_its_alpha_plane_as_an_additional_image():
     assert result.streams[1].metadata["title"] == "Alpha"
 
 
+def jpeg_of(name):
+    return lossylab.probe(lossylab.Source.from_path(str(DATA_DIR / name))).primary_video_stream().jpeg
+
+
+@pytest.mark.parametrize(
+    ("fixture", "quality", "huffman", "process"),
+    [
+        ("testsrc_64x48_q75.jpg", 75, "standard", "baseline"),
+        ("testsrc_64x48_q90_optimized_444.jpg", 90, "custom", "baseline"),
+        ("testsrc_64x48_q85_progressive.jpg", 85, "custom", "progressive"),
+        ("testsrc_64x48_q50_gray.jpg", 50, "standard", "baseline"),
+    ],
+)
+def test_pillow_jpegs_report_their_libjpeg_quality(fixture, quality, huffman, process):
+    info = jpeg_of(fixture)
+    assert info.ijg_quality == quality
+    assert info.ijg_quality_exact is True
+    assert info.huffman_tables == huffman
+    assert info.process == process
+    assert info.has_end_of_image is True
+
+
+def test_jpeg_tables_segments_and_comment_are_exposed():
+    info = jpeg_of("testsrc_64x48_q90_optimized_444.jpg")
+    assert len(info.quantization_tables[0].values) == 64
+    assert info.segments[0].identifier == "JFIF"
+    assert info.comment == "lossylab test fixture"
+    assert info.to_dict()["ijg_quality"] == 90
+
+
+def test_an_ffmpeg_written_jpeg_is_not_a_libjpeg_match():
+    info = jpeg_of("testsrc_64x48.jpg")
+    assert info.comment.startswith("Lavc")
+    assert info.ijg_quality_exact is False
+
+
 def test_to_dict_round_trips_through_json():
     source = lossylab.Source.from_path(str(DATA_DIR / "testsrc_64x48.png"))
     document = lossylab.probe(source).to_dict()

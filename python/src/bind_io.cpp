@@ -6,6 +6,7 @@
 #include "lossylab/io/read_headers.hpp"
 #include "lossylab/io/source.hpp"
 
+#include <nanobind/stl/array.h>
 #include <nanobind/stl/map.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
@@ -58,6 +59,37 @@ namespace lossylab::pybind
             .def_ro("canvas_height", &ImageContainerInfo::canvas_height)
             .def("to_dict", [](const ImageContainerInfo& self) { return to_python(self.to_json()); });
 
+        auto jpeg_info = nb::class_<JpegInfo>(m, "JpegInfo");
+        nb::class_<JpegInfo::Component>(jpeg_info, "Component")
+            .def_ro("id", &JpegInfo::Component::id)
+            .def_ro("horizontal_sampling", &JpegInfo::Component::horizontal_sampling)
+            .def_ro("vertical_sampling", &JpegInfo::Component::vertical_sampling)
+            .def_ro("quantization_table", &JpegInfo::Component::quantization_table);
+        nb::class_<JpegInfo::QuantizationTable>(jpeg_info, "QuantizationTable")
+            .def_ro("id", &JpegInfo::QuantizationTable::id)
+            .def_ro("precision", &JpegInfo::QuantizationTable::precision)
+            .def_ro("values", &JpegInfo::QuantizationTable::values);
+        nb::class_<JpegInfo::Segment>(jpeg_info, "Segment")
+            .def_ro("marker", &JpegInfo::Segment::marker)
+            .def_ro("identifier", &JpegInfo::Segment::identifier)
+            .def_ro("size_bytes", &JpegInfo::Segment::size_bytes);
+        jpeg_info.def_ro("process", &JpegInfo::process)
+            .def_ro("arithmetic_coding", &JpegInfo::arithmetic_coding)
+            .def_ro("precision", &JpegInfo::precision)
+            .def_ro("components", &JpegInfo::components)
+            .def_ro("quantization_tables", &JpegInfo::quantization_tables)
+            .def_ro("ijg_quality", &JpegInfo::ijg_quality)
+            .def_ro("ijg_quality_exact", &JpegInfo::ijg_quality_exact)
+            .def_ro("huffman_tables", &JpegInfo::huffman_tables)
+            .def_ro("restart_interval", &JpegInfo::restart_interval)
+            .def_ro("scan_count", &JpegInfo::scan_count)
+            .def_ro("segments", &JpegInfo::segments)
+            .def_ro("comment", &JpegInfo::comment)
+            .def_ro("adobe_transform", &JpegInfo::adobe_transform)
+            .def_ro("has_end_of_image", &JpegInfo::has_end_of_image)
+            .def_ro("trailing_bytes", &JpegInfo::trailing_bytes)
+            .def("to_dict", [](const JpegInfo& self) { return to_python(self.to_json()); });
+
         nb::class_<StreamInfo>(m, "StreamInfo")
             .def_ro("index", &StreamInfo::index)
             .def_ro("type", &StreamInfo::type)
@@ -83,6 +115,7 @@ namespace lossylab::pybind
             .def_ro("metadata", &StreamInfo::metadata)
             .def_ro("has_hdr_metadata", &StreamInfo::has_hdr_metadata)
             .def_ro("image_container", &StreamInfo::image_container)
+            .def_ro("jpeg", &StreamInfo::jpeg)
             .def_ro("is_default", &StreamInfo::is_default)
             .def_ro("is_dependent", &StreamInfo::is_dependent)
             .def("to_dict", [](const StreamInfo& self) { return to_python(self.to_json()); });

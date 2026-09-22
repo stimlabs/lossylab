@@ -6,6 +6,7 @@
 #include "lossylab/detail/ff_error.hpp"
 #include "lossylab/io/image_container.hpp"
 #include "lossylab/io/input_context.hpp"
+#include "lossylab/io/jpeg_markers.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -336,6 +337,56 @@ namespace lossylab
         });
     }
 
+    json::Value JpegInfo::to_json() const
+    {
+        json::Array component_values;
+        for (const Component& component : components)
+        {
+            component_values.push_back(json::object({
+                {"id", component.id},
+                {"horizontal_sampling", component.horizontal_sampling},
+                {"vertical_sampling", component.vertical_sampling},
+                {"quantization_table", component.quantization_table},
+            }));
+        }
+        json::Array table_values;
+        for (const QuantizationTable& table : quantization_tables)
+        {
+            json::Array values(table.values.begin(), table.values.end());
+            table_values.push_back(json::object({
+                {"id", table.id},
+                {"precision", table.precision},
+                {"values", json::array(std::move(values))},
+            }));
+        }
+        json::Array segment_values;
+        for (const Segment& segment : segments)
+        {
+            segment_values.push_back(json::object({
+                {"marker", segment.marker},
+                {"identifier", segment.identifier},
+                {"size_bytes", segment.size_bytes},
+            }));
+        }
+        return json::object({
+            {"process", process},
+            {"arithmetic_coding", arithmetic_coding},
+            {"precision", precision},
+            {"components", json::array(std::move(component_values))},
+            {"quantization_tables", json::array(std::move(table_values))},
+            {"ijg_quality", json::optional_or_null(ijg_quality)},
+            {"ijg_quality_exact", ijg_quality_exact},
+            {"huffman_tables", huffman_tables},
+            {"restart_interval", restart_interval},
+            {"scan_count", scan_count},
+            {"segments", json::array(std::move(segment_values))},
+            {"comment", json::optional_or_null(comment)},
+            {"adobe_transform", json::optional_or_null(adobe_transform)},
+            {"has_end_of_image", has_end_of_image},
+            {"trailing_bytes", trailing_bytes},
+        });
+    }
+
     json::Value TileGrid::to_json() const
     {
         json::Array tile_values;
@@ -383,6 +434,7 @@ namespace lossylab
             {"is_default", is_default},
             {"is_dependent", is_dependent},
             {"image_container", json::optional_or_null(image_container)},
+            {"jpeg", json::optional_or_null(jpeg)},
             {"metadata", json::to_object(metadata)},
         });
     }
@@ -552,6 +604,12 @@ namespace lossylab
             if (stream.type == "video")
             {
                 fill_image_container(result, source, stream);
+            }
+            // A JPEG file is one stream; motion JPEG inside a video container
+            // does not start with a JPEG marker and is left alone.
+            if (stream.codec_name == "mjpeg" && result.streams.size() == 1)
+            {
+                stream.jpeg = detail::read_jpeg_markers(source);
             }
         }
 

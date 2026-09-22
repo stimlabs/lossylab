@@ -64,6 +64,8 @@ add_library(lossylab STATIC
         src/lossylab/io/input_context.cpp
         src/lossylab/io/probe.cpp
         src/lossylab/io/image_container.cpp
+        src/lossylab/io/jpeg_markers.cpp
+        src/lossylab/io/source_reader.cpp
         src/lossylab/io/decode_image.cpp
         src/lossylab/io/file_result.cpp
         src/lossylab/io/read_headers.cpp

@@ -3,6 +3,8 @@
 #include "lossylab/io/decode_image.hpp"
 #include "lossylab/io/probe.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cassert>
 #include <cstdio>
 #include <optional>
@@ -365,6 +367,152 @@ namespace
         }
     }
 
+    // JPEG fixtures written by Pillow 12.3 (libjpeg-turbo) from the 64x48
+    // testsrc frame; the name says quality and options. The older
+    // testsrc_64x48.jpg was written by FFmpeg's own JPEG encoder.
+    JpegInfo jpeg_info(const Source& source)
+    {
+        const ProbeResult result = probe(source);
+        const StreamInfo* stream = result.primary_video_stream();
+        assert(stream != nullptr);
+        assert(stream->jpeg.has_value());
+        return *stream->jpeg;
+    }
+
+    JpegInfo jpeg_info(const char* fixture)
+    {
+        return jpeg_info(Source::from_path(data_path(fixture)));
+    }
+
+    void test_a_libjpeg_baseline_jpeg_is_recognized_with_its_quality()
+    {
+        const JpegInfo info = jpeg_info("testsrc_64x48_q75.jpg");
+        assert(info.process == "baseline");
+        assert(!info.arithmetic_coding);
+        assert(info.precision == 8);
+        assert(info.ijg_quality == 75);
+        assert(info.ijg_quality_exact);
+        assert(info.huffman_tables == "standard");
+        assert(info.scan_count == 1);
+        assert(info.restart_interval == 0);
+
+        // 4:2:0: the luma component samples twice as densely both ways.
+        assert(info.components.size() == std::size_t{3});
+        assert(info.components[0].horizontal_sampling == 2 && info.components[0].vertical_sampling == 2);
+        assert(info.components[1].horizontal_sampling == 1 && info.components[1].vertical_sampling == 1);
+        assert(info.components[0].quantization_table == 0);
+        assert(info.components[1].quantization_table == 1);
+
+        // Quality 75 scales the standard tables by half: 16 -> 8, 99 -> 50.
+        assert(info.quantization_tables.size() == std::size_t{2});
+        assert(info.quantization_tables[0].values[0] == 8);
+        assert(info.quantization_tables[0].values[63] == 50);
+
+        assert(info.segments.size() == std::size_t{1});
+        assert(info.segments[0].marker == "APP0");
+        assert(info.segments[0].identifier == "JFIF");
+        assert(!info.comment.has_value());
+        assert(info.has_end_of_image);
+        assert(info.trailing_bytes == 0);
+    }
+
+    void test_optimized_huffman_tables_are_custom()
+    {
+        const JpegInfo info = jpeg_info("testsrc_64x48_q90_optimized_444.jpg");
+        assert(info.ijg_quality == 90);
+        assert(info.ijg_quality_exact);
+        assert(info.huffman_tables == "custom");
+        for (const JpegInfo::Component& component : info.components)
+        {
+            assert(component.horizontal_sampling == 1 && component.vertical_sampling == 1);
+        }
+        assert(info.comment == "lossylab test fixture");
+    }
+
+    void test_a_progressive_jpeg_reports_its_scans()
+    {
+        const JpegInfo info = jpeg_info("testsrc_64x48_q85_progressive.jpg");
+        assert(info.process == "progressive");
+        assert(info.scan_count > 1);
+        assert(info.huffman_tables == "custom");
+        assert(info.ijg_quality == 85);
+        assert(info.ijg_quality_exact);
+    }
+
+    void test_a_grayscale_jpeg_uses_one_table()
+    {
+        const JpegInfo info = jpeg_info("testsrc_64x48_q50_gray.jpg");
+        assert(info.components.size() == std::size_t{1});
+        assert(info.ijg_quality == 50);
+        assert(info.ijg_quality_exact);
+        assert(info.huffman_tables == "standard");
+    }
+
+    void test_a_cmyk_jpeg_reports_its_adobe_transform()
+    {
+        const JpegInfo info = jpeg_info("testsrc_64x48_q80_cmyk.jpg");
+        assert(info.components.size() == std::size_t{4});
+        assert(info.adobe_transform == 0);
+        assert(std::any_of(info.segments.begin(), info.segments.end(),
+                           [](const JpegInfo::Segment& segment)
+                           { return segment.marker == "APP14" && segment.identifier.starts_with("Adobe"); }));
+        assert(info.ijg_quality == 80);
+    }
+
+    void test_another_encoders_tables_are_not_an_exact_libjpeg_match()
+    {
+        const JpegInfo info = jpeg_info(jpeg_fixture);
+        assert(info.comment.has_value() && info.comment->starts_with("Lavc"));
+        assert(info.ijg_quality.has_value());
+        assert(!info.ijg_quality_exact);
+    }
+
+    void test_a_truncated_jpeg_has_no_end_of_image()
+    {
+        std::vector<std::uint8_t> bytes = read_file(data_path("testsrc_64x48_q75.jpg"));
+        bytes.resize(bytes.size() - 10);
+        const JpegInfo info = jpeg_info(Source::from_bytes(std::move(bytes)));
+        assert(!info.has_end_of_image);
+        assert(info.ijg_quality == 75);
+    }
+
+    void test_bytes_after_the_end_of_image_are_counted()
+    {
+        std::vector<std::uint8_t> bytes = read_file(data_path("testsrc_64x48_q75.jpg"));
+        bytes.insert(bytes.end(), 100, 0xab);
+        const JpegInfo info = jpeg_info(Source::from_bytes(std::move(bytes)));
+        assert(info.has_end_of_image);
+        assert(info.trailing_bytes == 100);
+    }
+
+    void test_a_damaged_segment_length_stops_the_walk_without_failing()
+    {
+        // The DQT segment's length is overwritten with one that runs past the
+        // end of the file.
+        std::vector<std::uint8_t> bytes = read_file(data_path("testsrc_64x48_q75.jpg"));
+        const std::array<std::uint8_t, 2> dqt_marker = {0xff, 0xdb};
+        const auto dqt = std::search(bytes.begin(), bytes.end(), dqt_marker.begin(), dqt_marker.end());
+        assert(dqt != bytes.end());
+        dqt[2] = 0xff;
+        dqt[3] = 0xff;
+        const JpegInfo info = jpeg_info(Source::from_bytes(std::move(bytes)));
+        assert(!info.has_end_of_image);
+    }
+
+    void test_jpeg_markers_from_memory_match_path()
+    {
+        const JpegInfo from_path = jpeg_info("testsrc_64x48_q85_progressive.jpg");
+        const JpegInfo from_memory =
+            jpeg_info(Source::from_bytes(read_file(data_path("testsrc_64x48_q85_progressive.jpg"))));
+        assert(from_path.to_json() == from_memory.to_json());
+    }
+
+    void test_non_jpeg_streams_have_no_jpeg_info()
+    {
+        assert(!probe(Source::from_path(data_path(png_fixture))).primary_video_stream()->jpeg.has_value());
+        assert(!probe(Source::from_path(data_path(video_fixture))).primary_video_stream()->jpeg.has_value());
+    }
+
     void test_an_mp4_reports_its_brands_and_encoder()
     {
         const ProbeResult result = probe(Source::from_path(data_path(video_fixture)));
@@ -598,6 +746,17 @@ int main()
     test_an_animation_mixing_lossy_and_lossless_frames_is_mixed();
     test_deeply_nested_animation_frames_are_not_walked_into();
     test_webp_container_info_from_memory_matches_path();
+    test_a_libjpeg_baseline_jpeg_is_recognized_with_its_quality();
+    test_optimized_huffman_tables_are_custom();
+    test_a_progressive_jpeg_reports_its_scans();
+    test_a_grayscale_jpeg_uses_one_table();
+    test_a_cmyk_jpeg_reports_its_adobe_transform();
+    test_another_encoders_tables_are_not_an_exact_libjpeg_match();
+    test_a_truncated_jpeg_has_no_end_of_image();
+    test_bytes_after_the_end_of_image_are_counted();
+    test_a_damaged_segment_length_stops_the_walk_without_failing();
+    test_jpeg_markers_from_memory_match_path();
+    test_non_jpeg_streams_have_no_jpeg_info();
     test_a_grid_image_reports_its_tile_grid();
     test_a_grid_image_has_no_primary_stream();
     test_an_alpha_grid_is_an_additional_image();

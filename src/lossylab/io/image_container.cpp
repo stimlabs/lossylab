@@ -1,13 +1,8 @@
 #include "lossylab/io/image_container.hpp"
 
-#include "lossylab/core/error.hpp"
-#include "lossylab/detail/ff_error.hpp"
-#include "lossylab/detail/ff_ptr.hpp"
+#include "lossylab/io/source_reader.hpp"
 
-#include <algorithm>
 #include <cstring>
-#include <memory>
-#include <span>
 #include <string_view>
 #include <vector>
 
@@ -15,64 +10,6 @@ namespace lossylab::detail
 {
     namespace
     {
-        struct OpenedIoContextDeleter
-        {
-            void operator()(AVIOContext* pointer) const noexcept { avio_closep(&pointer); }
-        };
-
-        /// Reads a Source's bytes at arbitrary offsets without a demuxer: from
-        /// the buffer for a memory source, through FFmpeg's I/O layer for a
-        /// path, so URLs work wherever probe() accepts them.
-        class SourceReader
-        {
-        public:
-            explicit SourceReader(const Source& source)
-            {
-                if (!source.is_path())
-                {
-                    m_bytes = source.bytes();
-                    return;
-                }
-
-                AVIOContext* opened = nullptr;
-                const int status = avio_open2(&opened, source.path().c_str(), AVIO_FLAG_READ, nullptr, nullptr);
-                if (status < 0)
-                {
-                    throw FFmpegError(status, "avio_open2", averror_string(status) + " opening " + source.describe());
-                }
-                m_io.reset(opened);
-            }
-
-            /// Up to `count` bytes starting at `offset`; fewer at the end of the
-            /// input.
-            std::vector<std::uint8_t> read(const std::int64_t offset, const std::size_t count)
-            {
-                if (!m_io)
-                {
-                    if (offset < 0 || static_cast<std::size_t>(offset) >= m_bytes.size())
-                    {
-                        return {};
-                    }
-                    const std::size_t available = std::min(count, m_bytes.size() - static_cast<std::size_t>(offset));
-                    const auto begin = m_bytes.begin() + offset;
-                    return {begin, begin + static_cast<std::ptrdiff_t>(available)};
-                }
-
-                if (avio_seek(m_io.get(), offset, SEEK_SET) < 0)
-                {
-                    return {};
-                }
-                std::vector<std::uint8_t> bytes(count);
-                const int read = avio_read(m_io.get(), bytes.data(), static_cast<int>(count));
-                bytes.resize(read > 0 ? static_cast<std::size_t>(read) : 0);
-                return bytes;
-            }
-
-        private:
-            std::span<const std::uint8_t> m_bytes;
-            std::unique_ptr<AVIOContext, OpenedIoContextDeleter> m_io;
-        };
-
         std::uint32_t little_endian_24(const std::uint8_t* bytes)
         {
             return static_cast<std::uint32_t>(bytes[0]) | (static_cast<std::uint32_t>(bytes[1]) << 8) |

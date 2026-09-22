@@ -6,6 +6,7 @@
 #include "lossylab/core/rational.hpp"
 #include "lossylab/io/source.hpp"
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -50,6 +51,103 @@ namespace lossylab
         /// sequence. Unset for WebP, where "still" isn't the complementary
         /// term to "animated" in the same way.
         std::optional<bool> is_still_image;
+
+        [[nodiscard]] json::Value to_json() const;
+    };
+
+    /// What a JPEG file's markers declare: how it was coded and with which
+    /// tables. FFmpeg decodes JPEG without reporting any of it, and it is most
+    /// of what a JPEG says about the encoder that wrote it and how hard that
+    /// encoder compressed.
+    struct JpegInfo
+    {
+        /// From the start-of-frame marker: "baseline", "extended",
+        /// "progressive", "lossless", or "hierarchical".
+        std::string process;
+        bool arithmetic_coding = false;
+
+        /// Sample precision in bits: 8, or 12 for extended JPEG.
+        int precision = 8;
+
+        struct Component
+        {
+            int id = 0;
+            int horizontal_sampling = 1;
+            int vertical_sampling = 1;
+            int quantization_table = 0;
+        };
+        std::vector<Component> components;
+
+        struct QuantizationTable
+        {
+            int id = 0;
+
+            /// 8, or 16 for tables stored with 16-bit entries.
+            int precision = 8;
+
+            /// In natural (row-major) order, not the file's zigzag order.
+            std::array<int, 64> values{};
+        };
+
+        /// Every table the file defines, in file order. A later table with
+        /// an id already seen replaces it for the scans that follow.
+        std::vector<QuantizationTable> quantization_tables;
+
+        /// The libjpeg quality setting (1-100) whose scaled standard tables
+        /// come closest to this file's: table 0 against the luminance
+        /// table, table 1 against the chrominance table.
+        std::optional<int> ijg_quality;
+
+        /// True when the tables are exactly libjpeg's at `ijg_quality`, as
+        /// written by libjpeg, libjpeg-turbo and everything built on them
+        /// (Pillow, OpenCV, most web tools). False means another encoder's
+        /// tables, for which `ijg_quality` is only the nearest equivalent.
+        bool ijg_quality_exact = false;
+
+        /// "standard" when every Huffman table is one of the JPEG standard's
+        /// example tables, which libjpeg writes unless asked to optimize;
+        /// "custom" when none is, as with optimized or progressive output;
+        /// "mixed"; or "none" when the file defines none.
+        std::string huffman_tables;
+
+        /// MCUs between restart markers; 0 when there are none.
+        int restart_interval = 0;
+
+        /// 1 for a sequential JPEG. A progressive JPEG's count follows its
+        /// encoder's progression script.
+        int scan_count = 0;
+
+        /// An APPn or COM segment, in file order.
+        struct Segment
+        {
+            /// "APP0" to "APP15", or "COM".
+            std::string marker;
+
+            /// The signature an APPn payload starts with, e.g. "JFIF",
+            /// "Exif", "ICC_PROFILE", "Adobe", "Photoshop 3.0"; empty when
+            /// there is none.
+            std::string identifier;
+
+            std::int64_t size_bytes = 0;
+        };
+        std::vector<Segment> segments;
+
+        /// The first COM segment's text. Encoders often sign here, e.g.
+        /// "Lavc62.11.100", or gd's "CREATOR: gd-jpeg v1.0 (using IJG JPEG
+        /// v80), quality = 90".
+        std::optional<std::string> comment;
+
+        /// The Adobe APP14 segment's color transform: 0 for none (RGB or
+        /// CMYK), 1 for YCbCr, 2 for YCCK.
+        std::optional<int> adobe_transform;
+
+        /// False when the file ends before its end-of-image marker, as an
+        /// interrupted download or upload leaves it.
+        bool has_end_of_image = false;
+
+        /// Bytes after the end-of-image marker, where some cameras and apps
+        /// append data of their own.
+        std::int64_t trailing_bytes = 0;
 
         [[nodiscard]] json::Value to_json() const;
     };
@@ -127,6 +225,10 @@ namespace lossylab
         /// format, and for these formats when the build's demuxer did not
         /// expose enough to fill it in.
         std::optional<ImageContainerInfo> image_container;
+
+        /// For a JPEG file, what its markers declare. Empty for every other
+        /// format, including motion JPEG inside a video container.
+        std::optional<JpegInfo> jpeg;
 
         [[nodiscard]] json::Value to_json() const;
     };
