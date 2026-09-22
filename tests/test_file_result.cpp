@@ -1,7 +1,7 @@
 #include "lossylab/core/error.hpp"
 #include "lossylab/io/file_result.hpp"
 #include "lossylab/io/probe.hpp"
-#include "lossylab/io/read_headers.hpp"
+#include "lossylab/resample/resize.hpp"
 
 #include <cassert>
 #include <cstdint>
@@ -71,7 +71,9 @@ namespace
     void test_an_unimplemented_operation_becomes_a_not_implemented_error()
     {
         const Source source = Source::from_path(data_path(video_fixture));
-        const FileResult<HeaderInfo> result = capture("read_headers", source, [&] { return read_headers(source); });
+        const Frame frame =
+            Frame::allocate(64, 48, PixelFormat::from_name("yuv420p"), ColorSpec::bt709_limited());
+        const FileResult<ResizeResult> result = capture("resize", source, [&] { return resize(frame, 32, 24); });
         assert(!result.ok());
         assert(result.error().kind == FileErrorKind::NotImplemented);
         assert(!result.error().details.at("symbol").get<std::string>().empty());

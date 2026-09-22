@@ -50,10 +50,12 @@ namespace lossylab
     /// during color conversion. Those are precisely the silent changes this
     /// library exists to make visible.
     ///
-    /// Passing an empty handler restores FFmpeg's default, which writes to
-    /// stderr. This installs a process-global callback, so it affects every
-    /// user of FFmpeg in the process; call it once, from the main thread,
-    /// before any work starts.
+    /// Passing an empty handler restores FFmpeg's default output, which
+    /// writes to stderr. This installs a process-global callback, so it
+    /// affects every user of FFmpeg in the process; call it once, from the
+    /// main thread, before any work starts. `read_headers()` installs the same
+    /// callback, since it reads FFmpeg's bitstream trace through it; lines it
+    /// captures that way never reach the handler.
     void set_log_handler(LogHandler handler, LogLevel level = LogLevel::Info);
 
     /// Silences FFmpeg entirely. Equivalent to setting the level to Quiet.

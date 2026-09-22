@@ -1,9 +1,11 @@
 #include "lossylab/env/log.hpp"
 
 #include "lossylab/core/error.hpp"
+#include "lossylab/detail/log_capture.hpp"
 
 #include <array>
 #include <mutex>
+#include <utility>
 #include <vector>
 
 extern "C" {
@@ -61,8 +63,17 @@ namespace lossylab
             return state;
         }
 
+        /// The capture most recently opened on this thread; each one links to
+        /// the one it shadows.
+        thread_local detail::ScopedLogCapture* active_capture = nullptr;
+
         void log_callback(void* avcl, const int level, const char* fmt, va_list args)
         {
+            if (detail::dispatch_to_capture(avcl, level, fmt, args))
+            {
+                return;
+            }
+
             HandlerState& state = handler_state();
 
             // Copied under the lock and invoked outside it: a handler that
@@ -74,6 +85,7 @@ namespace lossylab
             }
             if (!handler)
             {
+                av_log_default_callback(avcl, level, fmt, args);
                 return;
             }
 
@@ -116,6 +128,41 @@ namespace lossylab
             }
 
             handler(message);
+        }
+
+        /// Reinstalled on every call rather than once, in case another
+        /// component in the process replaced it since.
+        void install_log_callback()
+        {
+            av_log_set_callback(log_callback);
+        }
+    }
+
+    namespace detail
+    {
+        ScopedLogCapture::ScopedLogCapture(const void* context, LogSink sink)
+            : m_context(context), m_sink(std::move(sink)), m_previous(active_capture)
+        {
+            install_log_callback();
+            active_capture = this;
+        }
+
+        ScopedLogCapture::~ScopedLogCapture()
+        {
+            active_capture = m_previous;
+        }
+
+        bool dispatch_to_capture(const void* context, const int level, const char* format, va_list args)
+        {
+            for (const ScopedLogCapture* capture = active_capture; capture != nullptr;
+                 capture = capture->m_previous)
+            {
+                if (capture->m_context == context)
+                {
+                    return capture->m_sink(level, format, args);
+                }
+            }
+            return false;
         }
     }
 
@@ -160,10 +207,9 @@ namespace lossylab
 
         av_log_set_level(to_av_level(level));
 
-        // Restoring FFmpeg's default when the handler is cleared keeps this
-        // from silently swallowing diagnostics.
-        const std::lock_guard<std::mutex> lock(state.mutex);
-        av_log_set_callback(state.handler ? log_callback : av_log_default_callback);
+        // Stays installed with no handler, forwarding to FFmpeg's default,
+        // so a capture on another thread keeps receiving its calls.
+        install_log_callback();
     }
 
     void mute_log()

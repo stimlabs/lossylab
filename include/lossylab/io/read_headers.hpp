@@ -26,17 +26,19 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
     };
 
-    /// Per-slice or per-frame quantization, as coded.
+    /// Per-slice quantization, as coded.
     struct SliceInfo
     {
         int index = 0;
 
-        /// "I", "P", "B".
+        /// "I", "P", "B", or H.264's "SP" and "SI".
         std::string slice_type;
 
-        /// The quantizer the slice header carries, before any per-block delta.
+        /// The quantizer the slice header carries, before any per-block delta:
+        /// the QP for H.264 and HEVC, the quantiser_scale_code for MPEG-2.
         std::optional<int> qp;
 
+        /// Coded size, when the slice is the only one in its packet.
         std::optional<std::int64_t> size_bytes;
 
         [[nodiscard]] json::Value to_json() const;
@@ -72,12 +74,14 @@ namespace lossylab
         /// Parsed out of the settings string above, when it could be parsed.
         std::map<std::string, std::string> encoder_settings;
 
-        /// AV1 and VP9 carry a quantizer index rather than a QP.
+        /// AV1 and VP9 carry a quantizer index rather than a QP: one entry
+        /// per coded frame, in bitstream order.
         std::vector<int> quantizer_indices;
 
-        /// Color as the bitstream's VUI declares it, which can disagree with
-        /// what the container tags. A disagreement is itself a strong signal
-        /// that the file was remuxed or retagged.
+        /// Color as the bitstream declares it, as a ColorSpec's JSON, which can
+        /// disagree with what the container tags. A disagreement is itself a
+        /// strong signal that the file was remuxed or retagged. Null when the
+        /// bitstream declares no color.
         json::Value bitstream_color;
 
         [[nodiscard]] json::Value to_json() const;
@@ -85,8 +89,10 @@ namespace lossylab
 
     struct ReadHeadersOptions
     {
-        /// Stop after this many slices. Header parsing is cheap, but a long
-        /// clip has a great many slices and an audit rarely needs them all.
+        /// Stop after this many slices, or for VP9 and AV1 coded frames.
+        /// Header parsing is cheap, but a long clip has a great many slices and
+        /// an audit rarely needs them all. The first packet is always read, so
+        /// 0 still finds the parameter sets and the embedded settings.
         int max_slices = 256;
 
         /// Which stream to parse. Negative means the first video stream.
@@ -94,6 +100,12 @@ namespace lossylab
     };
 
     /// Parses bitstream syntax without decoding.
+    ///
+    /// Reads FFmpeg's trace_headers bitstream filter, which logs every syntax
+    /// element its parser reads, through the library's log callback; those
+    /// lines never reach a handler set with `set_log_handler`. Interprets
+    /// H.264, HEVC, MPEG-2, VP9 and AV1, and throws UnsupportedCapability for
+    /// any other codec.
     [[nodiscard]] HeaderInfo read_headers(const Source& source,
                                           const ReadHeadersOptions& options = {});
 }

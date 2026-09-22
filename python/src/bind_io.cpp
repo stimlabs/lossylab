@@ -3,6 +3,7 @@
 
 #include "lossylab/io/decode_image.hpp"
 #include "lossylab/io/probe.hpp"
+#include "lossylab/io/read_headers.hpp"
 #include "lossylab/io/source.hpp"
 
 #include <nanobind/stl/map.h>
@@ -97,6 +98,39 @@ namespace lossylab::pybind
             .def_rw("strict", &DecodeImageOptions::strict);
 
         m.def("decode_image", &decode_image, "source"_a, "options"_a = DecodeImageOptions{},
+              nb::call_guard<nb::gil_scoped_release>());
+
+        // ---- read_headers.hpp --------------------------------------------------
+        nb::class_<ParameterSet>(m, "ParameterSet")
+            .def_ro("kind", &ParameterSet::kind)
+            .def_ro("id", &ParameterSet::id)
+            .def_prop_ro("fields", [](const ParameterSet& self) { return to_python(self.fields); })
+            .def("to_dict", [](const ParameterSet& self) { return to_python(self.to_json()); });
+
+        nb::class_<SliceInfo>(m, "SliceInfo")
+            .def_ro("index", &SliceInfo::index)
+            .def_ro("slice_type", &SliceInfo::slice_type)
+            .def_ro("qp", &SliceInfo::qp)
+            .def_ro("size_bytes", &SliceInfo::size_bytes)
+            .def("to_dict", [](const SliceInfo& self) { return to_python(self.to_json()); });
+
+        nb::class_<HeaderInfo>(m, "HeaderInfo")
+            .def_ro("codec_name", &HeaderInfo::codec_name)
+            .def_ro("parameter_sets", &HeaderInfo::parameter_sets)
+            .def_ro("slices", &HeaderInfo::slices)
+            .def_ro("embedded_encoder_settings", &HeaderInfo::embedded_encoder_settings)
+            .def_ro("embedded_encoder_settings_availability", &HeaderInfo::embedded_encoder_settings_availability)
+            .def_ro("encoder_settings", &HeaderInfo::encoder_settings)
+            .def_ro("quantizer_indices", &HeaderInfo::quantizer_indices)
+            .def_prop_ro("bitstream_color", [](const HeaderInfo& self) { return to_python(self.bitstream_color); })
+            .def("to_dict", [](const HeaderInfo& self) { return to_python(self.to_json()); });
+
+        nb::class_<ReadHeadersOptions>(m, "ReadHeadersOptions")
+            .def(nb::init<>())
+            .def_rw("max_slices", &ReadHeadersOptions::max_slices)
+            .def_rw("stream_index", &ReadHeadersOptions::stream_index);
+
+        m.def("read_headers", &read_headers, "source"_a, "options"_a = ReadHeadersOptions{},
               nb::call_guard<nb::gil_scoped_release>());
     }
 }

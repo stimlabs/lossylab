@@ -4,6 +4,7 @@
 #include "lossylab/io/decode_image.hpp"
 #include "lossylab/io/file_result.hpp"
 #include "lossylab/io/probe.hpp"
+#include "lossylab/io/read_headers.hpp"
 #include "lossylab/io/video_reader.hpp"
 
 #include <nanobind/stl/string.h>
@@ -62,6 +63,8 @@ namespace lossylab::pybind
         bind_file_result<ProbeResult>(m, "ProbeFileResult")
             .def("to_dict", [](const FileResult<ProbeResult>& self) { return to_python(self.to_json()); });
         bind_file_result<FrameResult>(m, "DecodeImageFileResult");
+        bind_file_result<HeaderInfo>(m, "ReadHeadersFileResult")
+            .def("to_dict", [](const FileResult<HeaderInfo>& self) { return to_python(self.to_json()); });
 
         nb::class_<VideoFramesResult>(m, "VideoFramesResult")
             .def_ro("frames", &VideoFramesResult::frames)
@@ -80,6 +83,13 @@ namespace lossylab::pybind
             { return capture("decode_image", source, [&] { return decode_image(source, options); }); },
             "source"_a, "options"_a = DecodeImageOptions{}, nb::call_guard<nb::gil_scoped_release>(),
             "decode_image(), with any exception it raises returned as a FileError instead.");
+
+        m.def(
+            "capture_read_headers",
+            [](const Source& source, const ReadHeadersOptions& options)
+            { return capture("read_headers", source, [&] { return read_headers(source, options); }); },
+            "source"_a, "options"_a = ReadHeadersOptions{}, nb::call_guard<nb::gil_scoped_release>(),
+            "read_headers(), with any exception it raises returned as a FileError instead.");
 
         m.def(
             "capture_video_frames",
