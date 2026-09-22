@@ -4,8 +4,6 @@
 BUILD_DIR     := build
 BUILD_TYPE    ?= Release
 
-# TODO CMAKE_EXTRA_FLAGS := -DBUILD_PYTHON_BINDINGS=ON
-
 # ------------------------------------------------
 # Phony targets
 .PHONY: build test clean

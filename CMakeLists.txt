@@ -11,7 +11,7 @@ include(CompilerWarnings)
 
 option(LOSSYLAB_BUILD_TESTS "Build the C++ test suite" ON)
 option(LOSSYLAB_BUILD_TOOLS "Build the command-line tools" ON)
-option(BUILD_PYTHON_BINDINGS "Build the Python extension module (not yet implemented)" OFF)
+option(BUILD_PYTHON_BINDINGS "Build the Python extension module" OFF)
 
 # ---------------------------------------------------------------------------
 # FFmpeg
