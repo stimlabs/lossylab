@@ -106,6 +106,7 @@ if(BUILD_PYTHON_BINDINGS)
             python/src/bind_frame.cpp
             python/src/bind_env.cpp
             python/src/bind_io.cpp
+            python/src/bind_video_reader.cpp
             python/src/bind_file_result.cpp
             python/src/bind_convert.cpp
     )

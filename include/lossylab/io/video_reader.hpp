@@ -34,7 +34,10 @@ namespace lossylab
     {
         Frame frame;
 
-        /// Position in decode order.
+        /// Position among the frames the decoder returned, counting from 0.
+        /// Decoders return frames in presentation order, so this is the
+        /// frame's position on the timeline, not its position in the
+        /// bitstream.
         int index = 0;
 
         FrameStats stats;
@@ -76,33 +79,47 @@ namespace lossylab
         /// Every frame.
         static FrameSelector all();
 
-        /// Specific positions in decode order.
+        /// Specific positions, as `VideoFrame::index` counts them.
         static FrameSelector indices(std::vector<int> indices);
 
         /// Every nth frame.
         static FrameSelector stride(int step, int offset = 0);
 
-        /// Frames at or after the given presentation times, in seconds.
+        /// For each presentation time, in seconds on the stream's own
+        /// timeline, the first frame at or after it. Several times that land
+        /// on the same frame select it once.
         static FrameSelector timestamps(std::vector<double> seconds);
 
         /// Only frames of these picture types.
         static FrameSelector picture_types(std::vector<PictureType> types);
 
-        /// At most `count` frames, spread evenly across the clip.
+        /// At most `count` frames, spread evenly across the clip. Needs the
+        /// clip's frame count: the container's declared count when it has
+        /// one, otherwise a packet-counting pass that reads but does not
+        /// decode.
         static FrameSelector evenly_spaced(int count);
 
         /// An arbitrary predicate over the decoded frame and its statistics.
         /// The escape hatch for selection rules the others do not cover, such
-        /// as "frames whose mean QP exceeds 30".
+        /// as "frames whose mean QP exceeds 30". It sees the frame in the
+        /// decoder's native format, before any conversion the reader's options
+        /// ask for.
         static FrameSelector where(std::function<bool(const VideoFrame&)> predicate);
 
-        /// Both conditions must hold.
+        /// Both conditions must hold. `timestamps` inside a conjunction picks
+        /// the first frame at or after each time that also satisfies the other
+        /// side; `evenly_spaced` still spreads over the whole clip.
         [[nodiscard]] FrameSelector and_also(FrameSelector other) const;
 
         [[nodiscard]] json::Value to_json() const;
 
     private:
         struct Impl;
+
+        /// The per-read state of a selector, such as which timestamps are
+        /// still pending. Defined next to VideoReader, its only user.
+        class Matcher;
+        friend class VideoReader;
 
         explicit FrameSelector(std::shared_ptr<const Impl> impl);
 
@@ -139,13 +156,19 @@ namespace lossylab
         /// side data even where the pixels come out identical.
         int thread_count = 1;
 
-        Strict strict = Strict::Refuse;
+        /// Applies to the conversion, when one was requested.
+        Strict strict = Strict::AllowRecorded;
     };
 
     /// Reads frames from a clip.
     ///
     /// The entry point both for sampling training frames out of real video and
     /// for auditing a video subset.
+    ///
+    /// Each `frames()` or `for_each()` call reads the clip from its start, so a
+    /// reader can be queried repeatedly. It keeps a copy of the Source to do
+    /// that, which means a buffer borrowed through `Source::from_memory` must
+    /// outlive the reader.
     class VideoReader
     {
     public:
@@ -163,8 +186,8 @@ namespace lossylab
         /// Decodes the selected frames.
         ///
         /// Selection is applied during decoding, so a selector that wants three
-        /// frames from a long clip does not materialize the whole thing. Where
-        /// the container allows it, seeking skips past what was not asked for.
+        /// frames from a long clip does not materialize the whole thing, and
+        /// reading stops once no later frame can be selected.
         [[nodiscard]] std::vector<VideoFrame> frames(const FrameSelector& select);
 
         /// Streaming form, for clips too long to hold at once. The callback
@@ -172,11 +195,16 @@ namespace lossylab
         void for_each(const FrameSelector& select,
                       const std::function<bool(const VideoFrame&)>& callback);
 
-        /// One record covering the whole read, with per-frame statistics.
+        /// One record covering the most recent read, with statistics for each
+        /// selected frame.
         [[nodiscard]] const StageRecord& record() const noexcept;
 
     private:
         struct Impl;
+
+        /// Reads the clip from its start, handing each selected frame to
+        /// `deliver` until it returns false or the selection is exhausted.
+        void read(const FrameSelector& select, const std::function<bool(VideoFrame&&)>& deliver);
         std::unique_ptr<Impl> m_impl;
     };
 }

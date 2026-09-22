@@ -12,6 +12,7 @@ namespace lossylab::pybind
     void bind_frame(nb::module_& m);
     void bind_env(nb::module_& m);
     void bind_io(nb::module_& m);
+    void bind_video_reader(nb::module_& m);
     void bind_file_result(nb::module_& m);
     void bind_convert(nb::module_& m);
 }

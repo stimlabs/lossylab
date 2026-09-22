@@ -4,8 +4,10 @@
 #include "lossylab/io/decode_image.hpp"
 #include "lossylab/io/file_result.hpp"
 #include "lossylab/io/probe.hpp"
+#include "lossylab/io/video_reader.hpp"
 
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
 
 namespace lossylab::pybind
 {
@@ -13,6 +15,14 @@ namespace lossylab::pybind
 
     namespace
     {
+        /// What one VideoReader read produced: the selected frames and the
+        /// record describing the read.
+        struct VideoFramesResult
+        {
+            std::vector<VideoFrame> frames;
+            StageRecord record;
+        };
+
         template <typename T>
         nb::class_<FileResult<T>> bind_file_result(nb::module_& m, const char* name)
         {
@@ -53,6 +63,11 @@ namespace lossylab::pybind
             .def("to_dict", [](const FileResult<ProbeResult>& self) { return to_python(self.to_json()); });
         bind_file_result<FrameResult>(m, "DecodeImageFileResult");
 
+        nb::class_<VideoFramesResult>(m, "VideoFramesResult")
+            .def_ro("frames", &VideoFramesResult::frames)
+            .def_ro("record", &VideoFramesResult::record);
+        bind_file_result<VideoFramesResult>(m, "VideoFramesFileResult");
+
         m.def(
             "capture_probe",
             [](const Source& source) { return capture("probe", source, [&] { return probe(source); }); },
@@ -65,5 +80,21 @@ namespace lossylab::pybind
             { return capture("decode_image", source, [&] { return decode_image(source, options); }); },
             "source"_a, "options"_a = DecodeImageOptions{}, nb::call_guard<nb::gil_scoped_release>(),
             "decode_image(), with any exception it raises returned as a FileError instead.");
+
+        m.def(
+            "capture_video_frames",
+            [](const Source& source, const FrameSelector& select, const VideoReaderOptions& options)
+            {
+                return capture("VideoReader.frames", source,
+                               [&]
+                               {
+                                   VideoReader reader(source, options);
+                                   std::vector<VideoFrame> frames = reader.frames(select);
+                                   return VideoFramesResult{std::move(frames), reader.record()};
+                               });
+            },
+            "source"_a, "select"_a, "options"_a = VideoReaderOptions{}, nb::call_guard<nb::gil_scoped_release>(),
+            "VideoReader(source, options).frames(select) together with the read's record, with any exception "
+            "either raises returned as a FileError instead.");
     }
 }

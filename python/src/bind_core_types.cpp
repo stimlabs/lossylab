@@ -1,6 +1,7 @@
 #include "bindings.hpp"
 #include "json_convert.hpp"
 
+#include "lossylab/core/availability.hpp"
 #include "lossylab/core/codec_id.hpp"
 #include "lossylab/core/color_spec.hpp"
 #include "lossylab/core/geometry.hpp"
@@ -323,5 +324,11 @@ namespace lossylab::pybind
             .value("Psnr", Metric::Psnr)
             .value("Ssim", Metric::Ssim)
             .value("Vmaf", Metric::Vmaf);
+
+        // ---- availability.hpp --------------------------------------------------
+        nb::enum_<Availability>(m, "Availability")
+            .value("NotPresent", Availability::NotPresent)
+            .value("NotSupportedByBuild", Availability::NotSupportedByBuild)
+            .value("Present", Availability::Present);
     }
 }
