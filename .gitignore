@@ -1,3 +1,7 @@
 .idea
+.venv
 build
 scratch
+__pycache__
+
+python/lossylab/__init__.pyi

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "nanobind>=2.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "lossylab"
+version = "0.1.0"
+description = "Model, apply and inspect the processing history of images and video frames."
+requires-python = ">=3.9"
+
+[project.optional-dependencies]
+test = ["pytest", "numpy", "pillow"]
+
+[tool.scikit-build]
+wheel.packages = ["python/lossylab"]
+
+[tool.scikit-build.cmake.define]
+BUILD_PYTHON_BINDINGS = "ON"
+LOSSYLAB_BUILD_TESTS = "OFF"
+LOSSYLAB_BUILD_TOOLS = "OFF"
+
+# No editable rebuild-on-import: it needs a build-dir persisted across
+# builds, but uv's build-isolation venv (where cmake/ninja/nanobind live
+# during the build) is torn down afterward, leaving stale tool paths in that
+# dir's CMakeCache.txt for the next rebuild to trip over. Re-run `uv sync`
+# after editing C++ sources to pick up the change in the bindings.

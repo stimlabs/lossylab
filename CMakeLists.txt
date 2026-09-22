@@ -13,11 +13,6 @@ option(LOSSYLAB_BUILD_TESTS "Build the C++ test suite" ON)
 option(LOSSYLAB_BUILD_TOOLS "Build the command-line tools" ON)
 option(BUILD_PYTHON_BINDINGS "Build the Python extension module (not yet implemented)" OFF)
 
-if(BUILD_PYTHON_BINDINGS)
-    message(FATAL_ERROR
-            "BUILD_PYTHON_BINDINGS is reserved but not implemented yet; see python/README.md.")
-endif()
-
 # ---------------------------------------------------------------------------
 # FFmpeg
 # ---------------------------------------------------------------------------
@@ -92,6 +87,37 @@ target_include_directories(lossylab
 target_link_libraries(lossylab PRIVATE PkgConfig::FFMPEG)
 lossylab_set_warnings(lossylab)
 set_target_properties(lossylab PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# ---------------------------------------------------------------------------
+# Python bindings
+# ---------------------------------------------------------------------------
+
+if(BUILD_PYTHON_BINDINGS)
+    find_package(Python 3.9 COMPONENTS Interpreter Development.Module REQUIRED)
+    find_package(nanobind CONFIG REQUIRED)
+
+    nanobind_add_module(_lossylab
+            python/src/module.cpp
+            python/src/json_convert.cpp
+            python/src/bind_errors.cpp
+            python/src/bind_core_types.cpp
+            python/src/bind_record.cpp
+            python/src/bind_frame.cpp
+            python/src/bind_env.cpp
+            python/src/bind_io.cpp
+            python/src/bind_convert.cpp
+    )
+    target_link_libraries(_lossylab PRIVATE lossylab::lossylab)
+
+    nanobind_add_stub(_lossylab_stub
+            MODULE _lossylab
+            OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/python/lossylab/__init__.pyi"
+            PYTHON_PATH "$<TARGET_FILE_DIR:_lossylab>"
+            DEPENDS _lossylab
+    )
+
+    install(TARGETS _lossylab LIBRARY DESTINATION lossylab)
+endif()
 
 # ---------------------------------------------------------------------------
 # Tools and tests

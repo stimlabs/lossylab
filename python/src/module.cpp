@@ -1,0 +1,14 @@
+#include "bindings.hpp"
+
+NB_MODULE(_lossylab, m)
+{
+    m.doc() = "Model, apply and inspect the processing history of images and video frames.";
+
+    lossylab::pybind::bind_errors(m);
+    lossylab::pybind::bind_core_types(m);
+    lossylab::pybind::bind_frame(m);
+    lossylab::pybind::bind_record(m);
+    lossylab::pybind::bind_env(m);
+    lossylab::pybind::bind_io(m);
+    lossylab::pybind::bind_convert(m);
+}
