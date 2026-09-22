@@ -112,7 +112,7 @@ namespace
         }
     }
 
-    void test_resize_validates_before_it_gives_up()
+    void test_resize_rejects_an_empty_frame()
     {
         // A bad request must be reported as such, not as "not implemented".
         try
@@ -123,7 +123,10 @@ namespace
         catch (const ConfigError&)
         {
         }
+    }
 
+    void test_resize_rejects_an_empty_mask()
+    {
         ResizeOptions empty_mask;
         empty_mask.size = TargetSize::absolute(32, 24);
         empty_mask.mask = Frame();
@@ -135,8 +138,10 @@ namespace
         catch (const ConfigError&)
         {
         }
+    }
 
-        // A valid request reaches the unwritten body.
+    void test_a_valid_resize_reaches_the_unwritten_body()
+    {
         assert(throws_not_implemented([] { static_cast<void>(resize(test_frame(), 32, 24)); }));
     }
 
@@ -252,48 +257,60 @@ namespace
         assert(parsed.max_iterations == 6);
     }
 
-    void test_encoding_validates_its_frames_before_it_gives_up()
+    EncodeVideoOptions h264_encode_options()
     {
-        EncodeVideoOptions options;
-        options.codec = VideoCodec::H264;
-        options.pixel_format = PixelFormat::from_name("yuv420p");
-
         if (!capabilities().supports(VideoCodec::H264))
         {
             std::exit(77);  // no H.264 encoder in this build
         }
+        EncodeVideoOptions options;
+        options.codec = VideoCodec::H264;
+        options.pixel_format = PixelFormat::from_name("yuv420p");
+        return options;
+    }
 
+    void test_encode_video_rejects_an_empty_frame_sequence()
+    {
         try
         {
-            (void)(encode_video({}, options));
+            (void)(encode_video({}, h264_encode_options()));
             assert(false && "expected throw");
         }
         catch (const ConfigError&)
         {
         }
+    }
+
+    void test_encode_video_rejects_an_empty_frame()
+    {
         try
         {
-            (void)(encode_video({Frame()}, options));
+            (void)(encode_video({Frame()}, h264_encode_options()));
             assert(false && "expected throw");
         }
         catch (const ConfigError&)
         {
         }
+    }
 
+    void test_encode_video_rejects_a_mixed_size_sequence()
+    {
         // A mixed-format sequence would have to be converted somewhere, and that
         // conversion has to be its own stage rather than a side effect of encoding.
         const std::vector<Frame> mixed = {test_frame(64, 48), test_frame(32, 24)};
         try
         {
-            (void)(encode_video(mixed, options));
+            (void)(encode_video(mixed, h264_encode_options()));
             assert(false && "expected throw");
         }
         catch (const ConfigError&)
         {
         }
+    }
 
-        // A format the encoder does not accept is refused by name.
-        EncodeVideoOptions wrong_format = options;
+    void test_encode_video_rejects_a_pixel_format_the_encoder_does_not_accept()
+    {
+        EncodeVideoOptions wrong_format = h264_encode_options();
         wrong_format.pixel_format = PixelFormat::from_name("rgb48le");
         try
         {
@@ -303,9 +320,11 @@ namespace
         catch (const ConfigError&)
         {
         }
+    }
 
-        // An option the encoder does not have is caught against its schema.
-        EncodeVideoOptions bad_option = options;
+    void test_encode_video_rejects_an_option_the_encoder_does_not_have()
+    {
+        EncodeVideoOptions bad_option = h264_encode_options();
         bad_option.encoder_options = {{"definitely-not-an-option", "1"}};
         try
         {
@@ -315,7 +334,11 @@ namespace
         catch (const ConfigError&)
         {
         }
+    }
 
+    void test_a_valid_encode_video_request_reaches_the_unwritten_body()
+    {
+        const EncodeVideoOptions options = h264_encode_options();
         assert(throws_not_implemented(
             [&] { static_cast<void>(encode_video({test_frame()}, options)); }));
     }
@@ -621,18 +644,21 @@ namespace
         assert(std::abs(parsed_noise.sigma - 2.5) < 1e-12);
     }
 
-    void test_animate_still_validates_before_it_gives_up()
+    void test_animate_still_rejects_an_empty_frame()
     {
-        AnimateStillOptions options;
         try
         {
-            (void)(animate_still(Frame(), options));
+            (void)(animate_still(Frame(), AnimateStillOptions()));
             assert(false && "expected throw");
         }
         catch (const ConfigError&)
         {
         }
+    }
 
+    void test_animate_still_rejects_a_zero_frame_count()
+    {
+        AnimateStillOptions options;
         options.frame_count = 0;
         try
         {
@@ -642,7 +668,11 @@ namespace
         catch (const ConfigError&)
         {
         }
+    }
 
+    void test_animate_still_rejects_a_temporal_correlation_outside_its_range()
+    {
+        AnimateStillOptions options;
         options.frame_count = 10;
         options.temporal_noise.temporal_correlation = 1.5;
         try
@@ -653,7 +683,12 @@ namespace
         catch (const ConfigError&)
         {
         }
+    }
 
+    void test_animate_still_rejects_a_negative_noise_sigma()
+    {
+        AnimateStillOptions options;
+        options.frame_count = 10;
         options.temporal_noise.temporal_correlation = 0.0;
         options.temporal_noise.sigma = -1.0;
         try
@@ -664,7 +699,13 @@ namespace
         catch (const ConfigError&)
         {
         }
+    }
 
+    void test_a_valid_animate_still_request_reaches_the_unwritten_body()
+    {
+        AnimateStillOptions options;
+        options.frame_count = 10;
+        options.temporal_noise.temporal_correlation = 0.0;
         options.temporal_noise.sigma = 0.0;
         assert(throws_not_implemented(
             [&] { static_cast<void>(animate_still(test_frame(), options)); }));
@@ -805,7 +846,7 @@ namespace
     // VideoReader selectors
     // -----------------------------------------------------------------------
 
-    void test_frame_selectors_validate_their_arguments()
+    void test_indices_selector_rejects_a_negative_index()
     {
         try
         {
@@ -815,6 +856,10 @@ namespace
         catch (const ConfigError&)
         {
         }
+    }
+
+    void test_stride_selector_rejects_a_zero_stride()
+    {
         try
         {
             (void)(FrameSelector::stride(0));
@@ -823,6 +868,10 @@ namespace
         catch (const ConfigError&)
         {
         }
+    }
+
+    void test_stride_selector_rejects_a_negative_offset()
+    {
         try
         {
             (void)(FrameSelector::stride(2, -1));
@@ -831,6 +880,10 @@ namespace
         catch (const ConfigError&)
         {
         }
+    }
+
+    void test_picture_types_selector_rejects_an_empty_set()
+    {
         try
         {
             (void)(FrameSelector::picture_types({}));
@@ -839,6 +892,10 @@ namespace
         catch (const ConfigError&)
         {
         }
+    }
+
+    void test_evenly_spaced_selector_rejects_a_zero_count()
+    {
         try
         {
             (void)(FrameSelector::evenly_spaced(0));
@@ -847,6 +904,10 @@ namespace
         catch (const ConfigError&)
         {
         }
+    }
+
+    void test_where_selector_rejects_a_null_predicate()
+    {
         try
         {
             (void)(FrameSelector::where(nullptr));
@@ -999,14 +1060,21 @@ int main()
     test_target_sizes_resolve_correctly();
     test_an_extreme_downscale_floors_at_one_pixel();
     test_target_sizes_round_trip_through_json();
-    test_resize_validates_before_it_gives_up();
+    test_resize_rejects_an_empty_frame();
+    test_resize_rejects_an_empty_mask();
+    test_a_valid_resize_reaches_the_unwritten_body();
     test_rate_control_modes_expose_a_searchable_parameter_only_where_one_exists();
     test_setting_a_quality_parameter_requires_a_mode_that_has_one();
     test_rate_control_rejects_incoherent_settings();
     test_rate_control_round_trips_through_json();
     test_gop_structures_round_trip_and_intra_only_is_intra_only();
     test_encode_targets_round_trip();
-    test_encoding_validates_its_frames_before_it_gives_up();
+    test_encode_video_rejects_an_empty_frame_sequence();
+    test_encode_video_rejects_an_empty_frame();
+    test_encode_video_rejects_a_mixed_size_sequence();
+    test_encode_video_rejects_a_pixel_format_the_encoder_does_not_accept();
+    test_encode_video_rejects_an_option_the_encoder_does_not_have();
+    test_a_valid_encode_video_request_reaches_the_unwritten_body();
     test_encoding_refuses_a_codec_this_build_lacks_before_anything_else();
     test_encode_to_target_needs_a_parameter_it_can_search();
     test_a_filter_graph_validates_its_inputs();
@@ -1020,13 +1088,22 @@ int main()
     test_a_trajectory_rejects_an_impossible_request();
     test_a_single_frame_animation_sits_at_the_start();
     test_trajectories_and_noise_round_trip_through_json();
-    test_animate_still_validates_before_it_gives_up();
+    test_animate_still_rejects_an_empty_frame();
+    test_animate_still_rejects_a_zero_frame_count();
+    test_animate_still_rejects_a_temporal_correlation_outside_its_range();
+    test_animate_still_rejects_a_negative_noise_sigma();
+    test_a_valid_animate_still_request_reaches_the_unwritten_body();
     test_analyzer_names_round_trip();
     test_measure_validates_before_it_gives_up();
     test_compare_insists_the_two_sides_line_up();
     test_vmaf_is_gated_when_the_build_lacks_it();
     test_a_recompression_sweep_needs_enough_points_to_find_a_minimum();
-    test_frame_selectors_validate_their_arguments();
+    test_indices_selector_rejects_a_negative_index();
+    test_stride_selector_rejects_a_zero_stride();
+    test_stride_selector_rejects_a_negative_offset();
+    test_picture_types_selector_rejects_an_empty_set();
+    test_evenly_spaced_selector_rejects_a_zero_count();
+    test_where_selector_rejects_a_null_predicate();
     test_frame_selectors_serialize_so_a_spec_can_record_them();
     test_a_predicate_selector_admits_it_cannot_be_replayed();
     test_selectors_compose();

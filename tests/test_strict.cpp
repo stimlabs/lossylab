@@ -47,12 +47,10 @@ namespace
         record_or_refuse(Strict::AllowRecorded, conversions, "pix_fmt", "rgb24", "yuv420p",
                          ConversionCause::CodecConstraint, "libx264", "encode_video");
 
+        const ConversionEvent expected{"pix_fmt", "rgb24", "yuv420p",
+                                       ConversionCause::CodecConstraint, "libx264"};
         assert(conversions.size() == std::size_t{1});
-        assert(conversions[0].property == std::string("pix_fmt"));
-        assert(conversions[0].from == std::string("rgb24"));
-        assert(conversions[0].to == std::string("yuv420p"));
-        assert(conversions[0].cause == ConversionCause::CodecConstraint);
-        assert(conversions[0].performed_by == std::string("libx264"));
+        assert(conversions[0] == expected);
     }
 
     void test_a_no_op_conversion_is_neither_refused_nor_recorded()
