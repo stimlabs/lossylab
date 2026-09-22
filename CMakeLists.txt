@@ -52,6 +52,7 @@ add_library(lossylab STATIC
         src/lossylab/core/geometry.cpp
         src/lossylab/core/rng.cpp
         src/lossylab/core/strict.cpp
+        src/lossylab/core/availability.cpp
         src/lossylab/core/codec_id.cpp
         src/lossylab/core/color_spec.cpp
         src/lossylab/core/pixel_format.cpp

@@ -2,9 +2,11 @@
 
 #include "lossylab/core/error.hpp"
 #include "lossylab/core/json_io.hpp"
+#include "lossylab/core/schema_version.hpp"
 #include "lossylab/detail/ff_error.hpp"
 #include "lossylab/io/input_context.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <sstream>
 
@@ -69,6 +71,23 @@ namespace lossylab
             return value > 0 ? std::optional<std::int64_t>(value) : std::nullopt;
         }
 
+        /// `nominal` is the container's declared rate; `average` is measured
+        /// from actual frame timing. A gap between them beyond a small
+        /// tolerance means the stream is not delivered at a constant rate.
+        bool frame_rate_is_variable(const Rational nominal, const Rational average)
+        {
+            if (!nominal.is_valid() || !average.is_valid() || nominal.num == 0 ||
+                average.num == 0)
+            {
+                return false;
+            }
+
+            const double nominal_value = static_cast<double>(nominal.num) / nominal.den;
+            const double average_value = static_cast<double>(average.num) / average.den;
+            constexpr double tolerance = 0.02;
+            return std::abs(nominal_value - average_value) > tolerance * nominal_value;
+        }
+
         StreamInfo read_stream(const AVStream& stream)
         {
             const AVCodecParameters& params = *stream.codecpar;
@@ -124,6 +143,8 @@ namespace lossylab
 
                 info.rotation = read_rotation(stream);
                 info.has_hdr_metadata = has_hdr_side_data(stream);
+                info.is_variable_frame_rate =
+                    frame_rate_is_variable(info.frame_rate, info.average_frame_rate);
             }
 
             info.frame_count = positive_or_none(stream.nb_frames);
@@ -139,20 +160,98 @@ namespace lossylab
             return info;
         }
 
-        std::vector<std::string> split_brands(const std::string& text)
+        std::vector<std::string> split_csv(const std::string& text)
         {
-            std::vector<std::string> brands;
+            std::vector<std::string> items;
             std::istringstream stream(text);
-            std::string brand;
-            while (std::getline(stream, brand, ','))
+            std::string item;
+            while (std::getline(stream, item, ','))
             {
-                if (!brand.empty())
+                if (!item.empty())
                 {
-                    brands.push_back(brand);
+                    items.push_back(item);
                 }
             }
-            return brands;
+            return items;
         }
+
+        /// True when `extension` (already lowercased, no dot) is one of the
+        /// extensions FFmpeg lists for this demuxer. Demuxers list their
+        /// extensions in `AVInputFormat::extensions`; where that field is
+        /// unset, FFmpeg's own convention is that `name` doubles as the
+        /// extension list (true of, for instance, the mov/mp4 demuxer). A
+        /// still-image format read without a container, such as a bare PNG
+        /// or JPEG, is matched by a "*_pipe" demuxer instead (e.g. "png_pipe"
+        /// for a ".png"), so that suffix is stripped before comparing too.
+        bool extension_matches_format(const AVInputFormat& iformat, const std::string& extension)
+        {
+            const char* list = iformat.extensions != nullptr ? iformat.extensions : iformat.name;
+            if (list == nullptr)
+            {
+                return true; // Nothing to compare against; do not report a mismatch.
+            }
+            for (const std::string& candidate : split_csv(list))
+            {
+                if (candidate == extension)
+                {
+                    return true;
+                }
+
+                constexpr std::string_view pipe_suffix = "_pipe";
+                if (candidate.size() > pipe_suffix.size() &&
+                    candidate.compare(candidate.size() - pipe_suffix.size(), pipe_suffix.size(),
+                                      pipe_suffix) == 0 &&
+                    candidate.compare(0, candidate.size() - pipe_suffix.size(), extension) == 0)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        bool has_brand(const ProbeResult& result, const std::string_view brand)
+        {
+            return result.major_brand == brand ||
+                   std::find(result.compatible_brands.begin(), result.compatible_brands.end(),
+                             std::string(brand)) != result.compatible_brands.end();
+        }
+
+        /// Fills in WebP/AVIF/HEIF-specific properties for a stream, using
+        /// only what plain probing (no decoding) has already recovered:
+        /// whether the pixel format carries alpha, and whether the container
+        /// declared more than one frame. AVIF and HEIF share the ISOBMFF
+        /// container with ordinary MP4/MOV and are told apart by brand.
+        void fill_image_container(const ProbeResult& result, StreamInfo& stream)
+        {
+            const bool is_webp = result.format_name.find("webp") != std::string::npos;
+            const bool is_avif_or_heif =
+                has_brand(result, "avif") || has_brand(result, "avis") ||
+                has_brand(result, "heic") || has_brand(result, "heix") ||
+                has_brand(result, "mif1") || has_brand(result, "msf1");
+            if (!is_webp && !is_avif_or_heif)
+            {
+                return;
+            }
+
+            ImageContainerInfo info;
+            info.has_alpha = stream.pixel_format.is_valid() && stream.pixel_format.has_alpha();
+            info.is_animated = stream.frame_count.has_value() && *stream.frame_count > 1;
+            if (is_avif_or_heif)
+            {
+                info.is_still_image =
+                    stream.frame_count.has_value() && *stream.frame_count == 1;
+            }
+            stream.image_container = info;
+        }
+    }
+
+    json::Value ImageContainerInfo::to_json() const
+    {
+        return json::object({
+            {"has_alpha", has_alpha},
+            {"is_animated", is_animated},
+            {"is_still_image", json::optional_or_null(is_still_image)},
+        });
     }
 
     json::Value StreamInfo::to_json() const
@@ -172,6 +271,7 @@ namespace lossylab
             {"color_fully_tagged", color_fully_tagged},
             {"frame_rate", frame_rate.to_json()},
             {"average_frame_rate", average_frame_rate.to_json()},
+            {"is_variable_frame_rate", is_variable_frame_rate},
             {"time_base", time_base.to_json()},
             {"sample_aspect_ratio", sample_aspect_ratio.to_json()},
             {"rotation", json::optional_or_null(rotation)},
@@ -179,6 +279,7 @@ namespace lossylab
             {"duration_us", json::optional_or_null(duration_us)},
             {"bit_rate", json::optional_or_null(bit_rate)},
             {"has_hdr_metadata", has_hdr_metadata},
+            {"image_container", json::optional_or_null(image_container)},
             {"metadata", json::to_object(metadata)},
         });
     }
@@ -215,6 +316,7 @@ namespace lossylab
     json::Value ProbeResult::to_json() const
     {
         return json::object({
+            {"schema_version", schema_version},
             {"format", format_name},
             {"format_long_name", format_long_name},
             {"duration_us", json::optional_or_null(duration_us)},
@@ -223,6 +325,8 @@ namespace lossylab
             {"encoder", json::optional_or_null(encoder_string())},
             {"major_brand", major_brand},
             {"compatible_brands", json::to_array(compatible_brands)},
+            {"claimed_extension", claimed_extension},
+            {"format_mismatch", format_mismatch},
             {"metadata", json::to_object(metadata)},
             {"streams", json::to_array(streams)},
         });
@@ -241,6 +345,13 @@ namespace lossylab
             result.format_name = format.iformat->name != nullptr ? format.iformat->name : "";
             result.format_long_name =
                 format.iformat->long_name != nullptr ? format.iformat->long_name : "";
+        }
+
+        result.claimed_extension = source.claimed_extension();
+        if (!result.claimed_extension.empty() && format.iformat != nullptr)
+        {
+            result.format_mismatch =
+                !extension_matches_format(*format.iformat, result.claimed_extension);
         }
 
         if (format.duration != AV_NOPTS_VALUE && format.duration > 0)
@@ -269,13 +380,21 @@ namespace lossylab
         if (const auto it = result.metadata.find("compatible_brands");
             it != result.metadata.end())
         {
-            result.compatible_brands = split_brands(it->second);
+            result.compatible_brands = split_csv(it->second);
         }
 
         result.streams.reserve(format.nb_streams);
         for (unsigned i = 0; i < format.nb_streams; ++i)
         {
             result.streams.push_back(read_stream(*format.streams[i]));
+        }
+
+        for (StreamInfo& stream : result.streams)
+        {
+            if (stream.type == "video")
+            {
+                fill_image_container(result, stream);
+            }
         }
 
         return result;

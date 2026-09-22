@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lossylab/core/availability.hpp"
 #include "lossylab/core/frame.hpp"
 #include "lossylab/core/record.hpp"
 #include "lossylab/core/result.hpp"
@@ -38,14 +39,28 @@ namespace lossylab
 
         FrameStats stats;
 
-        /// Per-block quantizers, when export was enabled and the decoder
-        /// supports it. The basis for crop-level severity rather than
-        /// whole-frame severity.
+        /// Per-block quantization parameters, when export was requested and
+        /// the selected decoder supports it. The basis for crop-level
+        /// severity rather than whole-frame severity.
         std::optional<QpMap> qp_map;
+
+        /// States why `qp_map` is empty when it is: not requested or not
+        /// present in this frame (`NotPresent`), or unavailable because the
+        /// selected decoder cannot export it regardless of the frame
+        /// (`NotSupportedByBuild`). Read this before treating an empty
+        /// `qp_map` as "this frame has no quantization data" — a decoder
+        /// that cannot export a map at all would otherwise look identical to
+        /// one that exported an empty map.
+        Availability qp_map_availability = Availability::NotPresent;
 
         /// Per-block motion, when export was enabled. Distinguishes real camera
         /// motion from synthesized motion, and shows where a codec spent bits.
         std::vector<MotionVector> motion_vectors;
+
+        /// As `qp_map_availability`, for `motion_vectors`. An empty vector
+        /// alone cannot distinguish "no motion vectors were exported" from
+        /// "the decoder cannot export motion vectors for this codec."
+        Availability motion_vector_availability = Availability::NotPresent;
     };
 
     /// Which frames to pull out of a clip.

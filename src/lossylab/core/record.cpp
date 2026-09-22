@@ -2,6 +2,7 @@
 
 #include "lossylab/core/error.hpp"
 #include "lossylab/core/json_io.hpp"
+#include "lossylab/core/schema_version.hpp"
 
 #include <utility>
 
@@ -288,6 +289,7 @@ namespace lossylab
     json::Value ProcessingRecord::to_json() const
     {
         return json::object({
+            {"schema_version", schema_version},
             {"build_id", m_build_id},
             {"stages", json::to_array(m_stages)},
         });

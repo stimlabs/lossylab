@@ -2,6 +2,7 @@
 
 #include "lossylab/core/error.hpp"
 #include "lossylab/core/json_io.hpp"
+#include "lossylab/core/schema_version.hpp"
 #include "lossylab/env/capabilities.hpp"
 
 namespace lossylab
@@ -113,6 +114,7 @@ namespace lossylab
     json::Value MeasureResult::to_json() const
     {
         return json::object({
+            {"schema_version", schema_version},
             {"frames", json::to_array(frames)},
             {"pooled", json::to_object(pooled)},
         });
@@ -121,6 +123,7 @@ namespace lossylab
     json::Value CompareResult::to_json() const
     {
         return json::object({
+            {"schema_version", schema_version},
             {"frames", json::to_array(frames, [](const std::map<std::string, double>& metrics) {
                  return json::to_object(metrics);
              })},
@@ -140,6 +143,7 @@ namespace lossylab
     json::Value RecompressionCurve::to_json() const
     {
         return json::object({
+            {"schema_version", schema_version},
             {"points", json::to_array(points)},
             {"estimated_prior_parameter", json::optional_or_null(estimated_prior_parameter)},
             {"confidence", confidence},

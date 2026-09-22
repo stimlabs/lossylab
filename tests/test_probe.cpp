@@ -1,4 +1,5 @@
 #include "lossylab/core/error.hpp"
+#include "lossylab/core/schema_version.hpp"
 #include "lossylab/io/decode_image.hpp"
 #include "lossylab/io/probe.hpp"
 
@@ -82,6 +83,50 @@ namespace
 
         assert(video->frame_rate.is_valid());
         assert(result.duration_us.has_value());
+    }
+
+    void test_a_path_extension_mismatch_is_reported()
+    {
+        // Bytes are a PNG throughout; the path just claims a different
+        // extension, as a curator's renamed or re-wrapped file would.
+        const std::vector<std::uint8_t> bytes = read_file(data_path(png_fixture));
+
+        const ProbeResult matching = probe(Source::from_memory(bytes, "png"));
+        assert(matching.claimed_extension == std::string("png"));
+        assert(!matching.format_mismatch);
+
+        const ProbeResult mismatched = probe(Source::from_memory(bytes, "mp4"));
+        assert(mismatched.claimed_extension == std::string("mp4"));
+        assert(mismatched.format_mismatch);
+    }
+
+    void test_a_source_with_no_extension_is_never_a_mismatch()
+    {
+        const ProbeResult result = probe(Source::from_memory(read_file(data_path(png_fixture))));
+        assert(result.claimed_extension.empty());
+        assert(!result.format_mismatch);
+    }
+
+    void test_a_constant_frame_rate_video_is_not_flagged_variable()
+    {
+        const ProbeResult result = probe(Source::from_path(data_path(video_fixture)));
+        const StreamInfo* video = result.primary_video_stream();
+        assert(video != nullptr);
+        assert(!video->is_variable_frame_rate);
+    }
+
+    void test_probe_result_carries_the_schema_version()
+    {
+        const ProbeResult result = probe(Source::from_path(data_path(video_fixture)));
+        assert(result.to_json().at("schema_version").get<int>() == schema_version);
+    }
+
+    void test_non_image_streams_have_no_image_container_info()
+    {
+        const ProbeResult result = probe(Source::from_path(data_path(video_fixture)));
+        const StreamInfo* video = result.primary_video_stream();
+        assert(video != nullptr);
+        assert(!video->image_container.has_value());
     }
 
     void test_an_mp4_reports_its_brands_and_encoder()
@@ -296,6 +341,11 @@ int main()
     test_probing_a_jpeg_reports_chroma_and_range();
     test_probing_a_video_reports_codec_profile_and_tags();
     test_an_mp4_reports_its_brands_and_encoder();
+    test_a_path_extension_mismatch_is_reported();
+    test_a_source_with_no_extension_is_never_a_mismatch();
+    test_a_constant_frame_rate_video_is_not_flagged_variable();
+    test_probe_result_carries_the_schema_version();
+    test_non_image_streams_have_no_image_container_info();
     test_probing_from_memory_matches_probing_from_a_path();
     test_an_owning_memory_source_keeps_its_bytes_alive();
     test_probe_failures_are_reported_not_guessed();

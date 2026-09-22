@@ -2,6 +2,7 @@
 
 #include "lossylab/core/error.hpp"
 #include "lossylab/core/json_io.hpp"
+#include "lossylab/core/schema_version.hpp"
 
 namespace lossylab
 {
@@ -23,8 +24,11 @@ namespace lossylab
     json::Value HeaderInfo::to_json() const
     {
         return json::object({
+            {"schema_version", schema_version},
             {"codec", codec_name},
             {"embedded_encoder_settings", json::optional_or_null(embedded_encoder_settings)},
+            {"embedded_encoder_settings_availability",
+             to_string(embedded_encoder_settings_availability)},
             {"encoder_settings", json::to_object(encoder_settings)},
             {"parameter_sets", json::to_array(parameter_sets)},
             {"slices", json::to_array(slices)},

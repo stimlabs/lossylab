@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lossylab/core/availability.hpp"
 #include "lossylab/core/json.hpp"
 #include "lossylab/io/source.hpp"
 
@@ -59,6 +60,14 @@ namespace lossylab
         /// (x264, x265) or an equivalent. Present far more often than people
         /// expect, and close to conclusive when it is.
         std::optional<std::string> embedded_encoder_settings;
+
+        /// States why `embedded_encoder_settings` is empty when it is: this
+        /// codec has no such mechanism or this stream did not use it
+        /// (`NotPresent`), or the linked FFmpeg build's bitstream parser for
+        /// this codec cannot read this data (`NotSupportedByBuild`). Without
+        /// this, a build that cannot parse SEI user data for a given codec
+        /// would look identical to a stream that genuinely carries none.
+        Availability embedded_encoder_settings_availability = Availability::NotPresent;
 
         /// Parsed out of the settings string above, when it could be parsed.
         std::map<std::string, std::string> encoder_settings;
