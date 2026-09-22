@@ -64,6 +64,7 @@ add_library(lossylab STATIC
         src/lossylab/io/input_context.cpp
         src/lossylab/io/probe.cpp
         src/lossylab/io/decode_image.cpp
+        src/lossylab/io/file_result.cpp
         src/lossylab/io/read_headers.cpp
         src/lossylab/io/video_reader.cpp
         src/lossylab/convert/convert.cpp
@@ -105,6 +106,7 @@ if(BUILD_PYTHON_BINDINGS)
             python/src/bind_frame.cpp
             python/src/bind_env.cpp
             python/src/bind_io.cpp
+            python/src/bind_file_result.cpp
             python/src/bind_convert.cpp
     )
     target_link_libraries(_lossylab PRIVATE lossylab::lossylab)

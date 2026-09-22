@@ -10,5 +10,6 @@ NB_MODULE(_lossylab, m)
     lossylab::pybind::bind_record(m);
     lossylab::pybind::bind_env(m);
     lossylab::pybind::bind_io(m);
+    lossylab::pybind::bind_file_result(m);
     lossylab::pybind::bind_convert(m);
 }

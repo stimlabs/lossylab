@@ -11,6 +11,7 @@
 #include "lossylab/core/strict.hpp"
 #include "lossylab/env/build_info.hpp"
 #include "lossylab/env/capabilities.hpp"
+#include "lossylab/io/file_result.hpp"
 #include "lossylab/io/probe.hpp"
 #include "lossylab/io/read_headers.hpp"
 #include "lossylab/measure/measure.hpp"
@@ -43,6 +44,7 @@ namespace lossylab::json
     static_assert(Serializable<EncodeTarget>);
     static_assert(Serializable<Trajectory>);
     static_assert(Serializable<TemporalNoise>);
+    static_assert(Serializable<FileError>);
 
     // Write-only by design: these describe a build, a file or a measurement
     // run, so there is a reader for them but never a parser.

@@ -43,6 +43,7 @@
 
 // Probing and decoding.
 #include "lossylab/io/decode_image.hpp"
+#include "lossylab/io/file_result.hpp"
 #include "lossylab/io/probe.hpp"
 #include "lossylab/io/read_headers.hpp"
 #include "lossylab/io/source.hpp"
