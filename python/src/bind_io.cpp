@@ -48,6 +48,16 @@ namespace lossylab::pybind
             .def("describe", &Source::describe);
 
         // ---- probe.hpp --------------------------------------------------
+        nb::class_<ImageContainerInfo>(m, "ImageContainerInfo")
+            .def_ro("has_alpha", &ImageContainerInfo::has_alpha)
+            .def_ro("is_animated", &ImageContainerInfo::is_animated)
+            .def_ro("is_still_image", &ImageContainerInfo::is_still_image)
+            .def_ro("compression", &ImageContainerInfo::compression)
+            .def_ro("frame_count", &ImageContainerInfo::frame_count)
+            .def_ro("canvas_width", &ImageContainerInfo::canvas_width)
+            .def_ro("canvas_height", &ImageContainerInfo::canvas_height)
+            .def("to_dict", [](const ImageContainerInfo& self) { return to_python(self.to_json()); });
+
         nb::class_<StreamInfo>(m, "StreamInfo")
             .def_ro("index", &StreamInfo::index)
             .def_ro("type", &StreamInfo::type)
@@ -63,6 +73,7 @@ namespace lossylab::pybind
             .def_ro("color_fully_tagged", &StreamInfo::color_fully_tagged)
             .def_ro("frame_rate", &StreamInfo::frame_rate)
             .def_ro("average_frame_rate", &StreamInfo::average_frame_rate)
+            .def_ro("is_variable_frame_rate", &StreamInfo::is_variable_frame_rate)
             .def_ro("time_base", &StreamInfo::time_base)
             .def_ro("sample_aspect_ratio", &StreamInfo::sample_aspect_ratio)
             .def_ro("rotation", &StreamInfo::rotation)
@@ -71,6 +82,7 @@ namespace lossylab::pybind
             .def_ro("bit_rate", &StreamInfo::bit_rate)
             .def_ro("metadata", &StreamInfo::metadata)
             .def_ro("has_hdr_metadata", &StreamInfo::has_hdr_metadata)
+            .def_ro("image_container", &StreamInfo::image_container)
             .def("to_dict", [](const StreamInfo& self) { return to_python(self.to_json()); });
 
         nb::class_<ProbeResult>(m, "ProbeResult")
@@ -83,6 +95,8 @@ namespace lossylab::pybind
             .def_ro("metadata", &ProbeResult::metadata)
             .def_ro("major_brand", &ProbeResult::major_brand)
             .def_ro("compatible_brands", &ProbeResult::compatible_brands)
+            .def_ro("claimed_extension", &ProbeResult::claimed_extension)
+            .def_ro("format_mismatch", &ProbeResult::format_mismatch)
             .def("encoder_string", &ProbeResult::encoder_string)
             .def("primary_video_stream", &ProbeResult::primary_video_stream, nb::rv_policy::reference_internal)
             .def("to_dict", [](const ProbeResult& self) { return to_python(self.to_json()); });

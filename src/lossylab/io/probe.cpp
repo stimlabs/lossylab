@@ -4,6 +4,7 @@
 #include "lossylab/core/json_io.hpp"
 #include "lossylab/core/schema_version.hpp"
 #include "lossylab/detail/ff_error.hpp"
+#include "lossylab/io/image_container.hpp"
 #include "lossylab/io/input_context.hpp"
 
 #include <algorithm>
@@ -175,6 +176,20 @@ namespace lossylab
             return items;
         }
 
+        /// The four-character codes FFmpeg concatenates into its
+        /// `compatible_brands` tag, kept verbatim, including brands padded
+        /// with spaces such as "qt  ".
+        std::vector<std::string> split_brands(const std::string& concatenated)
+        {
+            constexpr std::size_t brand_length = 4;
+            std::vector<std::string> brands;
+            for (std::size_t offset = 0; offset + brand_length <= concatenated.size(); offset += brand_length)
+            {
+                brands.push_back(concatenated.substr(offset, brand_length));
+            }
+            return brands;
+        }
+
         /// True when `extension` (already lowercased, no dot) is one of the
         /// extensions FFmpeg lists for this demuxer. Demuxers list their
         /// extensions in `AVInputFormat::extensions`; where that field is
@@ -216,19 +231,50 @@ namespace lossylab
                              std::string(brand)) != result.compatible_brands.end();
         }
 
-        /// Fills in WebP/AVIF/HEIF-specific properties for a stream, using
-        /// only what plain probing (no decoding) has already recovered:
-        /// whether the pixel format carries alpha, and whether the container
-        /// declared more than one frame. AVIF and HEIF share the ISOBMFF
-        /// container with ordinary MP4/MOV and are told apart by brand.
-        void fill_image_container(const ProbeResult& result, StreamInfo& stream)
+        ImageContainerInfo webp_container_info(const detail::WebpChunks& chunks)
         {
-            const bool is_webp = result.format_name.find("webp") != std::string::npos;
+            ImageContainerInfo info;
+            info.has_alpha = chunks.has_alpha;
+            info.is_animated = chunks.is_animated;
+            info.frame_count = chunks.frame_count;
+            info.canvas_width = chunks.canvas_width;
+            info.canvas_height = chunks.canvas_height;
+            if (chunks.has_lossy && chunks.has_lossless)
+            {
+                info.compression = "mixed";
+            }
+            else if (chunks.has_lossless)
+            {
+                info.compression = "lossless";
+            }
+            else if (chunks.has_lossy)
+            {
+                info.compression = "lossy";
+            }
+            return info;
+        }
+
+        /// Fills in WebP/AVIF/HEIF-specific properties for a stream, without
+        /// decoding. WebP's come from its RIFF chunks, which say what FFmpeg
+        /// does not: lossy or lossless, alpha, and animation. AVIF and HEIF
+        /// share the ISOBMFF container with ordinary MP4/MOV and are told
+        /// apart by brand; theirs come from what probing already recovered.
+        void fill_image_container(const ProbeResult& result, const Source& source, StreamInfo& stream)
+        {
+            if (result.format_name.find("webp") != std::string::npos)
+            {
+                if (const std::optional<detail::WebpChunks> chunks = detail::read_webp_chunks(source))
+                {
+                    stream.image_container = webp_container_info(*chunks);
+                }
+                return;
+            }
+
             const bool is_avif_or_heif =
                 has_brand(result, "avif") || has_brand(result, "avis") ||
                 has_brand(result, "heic") || has_brand(result, "heix") ||
                 has_brand(result, "mif1") || has_brand(result, "msf1");
-            if (!is_webp && !is_avif_or_heif)
+            if (!is_avif_or_heif)
             {
                 return;
             }
@@ -236,11 +282,7 @@ namespace lossylab
             ImageContainerInfo info;
             info.has_alpha = stream.pixel_format.is_valid() && stream.pixel_format.has_alpha();
             info.is_animated = stream.frame_count.has_value() && *stream.frame_count > 1;
-            if (is_avif_or_heif)
-            {
-                info.is_still_image =
-                    stream.frame_count.has_value() && *stream.frame_count == 1;
-            }
+            info.is_still_image = stream.frame_count.has_value() && *stream.frame_count == 1;
             stream.image_container = info;
         }
     }
@@ -251,6 +293,10 @@ namespace lossylab
             {"has_alpha", has_alpha},
             {"is_animated", is_animated},
             {"is_still_image", json::optional_or_null(is_still_image)},
+            {"compression", json::optional_or_null(compression)},
+            {"frame_count", json::optional_or_null(frame_count)},
+            {"canvas_width", json::optional_or_null(canvas_width)},
+            {"canvas_height", json::optional_or_null(canvas_height)},
         });
     }
 
@@ -380,7 +426,7 @@ namespace lossylab
         if (const auto it = result.metadata.find("compatible_brands");
             it != result.metadata.end())
         {
-            result.compatible_brands = split_csv(it->second);
+            result.compatible_brands = split_brands(it->second);
         }
 
         result.streams.reserve(format.nb_streams);
@@ -393,7 +439,7 @@ namespace lossylab
         {
             if (stream.type == "video")
             {
-                fill_image_container(result, stream);
+                fill_image_container(result, source, stream);
             }
         }
 

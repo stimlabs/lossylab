@@ -20,12 +20,28 @@ namespace lossylab
     /// where these questions apply.
     struct ImageContainerInfo
     {
-        /// True when the stream's pixel format carries an alpha plane.
+        /// True when the image carries alpha. For WebP this comes from the
+        /// file's chunks, since FFmpeg decodes every lossless WebP to a format
+        /// with an alpha plane; for AVIF/HEIF, from the stream's pixel format.
         bool has_alpha = false;
 
-        /// True when the container declares more than one frame. Applies to
-        /// WebP (an animated WebP) and to an AVIF/HEIF image sequence.
+        /// True when the container declares more than one frame: an animated
+        /// WebP, or an AVIF/HEIF image sequence.
         bool is_animated = false;
+
+        /// WebP only: "lossy" (VP8 image data), "lossless" (VP8L), or
+        /// "mixed" for an animation whose frames use both. FFmpeg reports one
+        /// codec for all of them.
+        std::optional<std::string> compression;
+
+        /// WebP only: the number of frames the file declares, 1 for a still.
+        std::optional<std::int64_t> frame_count;
+
+        /// WebP only: the extended header's canvas size, when the file has
+        /// one. The only size available for an animated WebP, which FFmpeg's
+        /// WebP reader cannot open, so its stream reports 0x0.
+        std::optional<int> canvas_width;
+        std::optional<int> canvas_height;
 
         /// True when an AVIF/HEIF file holds exactly one image rather than a
         /// sequence. Unset for WebP, where "still" isn't the complementary

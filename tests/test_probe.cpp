@@ -130,14 +130,131 @@ namespace
         assert(!video->image_container.has_value());
     }
 
+    ImageContainerInfo webp_container(const Source& source)
+    {
+        const ProbeResult result = probe(source);
+        const StreamInfo* stream = result.primary_video_stream();
+        assert(stream != nullptr);
+        assert(stream->image_container.has_value());
+        return *stream->image_container;
+    }
+
+    ImageContainerInfo webp_container(const char* fixture)
+    {
+        return webp_container(Source::from_path(data_path(fixture)));
+    }
+
+    void test_a_lossy_webp_is_reported_lossy()
+    {
+        const ImageContainerInfo info = webp_container("testsrc_64x48_lossy.webp");
+        assert(info.compression == "lossy");
+        assert(!info.has_alpha);
+        assert(!info.is_animated);
+        assert(info.frame_count == 1);
+        assert(!info.is_still_image.has_value());
+    }
+
+    void test_a_lossless_webp_without_alpha_is_not_reported_as_alpha()
+    {
+        // FFmpeg decodes every lossless WebP to argb, so the pixel format
+        // alone would claim alpha here.
+        const ImageContainerInfo info = webp_container("testsrc_64x48_lossless.webp");
+        assert(info.compression == "lossless");
+        assert(!info.has_alpha);
+    }
+
+    void test_webp_alpha_is_read_from_its_chunks()
+    {
+        const ImageContainerInfo lossy = webp_container("testsrc_64x48_lossy_alpha.webp");
+        assert(lossy.compression == "lossy");
+        assert(lossy.has_alpha);
+        assert(lossy.canvas_width == 64);
+        assert(lossy.canvas_height == 48);
+
+        const ImageContainerInfo lossless = webp_container("testsrc_64x48_lossless_alpha.webp");
+        assert(lossless.compression == "lossless");
+        assert(lossless.has_alpha);
+    }
+
+    void test_an_animated_webp_counts_its_frames()
+    {
+        // FFmpeg cannot open an animated WebP, so everything here comes from
+        // the chunks.
+        const ImageContainerInfo info = webp_container("testsrc_64x48_animated.webp");
+        assert(info.is_animated);
+        assert(info.frame_count == 2);
+        assert(info.canvas_width == 64);
+        assert(info.canvas_height == 48);
+        assert(info.compression.has_value());
+    }
+
+    /// A RIFF chunk: fourcc, little-endian size, payload, padding to even.
+    std::vector<std::uint8_t> riff_chunk(const std::string& fourcc, const std::vector<std::uint8_t>& payload)
+    {
+        std::vector<std::uint8_t> chunk(fourcc.begin(), fourcc.end());
+        const auto size = static_cast<std::uint32_t>(payload.size());
+        for (int shift = 0; shift < 32; shift += 8)
+        {
+            chunk.push_back(static_cast<std::uint8_t>(size >> shift));
+        }
+        chunk.insert(chunk.end(), payload.begin(), payload.end());
+        if (payload.size() % 2 == 1)
+        {
+            chunk.push_back(0);
+        }
+        return chunk;
+    }
+
+    /// The image-data chunk of a simple (non-extended) WebP file: everything
+    /// after the 12-byte RIFF header.
+    std::vector<std::uint8_t> image_chunk_of(const char* fixture)
+    {
+        const std::vector<std::uint8_t> bytes = read_file(data_path(fixture));
+        return {bytes.begin() + 12, bytes.end()};
+    }
+
+    void test_an_animation_mixing_lossy_and_lossless_frames_is_mixed()
+    {
+        // Assembled from the lossy and lossless fixtures' image chunks, each
+        // wrapped in an ANMF frame at the origin.
+        const std::vector<std::uint8_t> frame_header = {0, 0, 0, 0, 0, 0, 63, 0, 0, 47, 0, 0, 100, 0, 0, 0};
+        std::vector<std::uint8_t> lossy_frame = frame_header;
+        const std::vector<std::uint8_t> lossy_image = image_chunk_of("testsrc_64x48_lossy.webp");
+        lossy_frame.insert(lossy_frame.end(), lossy_image.begin(), lossy_image.end());
+        std::vector<std::uint8_t> lossless_frame = frame_header;
+        const std::vector<std::uint8_t> lossless_image = image_chunk_of("testsrc_64x48_lossless.webp");
+        lossless_frame.insert(lossless_frame.end(), lossless_image.begin(), lossless_image.end());
+
+        std::vector<std::uint8_t> body = {'W', 'E', 'B', 'P'};
+        for (const std::vector<std::uint8_t>& chunk :
+             {riff_chunk("VP8X", {0x02, 0, 0, 0, 63, 0, 0, 47, 0, 0}), riff_chunk("ANIM", {0, 0, 0, 0, 0, 0}),
+              riff_chunk("ANMF", lossy_frame), riff_chunk("ANMF", lossless_frame)})
+        {
+            body.insert(body.end(), chunk.begin(), chunk.end());
+        }
+        std::vector<std::uint8_t> file = riff_chunk("RIFF", body);
+
+        const ImageContainerInfo info = webp_container(Source::from_bytes(std::move(file), "webp"));
+        assert(info.compression == "mixed");
+        assert(info.frame_count == 2);
+    }
+
+    void test_webp_container_info_from_memory_matches_path()
+    {
+        const ImageContainerInfo from_path = webp_container("testsrc_64x48_lossy_alpha.webp");
+        const ImageContainerInfo from_memory =
+            webp_container(Source::from_bytes(read_file(data_path("testsrc_64x48_lossy_alpha.webp"))));
+        assert(from_path.to_json() == from_memory.to_json());
+    }
+
     void test_an_mp4_reports_its_brands_and_encoder()
     {
         const ProbeResult result = probe(Source::from_path(data_path(video_fixture)));
 
         // Brands and encoder strings are the cheapest strong evidence of which tool
         // produced a file, so they must come through verbatim.
-        assert(!result.major_brand.empty());
-        assert(!result.compatible_brands.empty());
+        assert(result.major_brand == "isom");
+        assert(result.compatible_brands == (std::vector<std::string>{"isom", "iso2", "avc1", "mp41"}));
 
         const std::optional<std::string> encoder = result.encoder_string();
         assert(encoder.has_value());
@@ -356,6 +473,12 @@ int main()
     test_a_constant_frame_rate_video_is_not_flagged_variable();
     test_probe_result_carries_the_schema_version();
     test_non_image_streams_have_no_image_container_info();
+    test_a_lossy_webp_is_reported_lossy();
+    test_a_lossless_webp_without_alpha_is_not_reported_as_alpha();
+    test_webp_alpha_is_read_from_its_chunks();
+    test_an_animated_webp_counts_its_frames();
+    test_an_animation_mixing_lossy_and_lossless_frames_is_mixed();
+    test_webp_container_info_from_memory_matches_path();
     test_probing_from_memory_matches_probing_from_a_path();
     test_an_owning_memory_source_keeps_its_bytes_alive();
     test_a_copied_owning_source_outlives_the_original();
