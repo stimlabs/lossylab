@@ -7,6 +7,58 @@ import lossylab
 DATA_DIR = Path(__file__).resolve().parents[2] / "tests" / "data"
 
 
+def truncated_mp4():
+    # The fixture's moov atom is at the end, so its first half cannot be demuxed.
+    data = (DATA_DIR / "testsrc_64x48.mp4").read_bytes()
+    return lossylab.Source.from_bytes(data[: len(data) // 2])
+
+
+def damaged_mp4():
+    # Flipped bits in the first frame's slice data: decodes, with logged damage.
+    data = bytearray((DATA_DIR / "testsrc_64x48.mp4").read_bytes())
+    for i in range(1200, 1500):
+        data[i] ^= 0x55
+    return lossylab.Source.from_bytes(bytes(data))
+
+
+def test_a_failed_capture_keeps_what_ffmpeg_logged():
+    result = lossylab.capture_probe(truncated_mp4())
+    assert not result.ok()
+    assert any("moov atom not found" in message.text for message in result.log())
+    assert result.log()[0].level == lossylab.LogLevel.Error
+    assert result.to_dict()["log"][0]["level"] == "error"
+
+
+def test_a_damaged_video_decodes_with_its_errors_logged():
+    result = lossylab.capture_video_frames(damaged_mp4(), lossylab.FrameSelector.all())
+    assert result.ok()
+    assert any("concealing" in message.text for message in result.log())
+
+
+def test_a_clean_capture_has_an_empty_log():
+    result = lossylab.capture_video_frames(
+        lossylab.Source.from_path(str(DATA_DIR / "testsrc_64x48.mp4")), lossylab.FrameSelector.all()
+    )
+    assert result.log() == []
+
+
+def test_threads_keep_their_logs_apart():
+    from concurrent.futures import ThreadPoolExecutor
+
+    def run(index):
+        if index % 2 == 0:
+            return lossylab.capture_probe(truncated_mp4()).log()
+        return lossylab.capture_probe(lossylab.Source.from_path(str(DATA_DIR / "testsrc_64x48.png"))).log()
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        logs = list(pool.map(run, range(16)))
+    for index, log in enumerate(logs):
+        if index % 2 == 0:
+            assert any("moov atom not found" in message.text for message in log)
+        else:
+            assert log == []
+
+
 def test_capture_probe_returns_the_value_on_success():
     result = lossylab.capture_probe(lossylab.Source.from_path(str(DATA_DIR / "testsrc_64x48.png")))
     assert result.ok()

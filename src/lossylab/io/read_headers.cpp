@@ -669,7 +669,7 @@ namespace lossylab
 
         // The capture has to be open before av_bsf_init, which traces the
         // extradata's parameter sets.
-        const detail::ScopedLogCapture capture(
+        const detail::ContextLogCapture capture(
             filter.get(), [&collector](const int level, const char* log_format, va_list args)
             { return collector.on_log(level, log_format, args); });
         LL_FF_CHECK(av_bsf_init(filter.get()));

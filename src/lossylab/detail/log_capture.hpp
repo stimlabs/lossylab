@@ -13,28 +13,28 @@ namespace lossylab::detail
     using LogSink = std::function<bool(int level, const char* format, va_list args)>;
 
     /// While alive, hands every log call the current thread makes against
-    /// `context` to `sink` before the library's log handler sees it. Installs
-    /// the library's log callback if it is not installed yet.
-    class ScopedLogCapture
+    /// `context` to `sink`, ahead of any LogCapture and the log handler.
+    /// Installs the library's log callback.
+    class ContextLogCapture
     {
     public:
-        ScopedLogCapture(const void* context, LogSink sink);
-        ~ScopedLogCapture();
+        ContextLogCapture(const void* context, LogSink sink);
+        ~ContextLogCapture();
 
-        ScopedLogCapture(const ScopedLogCapture&) = delete;
-        ScopedLogCapture& operator=(const ScopedLogCapture&) = delete;
-        ScopedLogCapture(ScopedLogCapture&&) = delete;
-        ScopedLogCapture& operator=(ScopedLogCapture&&) = delete;
+        ContextLogCapture(const ContextLogCapture&) = delete;
+        ContextLogCapture& operator=(const ContextLogCapture&) = delete;
+        ContextLogCapture(ContextLogCapture&&) = delete;
+        ContextLogCapture& operator=(ContextLogCapture&&) = delete;
 
     private:
         const void* m_context;
         LogSink m_sink;
-        ScopedLogCapture* m_previous;
+        ContextLogCapture* m_previous;
 
-        friend bool dispatch_to_capture(const void* context, int level, const char* format, va_list args);
+        friend bool dispatch_to_context_capture(const void* context, int level, const char* format, va_list args);
     };
 
-    /// Offers a log call to the capture active on this thread. Returns true
-    /// when a capture consumed it.
-    bool dispatch_to_capture(const void* context, int level, const char* format, va_list args);
+    /// Offers a log call to the context captures active on this thread.
+    /// Returns true when one consumed it.
+    bool dispatch_to_context_capture(const void* context, int level, const char* format, va_list args);
 }

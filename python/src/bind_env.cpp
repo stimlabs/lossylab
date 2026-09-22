@@ -156,7 +156,9 @@ namespace lossylab::pybind
         nb::class_<LogMessage>(m, "LogMessage")
             .def_ro("level", &LogMessage::level)
             .def_ro("component", &LogMessage::component)
-            .def_ro("text", &LogMessage::text);
+            .def_ro("text", &LogMessage::text)
+            .def("__eq__", [](const LogMessage& self, const LogMessage& other) { return self == other; })
+            .def("to_dict", [](const LogMessage& self) { return to_python(self.to_json()); });
 
         // set_log_handler installs a process-global callback that FFmpeg calls
         // from arbitrary internal threads, not just from a thread that released

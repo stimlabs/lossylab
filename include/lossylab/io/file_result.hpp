@@ -3,6 +3,7 @@
 #include "lossylab/core/error.hpp"
 #include "lossylab/core/json.hpp"
 #include "lossylab/core/json_io.hpp"
+#include "lossylab/env/log.hpp"
 #include "lossylab/io/source.hpp"
 
 #include <exception>
@@ -11,6 +12,7 @@
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace lossylab
 {
@@ -90,15 +92,29 @@ namespace lossylab
     }
 
     /// The outcome of one operation on one input file: either its result or
-    /// the FileError that replaced the exception it threw.
+    /// the FileError that replaced the exception it threw, together with the
+    /// FFmpeg log lines the operation produced.
     template <typename T>
     class FileResult
     {
     public:
-        explicit FileResult(T value) : m_outcome(std::in_place_index<0>, std::move(value)) {}
-        explicit FileResult(FileError error) : m_outcome(std::in_place_index<1>, std::move(error)) {}
+        explicit FileResult(T value, std::vector<LogMessage> log = {})
+            : m_outcome(std::in_place_index<0>, std::move(value)), m_log(std::move(log))
+        {
+        }
+
+        explicit FileResult(FileError error, std::vector<LogMessage> log = {})
+            : m_outcome(std::in_place_index<1>, std::move(error)), m_log(std::move(log))
+        {
+        }
 
         [[nodiscard]] bool ok() const noexcept { return m_outcome.index() == 0; }
+
+        /// What FFmpeg logged on the calling thread while the operation ran,
+        /// whether it succeeded or not. A file that decoded
+        /// but logged errors along the way is damaged, and this is where that
+        /// shows.
+        [[nodiscard]] const std::vector<LogMessage>& log() const noexcept { return m_log; }
 
         /// The result. Throws ConfigError, carrying the stored error's
         /// message, when the operation failed.
@@ -130,15 +146,24 @@ namespace lossylab
             return std::get<1>(m_outcome);
         }
 
-        /// {"ok": true, "value": ...} or {"ok": false, "error": ...}.
+        /// {"ok": true, "value": ..., "log": [...]} or
+        /// {"ok": false, "error": ..., "log": [...]}.
         [[nodiscard]] json::Value to_json() const
             requires json::Writable<T>
         {
             if (ok())
             {
-                return json::object({{"ok", true}, {"value", std::get<0>(m_outcome).to_json()}});
+                return json::object({
+                    {"ok", true},
+                    {"value", std::get<0>(m_outcome).to_json()},
+                    {"log", json::to_array(m_log)},
+                });
             }
-            return json::object({{"ok", false}, {"error", std::get<1>(m_outcome).to_json()}});
+            return json::object({
+                {"ok", false},
+                {"error", std::get<1>(m_outcome).to_json()},
+                {"log", json::to_array(m_log)},
+            });
         }
 
     private:
@@ -153,23 +178,30 @@ namespace lossylab
         }
 
         std::variant<T, FileError> m_outcome;
+        std::vector<LogMessage> m_log;
     };
 
     /// Runs `operation` and returns its result, or the FileError describing
     /// whatever it threw. Nothing escapes: every exception, library or not,
-    /// becomes a FileError attributed to `operation_name` and `source`.
+    /// becomes a FileError attributed to `operation_name` and `source`. What
+    /// FFmpeg logs on this thread meanwhile, at Info level and above, is
+    /// collected by a LogCapture into the result's `log()`. Info is included
+    /// because decoders report concealed damage there.
     template <typename Operation>
     [[nodiscard]] auto capture(std::string operation_name, const Source& source, Operation&& operation)
         -> FileResult<std::invoke_result_t<Operation>>
     {
         using Value = std::invoke_result_t<Operation>;
+        LogCapture log_capture(LogLevel::Info);
         try
         {
-            return FileResult<Value>(std::forward<Operation>(operation)());
+            Value value = std::forward<Operation>(operation)();
+            return FileResult<Value>(std::move(value), log_capture.take());
         }
         catch (...)
         {
-            return FileResult<Value>(FileError::from_current_exception(std::move(operation_name), source.describe()));
+            FileError error = FileError::from_current_exception(std::move(operation_name), source.describe());
+            return FileResult<Value>(std::move(error), log_capture.take());
         }
     }
 }

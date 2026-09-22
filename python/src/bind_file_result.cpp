@@ -34,7 +34,9 @@ namespace lossylab::pybind
                     "value", [](const FileResult<T>& self) -> const T& { return self.value(); },
                     nb::rv_policy::reference_internal, "The result. Raises ConfigError when the operation failed.")
                 .def("error", &FileResult<T>::error, nb::rv_policy::reference_internal,
-                     "The error. Raises ConfigError when the operation succeeded.");
+                     "The error. Raises ConfigError when the operation succeeded.")
+                .def("log", &FileResult<T>::log, nb::rv_policy::reference_internal,
+                     "What FFmpeg logged on the calling thread while the operation ran, at Info and above.");
         }
     }
 
