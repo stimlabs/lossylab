@@ -5,6 +5,7 @@
 
 #include <cassert>
 #include <cstdio>
+#include <optional>
 #include <vector>
 
 using namespace lossylab;
@@ -166,6 +167,15 @@ namespace
         const Source source = Source::from_bytes(read_file(data_path(png_fixture)));
         const ProbeResult result = probe(source);
         assert(result.primary_video_stream() != nullptr);
+    }
+
+    void test_a_copied_owning_source_outlives_the_original()
+    {
+        std::optional<Source> original = Source::from_bytes(read_file(data_path(png_fixture)));
+        const Source copy = *original;
+        original.reset();
+        assert(copy.bytes().size() == read_file(data_path(png_fixture)).size());
+        assert(probe(copy).primary_video_stream() != nullptr);
     }
 
     void test_probe_failures_are_reported_not_guessed()
@@ -348,6 +358,7 @@ int main()
     test_non_image_streams_have_no_image_container_info();
     test_probing_from_memory_matches_probing_from_a_path();
     test_an_owning_memory_source_keeps_its_bytes_alive();
+    test_a_copied_owning_source_outlives_the_original();
     test_probe_failures_are_reported_not_guessed();
     test_probe_serializes();
     test_decoding_a_png_gives_native_planes();

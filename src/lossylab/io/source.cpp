@@ -42,13 +42,18 @@ namespace lossylab
     {
         Source source;
         source.m_owned_bytes = std::move(bytes);
-        source.m_borrowed_bytes = std::span<const std::uint8_t>(source.m_owned_bytes);
         source.m_extension_hint = lowercase(std::move(extension_hint));
         return source;
     }
 
     std::span<const std::uint8_t> Source::bytes() const noexcept
     {
+        // Spanned on each call rather than stored, so a copied Source reads its
+        // own buffer instead of the one it was copied from.
+        if (!m_owned_bytes.empty())
+        {
+            return m_owned_bytes;
+        }
         return m_borrowed_bytes;
     }
 
@@ -74,6 +79,6 @@ namespace lossylab
         {
             return m_path;
         }
-        return "<" + std::to_string(m_borrowed_bytes.size()) + " bytes in memory>";
+        return "<" + std::to_string(bytes().size()) + " bytes in memory>";
     }
 }
