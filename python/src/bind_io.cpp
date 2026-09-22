@@ -83,9 +83,30 @@ namespace lossylab::pybind
             .def_ro("metadata", &StreamInfo::metadata)
             .def_ro("has_hdr_metadata", &StreamInfo::has_hdr_metadata)
             .def_ro("image_container", &StreamInfo::image_container)
+            .def_ro("is_default", &StreamInfo::is_default)
+            .def_ro("is_dependent", &StreamInfo::is_dependent)
             .def("to_dict", [](const StreamInfo& self) { return to_python(self.to_json()); });
 
-        nb::class_<ProbeResult>(m, "ProbeResult")
+        auto tile_grid = nb::class_<TileGrid>(m, "TileGrid");
+        nb::class_<TileGrid::Tile>(tile_grid, "Tile")
+            .def_ro("stream_index", &TileGrid::Tile::stream_index)
+            .def_ro("x", &TileGrid::Tile::x)
+            .def_ro("y", &TileGrid::Tile::y);
+        tile_grid.def_ro("id", &TileGrid::id)
+            .def_ro("is_primary", &TileGrid::is_primary)
+            .def_ro("title", &TileGrid::title)
+            .def_ro("width", &TileGrid::width)
+            .def_ro("height", &TileGrid::height)
+            .def_ro("coded_width", &TileGrid::coded_width)
+            .def_ro("coded_height", &TileGrid::coded_height)
+            .def_ro("tiles", &TileGrid::tiles)
+            .def("to_dict", [](const TileGrid& self) { return to_python(self.to_json()); });
+
+        auto probe_result = nb::class_<ProbeResult>(m, "ProbeResult");
+        nb::class_<ProbeResult::AdditionalImages>(probe_result, "AdditionalImages")
+            .def_ro("stream_indices", &ProbeResult::AdditionalImages::stream_indices)
+            .def_ro("tile_grid_ids", &ProbeResult::AdditionalImages::tile_grid_ids);
+        probe_result
             .def_ro("format_name", &ProbeResult::format_name)
             .def_ro("format_long_name", &ProbeResult::format_long_name)
             .def_ro("duration_us", &ProbeResult::duration_us)
@@ -98,7 +119,10 @@ namespace lossylab::pybind
             .def_ro("claimed_extension", &ProbeResult::claimed_extension)
             .def_ro("format_mismatch", &ProbeResult::format_mismatch)
             .def("encoder_string", &ProbeResult::encoder_string)
+            .def_ro("tile_grids", &ProbeResult::tile_grids)
             .def("primary_video_stream", &ProbeResult::primary_video_stream, nb::rv_policy::reference_internal)
+            .def("primary_tile_grid", &ProbeResult::primary_tile_grid, nb::rv_policy::reference_internal)
+            .def("additional_images", &ProbeResult::additional_images)
             .def("to_dict", [](const ProbeResult& self) { return to_python(self.to_json()); });
 
         m.def("probe", &probe, "source"_a, nb::call_guard<nb::gil_scoped_release>());

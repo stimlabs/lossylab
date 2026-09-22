@@ -15,6 +15,17 @@ namespace lossylab
         /// Finds the video stream carrying the image.
         int find_image_stream(AVFormatContext& format)
         {
+            // Decoding any one stream of a grid image would return one tile
+            // as though it were the picture.
+            for (unsigned int i = 0; i < format.nb_stream_groups; ++i)
+            {
+                const AVStreamGroup& group = *format.stream_groups[i];
+                if (group.type == AV_STREAM_GROUP_PARAMS_TILE_GRID && (group.disposition & AV_DISPOSITION_DEFAULT) != 0)
+                {
+                    throw NotImplemented("decode_image() for tile-grid images");
+                }
+            }
+
             const int index =
                 av_find_best_stream(&format, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
             if (index < 0)

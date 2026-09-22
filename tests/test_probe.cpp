@@ -247,6 +247,92 @@ namespace
         assert(from_path.to_json() == from_memory.to_json());
     }
 
+    // AVIF fixtures made by avifenc 1.0.4 from a 128x96 testsrc frame: a single
+    // image with an alpha auxiliary image, and 2x2 grids of 64x64 tiles with
+    // and without an alpha grid.
+    const char* avif_alpha_fixture = "testsrc_128x96_alpha.avif";
+    const char* avif_grid_fixture = "testsrc_128x96_grid.avif";
+    const char* avif_grid_alpha_fixture = "testsrc_128x96_grid_alpha.avif";
+
+    void test_a_grid_image_reports_its_tile_grid()
+    {
+        const ProbeResult result = probe(Source::from_path(data_path(avif_grid_fixture)));
+        assert(result.major_brand == "avif");
+        assert(result.tile_grids.size() == std::size_t{1});
+
+        const TileGrid* grid = result.primary_tile_grid();
+        assert(grid != nullptr);
+        assert(grid->title == "Color");
+        assert(grid->width == 128);
+        assert(grid->height == 96);
+        assert(grid->tiles.size() == std::size_t{4});
+        for (const TileGrid::Tile& tile : grid->tiles)
+        {
+            assert(result.streams[static_cast<std::size_t>(tile.stream_index)].is_dependent);
+            assert(tile.x == 0 || tile.x == 64);
+            assert(tile.y == 0 || tile.y == 64);
+        }
+        assert(grid->tiles[3].x == 64 && grid->tiles[3].y == 64);
+    }
+
+    void test_a_grid_image_has_no_primary_stream()
+    {
+        // Every stream is one tile, so none of them is the picture.
+        const ProbeResult result = probe(Source::from_path(data_path(avif_grid_fixture)));
+        assert(result.primary_video_stream() == nullptr);
+        assert(result.additional_images().stream_indices.empty());
+        assert(result.additional_images().tile_grid_ids.empty());
+    }
+
+    void test_an_alpha_grid_is_an_additional_image()
+    {
+        const ProbeResult result = probe(Source::from_path(data_path(avif_grid_alpha_fixture)));
+        assert(result.tile_grids.size() == std::size_t{2});
+        assert(result.primary_tile_grid()->title == "Color");
+
+        const ProbeResult::AdditionalImages additional = result.additional_images();
+        assert(additional.stream_indices.empty());
+        assert(additional.tile_grid_ids.size() == std::size_t{1});
+        const TileGrid& alpha = result.tile_grids[1];
+        assert(alpha.id == additional.tile_grid_ids[0]);
+        assert(!alpha.is_primary);
+        assert(alpha.title == "Alpha");
+    }
+
+    void test_a_single_image_alpha_plane_is_an_additional_image()
+    {
+        const ProbeResult result = probe(Source::from_path(data_path(avif_alpha_fixture)));
+        const StreamInfo* primary = result.primary_video_stream();
+        assert(primary != nullptr);
+        assert(primary->index == 0);
+        assert(primary->is_default);
+        assert(primary->image_container->is_still_image == true);
+
+        const ProbeResult::AdditionalImages additional = result.additional_images();
+        assert(additional.stream_indices == std::vector<int>{1});
+        assert(result.streams[1].metadata.at("title") == "Alpha");
+        assert(result.tile_grids.empty());
+    }
+
+    void test_a_video_has_no_additional_images()
+    {
+        const ProbeResult result = probe(Source::from_path(data_path(video_fixture)));
+        assert(result.primary_video_stream()->is_default);
+        assert(result.additional_images().stream_indices.empty());
+    }
+
+    void test_decode_image_refuses_a_grid_rather_than_returning_a_tile()
+    {
+        try
+        {
+            static_cast<void>(decode_image(Source::from_path(data_path(avif_grid_fixture))));
+            assert(false && "expected NotImplemented");
+        }
+        catch (const NotImplemented&)
+        {
+        }
+    }
+
     void test_an_mp4_reports_its_brands_and_encoder()
     {
         const ProbeResult result = probe(Source::from_path(data_path(video_fixture)));
@@ -479,6 +565,12 @@ int main()
     test_an_animated_webp_counts_its_frames();
     test_an_animation_mixing_lossy_and_lossless_frames_is_mixed();
     test_webp_container_info_from_memory_matches_path();
+    test_a_grid_image_reports_its_tile_grid();
+    test_a_grid_image_has_no_primary_stream();
+    test_an_alpha_grid_is_an_additional_image();
+    test_a_single_image_alpha_plane_is_an_additional_image();
+    test_a_video_has_no_additional_images();
+    test_decode_image_refuses_a_grid_rather_than_returning_a_tile();
     test_probing_from_memory_matches_probing_from_a_path();
     test_an_owning_memory_source_keeps_its_bytes_alive();
     test_a_copied_owning_source_outlives_the_original();

@@ -107,6 +107,29 @@ def test_an_animated_webp_reports_its_frames_and_canvas():
     assert (info.canvas_width, info.canvas_height) == (64, 48)
 
 
+def test_a_grid_avif_reports_its_tile_grid():
+    result = lossylab.probe(lossylab.Source.from_path(str(DATA_DIR / "testsrc_128x96_grid_alpha.avif")))
+    assert result.primary_video_stream() is None
+
+    grid = result.primary_tile_grid()
+    assert (grid.width, grid.height) == (128, 96)
+    assert grid.title == "Color"
+    assert sorted((tile.x, tile.y) for tile in grid.tiles) == [(0, 0), (0, 64), (64, 0), (64, 64)]
+    assert all(result.streams[tile.stream_index].is_dependent for tile in grid.tiles)
+
+    additional = result.additional_images()
+    assert additional.stream_indices == []
+    assert [grid.title for grid in result.tile_grids if grid.id in additional.tile_grid_ids] == ["Alpha"]
+    assert result.to_dict()["tile_grids"][0]["is_primary"] is True
+
+
+def test_a_single_avif_reports_its_alpha_plane_as_an_additional_image():
+    result = lossylab.probe(lossylab.Source.from_path(str(DATA_DIR / "testsrc_128x96_alpha.avif")))
+    assert result.primary_video_stream().is_default is True
+    assert result.additional_images().stream_indices == [1]
+    assert result.streams[1].metadata["title"] == "Alpha"
+
+
 def test_to_dict_round_trips_through_json():
     source = lossylab.Source.from_path(str(DATA_DIR / "testsrc_64x48.png"))
     document = lossylab.probe(source).to_dict()

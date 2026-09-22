@@ -158,6 +158,39 @@ namespace lossylab
             }
 
             info.metadata = read_metadata(stream.metadata);
+            info.is_default = (stream.disposition & AV_DISPOSITION_DEFAULT) != 0;
+            info.is_dependent = (stream.disposition & AV_DISPOSITION_DEPENDENT) != 0;
+            return info;
+        }
+
+        TileGrid read_tile_grid(const AVStreamGroup& group)
+        {
+            const AVStreamGroupTileGrid& grid = *group.params.tile_grid;
+
+            TileGrid info;
+            info.id = group.id;
+            info.is_primary = (group.disposition & AV_DISPOSITION_DEFAULT) != 0;
+            if (const AVDictionaryEntry* title = av_dict_get(group.metadata, "title", nullptr, 0))
+            {
+                info.title = title->value;
+            }
+            info.width = grid.width;
+            info.height = grid.height;
+            info.coded_width = grid.coded_width;
+            info.coded_height = grid.coded_height;
+
+            // An offset names its tile by position within the group, not by
+            // the stream's index in the file.
+            for (unsigned int i = 0; i < grid.nb_tiles; ++i)
+            {
+                const unsigned int position = grid.offsets[i].idx;
+                if (position >= group.nb_streams)
+                {
+                    continue;
+                }
+                info.tiles.push_back(TileGrid::Tile{group.streams[position]->index, grid.offsets[i].horizontal,
+                                                    grid.offsets[i].vertical});
+            }
             return info;
         }
 
@@ -231,6 +264,14 @@ namespace lossylab
                              std::string(brand)) != result.compatible_brands.end();
         }
 
+        /// AVIF and HEIF share the ISOBMFF container with ordinary MP4/MOV
+        /// and are told apart by brand.
+        bool is_image_item_container(const ProbeResult& result)
+        {
+            return has_brand(result, "avif") || has_brand(result, "avis") || has_brand(result, "heic") ||
+                   has_brand(result, "heix") || has_brand(result, "mif1") || has_brand(result, "msf1");
+        }
+
         ImageContainerInfo webp_container_info(const detail::WebpChunks& chunks)
         {
             ImageContainerInfo info;
@@ -256,9 +297,8 @@ namespace lossylab
 
         /// Fills in WebP/AVIF/HEIF-specific properties for a stream, without
         /// decoding. WebP's come from its RIFF chunks, which say what FFmpeg
-        /// does not: lossy or lossless, alpha, and animation. AVIF and HEIF
-        /// share the ISOBMFF container with ordinary MP4/MOV and are told
-        /// apart by brand; theirs come from what probing already recovered.
+        /// does not: lossy or lossless, alpha, and animation. AVIF's and
+        /// HEIF's come from what probing already recovered.
         void fill_image_container(const ProbeResult& result, const Source& source, StreamInfo& stream)
         {
             if (result.format_name.find("webp") != std::string::npos)
@@ -270,11 +310,7 @@ namespace lossylab
                 return;
             }
 
-            const bool is_avif_or_heif =
-                has_brand(result, "avif") || has_brand(result, "avis") ||
-                has_brand(result, "heic") || has_brand(result, "heix") ||
-                has_brand(result, "mif1") || has_brand(result, "msf1");
-            if (!is_avif_or_heif)
+            if (!is_image_item_container(result))
             {
                 return;
             }
@@ -297,6 +333,25 @@ namespace lossylab
             {"frame_count", json::optional_or_null(frame_count)},
             {"canvas_width", json::optional_or_null(canvas_width)},
             {"canvas_height", json::optional_or_null(canvas_height)},
+        });
+    }
+
+    json::Value TileGrid::to_json() const
+    {
+        json::Array tile_values;
+        for (const Tile& tile : tiles)
+        {
+            tile_values.push_back(json::object({{"stream_index", tile.stream_index}, {"x", tile.x}, {"y", tile.y}}));
+        }
+        return json::object({
+            {"id", id},
+            {"is_primary", is_primary},
+            {"title", title},
+            {"width", width},
+            {"height", height},
+            {"coded_width", coded_width},
+            {"coded_height", coded_height},
+            {"tiles", json::array(std::move(tile_values))},
         });
     }
 
@@ -325,6 +380,8 @@ namespace lossylab
             {"duration_us", json::optional_or_null(duration_us)},
             {"bit_rate", json::optional_or_null(bit_rate)},
             {"has_hdr_metadata", has_hdr_metadata},
+            {"is_default", is_default},
+            {"is_dependent", is_dependent},
             {"image_container", json::optional_or_null(image_container)},
             {"metadata", json::to_object(metadata)},
         });
@@ -351,12 +408,57 @@ namespace lossylab
     {
         for (const StreamInfo& stream : streams)
         {
-            if (stream.type == "video")
+            if (stream.type == "video" && stream.is_default)
+            {
+                return &stream;
+            }
+        }
+        for (const StreamInfo& stream : streams)
+        {
+            if (stream.type == "video" && !stream.is_dependent)
             {
                 return &stream;
             }
         }
         return nullptr;
+    }
+
+    const TileGrid* ProbeResult::primary_tile_grid() const noexcept
+    {
+        for (const TileGrid& grid : tile_grids)
+        {
+            if (grid.is_primary)
+            {
+                return &grid;
+            }
+        }
+        return nullptr;
+    }
+
+    ProbeResult::AdditionalImages ProbeResult::additional_images() const
+    {
+        AdditionalImages additional;
+        if (!is_image_item_container(*this))
+        {
+            return additional;
+        }
+
+        const StreamInfo* primary = primary_video_stream();
+        for (const StreamInfo& stream : streams)
+        {
+            if (stream.type == "video" && !stream.is_dependent && &stream != primary)
+            {
+                additional.stream_indices.push_back(stream.index);
+            }
+        }
+        for (const TileGrid& grid : tile_grids)
+        {
+            if (!grid.is_primary)
+            {
+                additional.tile_grid_ids.push_back(grid.id);
+            }
+        }
+        return additional;
     }
 
     json::Value ProbeResult::to_json() const
@@ -375,6 +477,7 @@ namespace lossylab
             {"format_mismatch", format_mismatch},
             {"metadata", json::to_object(metadata)},
             {"streams", json::to_array(streams)},
+            {"tile_grids", json::to_array(tile_grids)},
         });
     }
 
@@ -433,6 +536,15 @@ namespace lossylab
         for (unsigned i = 0; i < format.nb_streams; ++i)
         {
             result.streams.push_back(read_stream(*format.streams[i]));
+        }
+
+        for (unsigned int i = 0; i < format.nb_stream_groups; ++i)
+        {
+            const AVStreamGroup& group = *format.stream_groups[i];
+            if (group.type == AV_STREAM_GROUP_PARAMS_TILE_GRID)
+            {
+                result.tile_grids.push_back(read_tile_grid(group));
+            }
         }
 
         for (StreamInfo& stream : result.streams)

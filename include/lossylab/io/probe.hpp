@@ -22,7 +22,10 @@ namespace lossylab
     {
         /// True when the image carries alpha. For WebP this comes from the
         /// file's chunks, since FFmpeg decodes every lossless WebP to a format
-        /// with an alpha plane; for AVIF/HEIF, from the stream's pixel format.
+        /// with an alpha plane. For AVIF/HEIF it comes from the stream's pixel
+        /// format, which misses the usual case of alpha stored as a separate
+        /// auxiliary image: FFmpeg reports that as another stream (see
+        /// `ProbeResult::additional_images()`) without saying it is alpha.
         bool has_alpha = false;
 
         /// True when the container declares more than one frame: an animated
@@ -112,10 +115,54 @@ namespace lossylab
         /// level side data.
         bool has_hdr_metadata = false;
 
+        /// The container marks this stream as the one to present by default.
+        /// In AVIF/HEIF, the primary image.
+        bool is_default = false;
+
+        /// The stream is only a part of something else. In AVIF/HEIF, one
+        /// tile of a grid image; see `ProbeResult::tile_grids`.
+        bool is_dependent = false;
+
         /// WebP- or AVIF/HEIF-specific properties. Empty for every other
         /// format, and for these formats when the build's demuxer did not
         /// expose enough to fill it in.
         std::optional<ImageContainerInfo> image_container;
+
+        [[nodiscard]] json::Value to_json() const;
+    };
+
+    /// An image assembled from tiles, as AVIF/HEIF grid images are: iPhone
+    /// photos, for instance, are 512x512 tiles. Each tile is its own stream.
+    struct TileGrid
+    {
+        /// The container's identifier for the grid (the HEIF item id).
+        std::int64_t id = 0;
+
+        /// True when the grid is the file's primary image. A second grid is
+        /// typically the alpha plane of the first, split into tiles the same
+        /// way.
+        bool is_primary = false;
+
+        /// The grid's name as the file gives it, e.g. "Color" or "Alpha".
+        std::string title;
+
+        /// The assembled image's size, after cropping.
+        int width = 0;
+        int height = 0;
+
+        /// The canvas the tiles are placed on, before cropping.
+        int coded_width = 0;
+        int coded_height = 0;
+
+        struct Tile
+        {
+            int stream_index = 0;
+
+            /// Position of the tile's top-left corner on the canvas.
+            int x = 0;
+            int y = 0;
+        };
+        std::vector<Tile> tiles;
 
         [[nodiscard]] json::Value to_json() const;
     };
@@ -137,6 +184,9 @@ namespace lossylab
         std::optional<std::int64_t> size_bytes;
 
         std::vector<StreamInfo> streams;
+
+        /// Grid images, in the order the container lists them.
+        std::vector<TileGrid> tile_grids;
 
         /// Container-level metadata verbatim. The "encoder" and "handler_name"
         /// keys, and the ISOBMFF brands below, are where tool fingerprints live.
@@ -165,8 +215,26 @@ namespace lossylab
         /// The encoder string, from container or stream metadata, when present.
         [[nodiscard]] std::optional<std::string> encoder_string() const;
 
-        /// The first video stream, or nullptr when there is none.
+        /// The video stream to treat as the file's picture: the first one
+        /// marked default, else the first that is not part of something else.
+        /// Nullptr when there is none, which includes a file whose primary
+        /// image is a tile grid: see `primary_tile_grid()`.
         [[nodiscard]] const StreamInfo* primary_video_stream() const noexcept;
+
+        /// The grid that is the file's primary image, or nullptr.
+        [[nodiscard]] const TileGrid* primary_tile_grid() const noexcept;
+
+        /// In an AVIF/HEIF file, the images besides the primary one: its
+        /// alpha plane, a depth or gain map, a thumbnail. Streams that are not
+        /// the primary stream and not tiles, plus the grids that are not the
+        /// primary grid. FFmpeg does not report which role each plays; its
+        /// title (e.g. "Alpha"), size and pixel format are what there is.
+        struct AdditionalImages
+        {
+            std::vector<int> stream_indices;
+            std::vector<std::int64_t> tile_grid_ids;
+        };
+        [[nodiscard]] AdditionalImages additional_images() const;
 
         [[nodiscard]] json::Value to_json() const;
     };
