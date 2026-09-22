@@ -239,6 +239,38 @@ namespace
         assert(info.frame_count == 2);
     }
 
+    void test_deeply_nested_animation_frames_are_not_walked_into()
+    {
+        // ANMF chunks nested far deeper than the stack could follow; the
+        // format allows ANMF only at the top level. Built outside-in, with
+        // each chunk's size computed from the innermost one outwards.
+        constexpr std::size_t depth = 300000;
+        constexpr std::uint32_t nested_header_size = 8 + 16;
+        const std::vector<std::uint8_t> innermost = image_chunk_of("testsrc_64x48_lossy.webp");
+
+        std::vector<std::uint8_t> body = {'W', 'E', 'B', 'P'};
+        const std::vector<std::uint8_t> extended = riff_chunk("VP8X", {0x02, 0, 0, 0, 63, 0, 0, 47, 0, 0});
+        body.insert(body.end(), extended.begin(), extended.end());
+        body.reserve(body.size() + depth * nested_header_size + innermost.size());
+        for (std::size_t level = 0; level < depth; ++level)
+        {
+            const auto payload_size =
+                static_cast<std::uint32_t>(16 + (depth - level - 1) * nested_header_size + innermost.size());
+            body.insert(body.end(), {'A', 'N', 'M', 'F'});
+            for (int shift = 0; shift < 32; shift += 8)
+            {
+                body.push_back(static_cast<std::uint8_t>(payload_size >> shift));
+            }
+            body.insert(body.end(), 16, 0);
+        }
+        body.insert(body.end(), innermost.begin(), innermost.end());
+        std::vector<std::uint8_t> file = riff_chunk("RIFF", body);
+
+        const ImageContainerInfo info = webp_container(Source::from_bytes(std::move(file), "webp"));
+        assert(info.is_animated);
+        assert(info.frame_count == 1);
+    }
+
     void test_webp_container_info_from_memory_matches_path()
     {
         const ImageContainerInfo from_path = webp_container("testsrc_64x48_lossy_alpha.webp");
@@ -564,6 +596,7 @@ int main()
     test_webp_alpha_is_read_from_its_chunks();
     test_an_animated_webp_counts_its_frames();
     test_an_animation_mixing_lossy_and_lossless_frames_is_mixed();
+    test_deeply_nested_animation_frames_are_not_walked_into();
     test_webp_container_info_from_memory_matches_path();
     test_a_grid_image_reports_its_tile_grid();
     test_a_grid_image_has_no_primary_stream();

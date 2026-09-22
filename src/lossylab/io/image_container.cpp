@@ -91,8 +91,11 @@ namespace lossylab::detail
 
         /// Walks WebP chunks from `offset` to `end`, recording what the image
         /// data chunks say. ANMF frames hold chunks of their own after a
-        /// 16-byte frame header, so they recurse.
-        void walk_webp_chunks(SourceReader& reader, std::int64_t offset, const std::int64_t end, WebpChunks& chunks)
+        /// 16-byte frame header. They are walked into only at the top level,
+        /// the one place the format allows them, so nesting depth stays at
+        /// one however the file is built.
+        void walk_webp_chunks(SourceReader& reader, std::int64_t offset, const std::int64_t end, WebpChunks& chunks,
+                              const bool top_level)
         {
             constexpr std::int64_t chunk_header_size = 8;
             constexpr std::int64_t frame_header_size = 16;
@@ -144,12 +147,12 @@ namespace lossylab::detail
                 {
                     chunks.is_animated = true;
                 }
-                else if (fourcc_is(header, 0, "ANMF"))
+                else if (fourcc_is(header, 0, "ANMF") && top_level)
                 {
                     chunks.is_animated = true;
                     ++chunks.frame_count;
                     walk_webp_chunks(reader, payload_offset + frame_header_size, payload_offset + payload_size,
-                                     chunks);
+                                     chunks, false);
                 }
 
                 // Chunks are padded to an even length.
@@ -170,7 +173,7 @@ namespace lossylab::detail
         WebpChunks chunks;
         chunks.frame_count = 0;
         const std::int64_t riff_end = 8 + static_cast<std::int64_t>(little_endian_32(riff_header.data() + 4));
-        walk_webp_chunks(reader, 12, riff_end, chunks);
+        walk_webp_chunks(reader, 12, riff_end, chunks, true);
         if (!chunks.is_animated)
         {
             chunks.frame_count = 1;
