@@ -163,7 +163,8 @@ namespace lossylab::pybind
         // the GIL on the way in here. nanobind's std::function caster acquires
         // the GIL on every invocation and keeps the Python callable alive, so
         // no manual trampoline is needed.
-        m.def("set_log_handler", &set_log_handler, "handler"_a, "level"_a = LogLevel::Info);
+        m.def("set_log_handler", &set_log_handler, "handler"_a.none(), "level"_a = LogLevel::Info,
+              "Passing None restores FFmpeg's default output.");
         m.def("mute_log", &mute_log);
         m.def("log_level", &log_level);
     }
