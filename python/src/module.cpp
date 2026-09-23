@@ -11,6 +11,7 @@ NB_MODULE(_lossylab, m)
     lossylab::pybind::bind_env(m);
     lossylab::pybind::bind_io(m);
     lossylab::pybind::bind_video_reader(m);
+    lossylab::pybind::bind_measure(m);
     lossylab::pybind::bind_file_result(m);
     lossylab::pybind::bind_convert(m);
 }

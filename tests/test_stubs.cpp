@@ -740,8 +740,8 @@ namespace
     {
         const Analyzer analyzers[] = {
             Analyzer::SignalLevels, Analyzer::Blockiness,  Analyzer::Blurriness,
-            Analyzer::Letterbox,    Analyzer::Interlacing, Analyzer::SpatialTemporalInfo,
-            Analyzer::SceneChange,  Analyzer::DuplicateFrames,
+            Analyzer::Noise,        Analyzer::Letterbox,   Analyzer::Interlacing,
+            Analyzer::SpatialTemporalInfo, Analyzer::SceneChange, Analyzer::DuplicateFrames,
         };
         for (const Analyzer analyzer : analyzers)
         {

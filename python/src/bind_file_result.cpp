@@ -6,6 +6,7 @@
 #include "lossylab/io/probe.hpp"
 #include "lossylab/io/read_headers.hpp"
 #include "lossylab/io/video_reader.hpp"
+#include "lossylab/measure/measure.hpp"
 
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
@@ -72,6 +73,8 @@ namespace lossylab::pybind
             .def_ro("frames", &VideoFramesResult::frames)
             .def_ro("record", &VideoFramesResult::record);
         bind_file_result<VideoFramesResult>(m, "VideoFramesFileResult");
+        bind_file_result<MeasureResult>(m, "MeasureFileResult")
+            .def("to_dict", [](const FileResult<MeasureResult>& self) { return to_python(self.to_json()); });
 
         m.def(
             "capture_probe",
@@ -108,5 +111,15 @@ namespace lossylab::pybind
             "source"_a, "select"_a, "options"_a = VideoReaderOptions{}, nb::call_guard<nb::gil_scoped_release>(),
             "VideoReader(source, options).frames(select) together with the read's record, with any exception "
             "either raises returned as a FileError instead.");
+
+        m.def(
+            "capture_measure",
+            [](const Source& source, const std::vector<Frame>& frames, const std::vector<Analyzer>& analyzers,
+               const MeasureOptions& options)
+            { return capture("measure", source, [&] { return measure(frames, analyzers, options); }); },
+            "source"_a, "frames"_a, "analyzers"_a, "options"_a = MeasureOptions{},
+            nb::call_guard<nb::gil_scoped_release>(),
+            "measure(frames, analyzers, options), with any exception it raises returned as a FileError instead. "
+            "`source` names the file the frames came from.");
     }
 }

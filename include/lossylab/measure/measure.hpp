@@ -4,6 +4,7 @@
 #include "lossylab/core/frame.hpp"
 #include "lossylab/core/json.hpp"
 #include "lossylab/core/record.hpp"
+#include "lossylab/core/strict.hpp"
 
 #include <map>
 #include <optional>
@@ -15,24 +16,51 @@ namespace lossylab
     /// A no-reference statistic computable from a frame alone.
     ///
     /// These are what an audit runs over a dataset it did not create, where
-    /// there is no pristine original to compare against.
+    /// there is no pristine original to compare against. Values are in the code
+    /// values of the format the analyzer measured, which the record lists under
+    /// `params["measured_as"]`.
     enum class Analyzer
     {
-        /// Minimum, maximum and histogram of luma and chroma. Reveals limited
-        /// versus full range directly, and catches the levels mismatch that a
-        /// mislabeled range leaves behind.
+        /// FFmpeg's signalstats. For luma ("luma_"), the two chroma planes
+        /// ("u_", "v_") and saturation ("saturation_"): the minimum, 10th
+        /// percentile ("low"), mean, 90th percentile ("high") and maximum.
+        /// Also "hue_median", "hue_mean", the bit depth each plane actually
+        /// uses ("luma_bit_depth", "u_bit_depth", "v_bit_depth"), and
+        /// "outside_limited_range", the fraction of pixels with any component
+        /// outside 16-235 luma or 16-240 chroma (scaled to the bit depth).
+        /// Reveals limited versus full range directly, and catches the levels
+        /// mismatch that a mislabeled range leaves behind. Planar YUV only.
         SignalLevels,
 
-        /// Blockiness: energy concentrated on a regular grid. A direct measure
-        /// of block-transform compression strength.
+        /// FFmpeg's blockdetect on the first plane: "blockiness", the gradient
+        /// energy on the strongest regular grid between 3 and 24 pixels,
+        /// relative to the energy off it. About 1 for an image without block
+        /// artifacts, rising with block-transform compression strength.
+        /// 8-bit formats only.
         Blockiness,
 
-        /// Blurriness, from high-frequency energy.
+        /// FFmpeg's blurdetect on the first plane: "blurriness", the mean width
+        /// in pixels of the edges found by a Canny detector. Grows with blur,
+        /// and with resolution for the same content. Absent for a frame with no
+        /// edges. 8-bit formats only.
         Blurriness,
 
-        /// Black bars around the image, with the detected content rectangle.
-        /// Tells crop sampling where not to crop, which otherwise quietly
-        /// produces training crops of pure black.
+        /// Noise level: "noise_sigma", the standard deviation of the noise on
+        /// the luma plane in 8-bit code values, whatever the bit depth. Tai and
+        /// Yang's variant of Immerkaer's estimator: the response of a
+        /// Laplacian-difference kernel, averaged over all pixels except the 10%
+        /// with the strongest Sobel gradient, so that edges and texture inflate
+        /// it less. Absent for a frame smaller than 3x3.
+        Noise,
+
+        /// FFmpeg's cropdetect: the content rectangle inside black bars, found
+        /// from rows and columns whose mean luma is at most 24/255 of full
+        /// scale. Sets `content_rect`, "letterbox_top", "letterbox_bottom",
+        /// "letterbox_left", "letterbox_right" (bar sizes in pixels) and
+        /// "content_fraction". A frame that is black throughout has an empty
+        /// `content_rect` and a "content_fraction" of 0. Tells crop sampling
+        /// where not to crop, which otherwise quietly produces training crops
+        /// of pure black.
         Letterbox,
 
         /// Interlacing and telecine patterns.
@@ -83,13 +111,28 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
     };
 
+    struct MeasureOptions
+    {
+        /// What happens when an analyzer does not accept the frames' pixel
+        /// format. Under Refuse, measure() throws ConversionRefused naming the
+        /// analyzer. Under AllowRecorded, the frames are converted to the
+        /// nearest format the analyzer accepts, and the conversion is recorded.
+        Strict strict = Strict::Refuse;
+    };
+
     /// Runs no-reference analyzers over frames.
+    ///
+    /// The frames must share one size, pixel format and color. Interlacing,
+    /// SpatialTemporalInfo, SceneChange and DuplicateFrames are not implemented
+    /// yet and throw NotImplemented.
     [[nodiscard]] MeasureResult measure(const std::vector<Frame>& frames,
-                                        const std::vector<Analyzer>& analyzers);
+                                        const std::vector<Analyzer>& analyzers,
+                                        const MeasureOptions& options = {});
 
     /// One frame, for convenience.
     [[nodiscard]] MeasureResult measure(const Frame& frame,
-                                        const std::vector<Analyzer>& analyzers);
+                                        const std::vector<Analyzer>& analyzers,
+                                        const MeasureOptions& options = {});
 
     /// Full-reference comparison between a reference and a distorted version.
     struct CompareResult
