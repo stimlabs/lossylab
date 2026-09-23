@@ -9,12 +9,40 @@
 using namespace lossylab;
 
 // These tests check the *gating mechanism*, not which codecs a particular
-// FFmpeg happens to ship. A capability this build lacks makes a test skip, not
-// fail: the library's API covers the full design surface, and which parts of
+// FFmpeg happens to ship. A gate is checked on whichever side of it this build
+// falls, and a test that needs a capability this build lacks skips rather than
+// fails: the library's API covers the full design surface, and which parts of
 // it a build can serve is a runtime fact that varies legitimately.
 
 namespace
 {
+    struct AbsentEncoder
+    {
+        VideoCodec codec = VideoCodec::H264;
+        EncoderBackend backend = EncoderBackend::Software;
+    };
+
+    /// A codec and backend pair this build cannot encode, software first. Some
+    /// pairs have no encoder in any build (NVENC has no VP9 encoder), so one
+    /// always exists.
+    AbsentEncoder absent_video_encoder()
+    {
+        for (const EncoderBackend backend : {EncoderBackend::Software, EncoderBackend::Vaapi,
+                                             EncoderBackend::Nvenc, EncoderBackend::Qsv,
+                                             EncoderBackend::VideoToolbox})
+        {
+            for (const VideoCodec codec : all_video_codecs())
+            {
+                if (!capabilities().supports(codec, backend))
+                {
+                    return {codec, backend};
+                }
+            }
+        }
+        assert(false && "this build can encode every codec on every backend");
+        return {};
+    }
+
     void test_the_build_provides_something_to_work_with()
     {
         const Capabilities& caps = capabilities();
@@ -87,31 +115,20 @@ namespace
 
     void test_requiring_an_absent_codec_names_it_and_the_build()
     {
-        const Capabilities& caps = capabilities();
-
-        // Find any codec this build cannot encode, to exercise the refusal path.
-        // If the build has everything, there is nothing to check here.
-        for (const VideoCodec codec : all_video_codecs())
+        const AbsentEncoder absent = absent_video_encoder();
+        try
         {
-            if (caps.supports(codec))
-            {
-                continue;
-            }
-            try
-            {
-                static_cast<void>(caps.require_encoder(codec));
-                assert(false && "require_encoder() returned for a codec the build lacks");
-            }
-            catch (const UnsupportedCapability& e)
-            {
-                assert(e.name().find(to_string(codec)) != std::string::npos);
-                assert(e.build_id() == build_info().build_id);
-                // The message has to stand alone in a log.
-                assert(std::string(e.what()).find(build_info().build_id) != std::string::npos);
-            }
-            return;
+            static_cast<void>(capabilities().require_encoder(absent.codec, absent.backend));
+            assert(false && "require_encoder() returned for a codec the build lacks");
         }
-        std::exit(77);  // this build supports every video codec, so nothing refuses
+        catch (const UnsupportedCapability& e)
+        {
+            assert(e.name().find(to_string(absent.codec)) != std::string::npos);
+            assert(e.name().find(to_string(absent.backend)) != std::string::npos);
+            assert(e.build_id() == build_info().build_id);
+            // The message has to stand alone in a log.
+            assert(std::string(e.what()).find(build_info().build_id) != std::string::npos);
+        }
     }
 
     void test_supports_agrees_with_require()
@@ -169,7 +186,7 @@ namespace
             catch (const UnsupportedCapability&)
             {
             }
-            std::exit(77);  // this build has no zscale (libzimg)
+            return;
         }
         caps.require_resize_backend(ResizeBackend::Zscale);
     }
@@ -187,7 +204,7 @@ namespace
             catch (const UnsupportedCapability&)
             {
             }
-            std::exit(77);  // this build has no libvmaf
+            return;
         }
         caps.require_metric(Metric::Vmaf);
     }
@@ -199,6 +216,7 @@ namespace
         const CodecInfo* encoder = caps.select_encoder(VideoCodec::H264, EncoderBackend::Software);
         if (encoder == nullptr)
         {
+            // TODO: exit(77) also skips every later test in this file; skip only this test.
             std::exit(77);  // no software H.264 encoder in this build
         }
 
@@ -216,6 +234,7 @@ namespace
         const CodecInfo* encoder = caps.select_encoder(VideoCodec::H264, EncoderBackend::Software);
         if (encoder == nullptr || encoder->name != "libx264")
         {
+            // TODO: exit(77) also skips every later test in this file; skip only this test.
             std::exit(77);  // libx264 is not the selected H.264 encoder in this build
         }
 

@@ -257,10 +257,38 @@ namespace
         assert(parsed.max_iterations == 6);
     }
 
+    struct AbsentEncoder
+    {
+        VideoCodec codec = VideoCodec::H264;
+        EncoderBackend backend = EncoderBackend::Software;
+    };
+
+    /// A codec and backend pair this build cannot encode, software first. Some
+    /// pairs have no encoder in any build (NVENC has no VP9 encoder), so one
+    /// always exists.
+    AbsentEncoder absent_video_encoder()
+    {
+        for (const EncoderBackend backend : {EncoderBackend::Software, EncoderBackend::Vaapi,
+                                             EncoderBackend::Nvenc, EncoderBackend::Qsv,
+                                             EncoderBackend::VideoToolbox})
+        {
+            for (const VideoCodec codec : all_video_codecs())
+            {
+                if (!capabilities().supports(codec, backend))
+                {
+                    return {codec, backend};
+                }
+            }
+        }
+        assert(false && "this build can encode every codec on every backend");
+        return {};
+    }
+
     EncodeVideoOptions h264_encode_options()
     {
         if (!capabilities().supports(VideoCodec::H264))
         {
+            // TODO: exit(77) also skips every later test in this file; skip only the calling test.
             std::exit(77);  // no H.264 encoder in this build
         }
         EncodeVideoOptions options;
@@ -338,6 +366,7 @@ namespace
 
     void test_a_valid_encode_video_request_reaches_the_unwritten_body()
     {
+        // TODO: expects encode_video() to be a stub; turn into a real encode test once it is implemented.
         const EncodeVideoOptions options = h264_encode_options();
         assert(throws_not_implemented(
             [&] { static_cast<void>(encode_video({test_frame()}, options)); }));
@@ -345,35 +374,27 @@ namespace
 
     void test_encoding_refuses_a_codec_this_build_lacks_before_anything_else()
     {
-        const Capabilities& caps = capabilities();
+        const AbsentEncoder absent = absent_video_encoder();
+        EncodeVideoOptions options;
+        options.codec = absent.codec;
+        options.backend = absent.backend;
+        options.pixel_format = PixelFormat::from_name("yuv420p");
 
-        for (const VideoCodec codec : all_video_codecs())
+        try
         {
-            if (caps.supports(codec))
-            {
-                continue;
-            }
-            EncodeVideoOptions options;
-            options.codec = codec;
-            options.pixel_format = PixelFormat::from_name("yuv420p");
-
-            try
-            {
-                (void)(encode_video({test_frame()}, options));
-                assert(false && "expected throw");
-            }
-            catch (const UnsupportedCapability&)
-            {
-            }
-            return;
+            (void)(encode_video({test_frame()}, options));
+            assert(false && "expected throw");
         }
-        std::exit(77);  // this build supports every video codec
+        catch (const UnsupportedCapability&)
+        {
+        }
     }
 
     void test_encode_to_target_needs_a_parameter_it_can_search()
     {
         if (!capabilities().supports(VideoCodec::H264))
         {
+            // TODO: exit(77) also skips every later test in this file; skip only this test.
             std::exit(77);  // no H.264 encoder in this build
         }
 
@@ -803,7 +824,9 @@ namespace
         const Frame frame = test_frame();
         if (capabilities().supports(Metric::Vmaf))
         {
-            std::exit(77);  // this build has libvmaf
+            // TODO: expects compare() to be a stub; assert on the VMAF result once it is implemented.
+            assert(throws_not_implemented([&] { static_cast<void>(compare({frame}, {frame}, {Metric::Vmaf})); }));
+            return;
         }
         try
         {

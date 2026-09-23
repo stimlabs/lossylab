@@ -9,6 +9,33 @@ using namespace lossylab;
 
 namespace
 {
+    struct AbsentEncoder
+    {
+        VideoCodec codec = VideoCodec::H264;
+        EncoderBackend backend = EncoderBackend::Software;
+    };
+
+    /// A codec and backend pair this build cannot encode, software first. Some
+    /// pairs have no encoder in any build (NVENC has no VP9 encoder), so one
+    /// always exists.
+    AbsentEncoder absent_video_encoder()
+    {
+        for (const EncoderBackend backend : {EncoderBackend::Software, EncoderBackend::Vaapi,
+                                             EncoderBackend::Nvenc, EncoderBackend::Qsv,
+                                             EncoderBackend::VideoToolbox})
+        {
+            for (const VideoCodec codec : all_video_codecs())
+            {
+                if (!capabilities().supports(codec, backend))
+                {
+                    return {codec, backend};
+                }
+            }
+        }
+        assert(false && "this build can encode every codec on every backend");
+        return {};
+    }
+
     StageSpec convert_stage()
     {
         StageSpec stage;
@@ -136,25 +163,20 @@ namespace
 
     void test_validation_rejects_a_codec_this_build_lacks()
     {
-        const Capabilities& caps = capabilities();
+        const AbsentEncoder absent = absent_video_encoder();
+        StageSpec encode;
+        encode.kind = StageKind::EncodeVideo;
+        encode.params = json::object({{"codec", to_string(absent.codec)},
+                                      {"backend", to_string(absent.backend)},
+                                      {"pix_fmt", "yuv420p"}});
 
-        for (const VideoCodec codec : all_video_codecs())
-        {
-            if (caps.supports(codec))
-            {
-                continue;
-            }
+        PipelineSpec spec;
+        spec.add(convert_stage()).add(encode);
 
-            PipelineSpec spec;
-            spec.add(convert_stage()).add(encode_stage(to_string(codec).c_str()));
-
-            // This is the case the whole gate exists for: catching it here rather
-            // than partway through building a dataset, with half the samples
-            // already written under a different distribution.
-            try { spec.validate(); assert(false && "expected throw"); } catch (const UnsupportedCapability&) {}
-            return;
-        }
-        std::exit(77);  // skip: this build supports every video codec
+        // This is the case the whole gate exists for: catching it here rather
+        // than partway through building a dataset, with half the samples
+        // already written under a different distribution.
+        try { spec.validate(); assert(false && "expected throw"); } catch (const UnsupportedCapability&) {}
     }
 
     void test_validation_accepts_a_codec_this_build_has()
@@ -173,6 +195,7 @@ namespace
             spec.validate();
             return;
         }
+        // TODO: exit(77) also skips every later test in this file; skip only this test.
         std::exit(77);  // skip: this build supports no video codecs at all
     }
 
