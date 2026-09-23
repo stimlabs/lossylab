@@ -293,6 +293,53 @@ namespace
         assert(history.recompression_curves.size() == 2);
     }
 
+    void test_a_jpeg_2000_saved_as_rgb_or_gray_shows_its_ratio()
+    {
+        if (!capabilities().supports(ImageCodec::Jpeg2000))
+        {
+            return;
+        }
+        CompressionHistoryOptions options;
+        options.recompression_codecs = {ImageCodec::Jpeg2000};
+        const Frame pristine = texture();
+        const Frame gray_pristine = convert(pristine, PixelFormat::from_name("gray"), jpeg_color()).frame;
+
+        struct Case
+        {
+            const Frame* source;
+            const char* pixel_format;
+            double ratio;
+        };
+        for (const Case& compressed : {Case{&pristine, "rgb24", 8}, Case{&pristine, "rgb24", 16},
+                                       Case{&gray_pristine, "gray", 8}, Case{&gray_pristine, "gray", 16}})
+        {
+            EncodeImageOptions encode;
+            encode.codec = ImageCodec::Jpeg2000;
+            encode.pixel_format = PixelFormat::from_name(compressed.pixel_format);
+            encode.rate_control = RateControl::quality(compressed.ratio);
+            const CompressionHistory history =
+                compression_history(roundtrip(*compressed.source, encode).frame, options);
+
+            assert(history.record.params.at("recompression").at("errors").empty());
+            const auto trace = std::find_if(history.traces.begin(), history.traces.end(),
+                                            [](const CompressionTrace& candidate)
+                                            { return candidate.evidence == TraceEvidence::Recompression; });
+            assert(trace != history.traces.end());
+            assert(trace->codec == ImageCodec::Jpeg2000);
+
+            // Re-encoding reproduces the image over a range of ratios, since
+            // the ratio is only nominal: after ratio 8 in RGB, ratios 2 to 10
+            // all re-encode it unchanged, and the notch is at 10.
+            assert(trace->quality.has_value() && std::abs(*trace->quality / compressed.ratio - 1.0) <= 0.3);
+            assert(trace->quality_scale.starts_with("a nominal compression ratio"));
+        }
+
+        for (const Frame* source : {&pristine, &gray_pristine})
+        {
+            assert(!has_trace(compression_history(*source, options), TraceEvidence::Recompression));
+        }
+    }
+
     void test_the_record_serializes()
     {
         const CompressionHistory history = compression_history(after_mjpeg(texture(), 4, "yuvj420p"));
@@ -437,6 +484,7 @@ int main()
     test_gray_and_alpha_frames_are_analyzed();
     test_an_achromatic_frame_claims_no_chroma_layout();
     test_a_webp_saved_as_rgb_shows_its_quality();
+    test_a_jpeg_2000_saved_as_rgb_or_gray_shows_its_ratio();
     test_the_record_serializes();
     test_bad_options_are_refused();
     test_recompression_takes_rgb_gray_and_alpha();

@@ -29,6 +29,8 @@ namespace
         assert(video_codec_from_string("avc") == VideoCodec::H264);
         assert(image_codec_from_string("jpeg") == ImageCodec::Mjpeg);
         assert(image_codec_from_string("jpegxl") == ImageCodec::Jxl);
+        assert(image_codec_from_string("j2k") == ImageCodec::Jpeg2000);
+        assert(image_codec_from_string("jp2") == ImageCodec::Jpeg2000);
     }
 
     void test_unknown_codec_names_are_rejected()

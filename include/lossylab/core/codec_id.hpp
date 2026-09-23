@@ -19,7 +19,8 @@ namespace lossylab
         WebP,
         Avif,
         Jxl,
-        Heif
+        Heif,
+        Jpeg2000  ///< FFmpeg's native JPEG 2000 encoder and decoder
     };
 
     /// Video codecs for encode and decode.

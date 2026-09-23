@@ -275,7 +275,8 @@ namespace lossylab::pybind
             .value("WebP", ImageCodec::WebP)
             .value("Avif", ImageCodec::Avif)
             .value("Jxl", ImageCodec::Jxl)
-            .value("Heif", ImageCodec::Heif);
+            .value("Heif", ImageCodec::Heif)
+            .value("Jpeg2000", ImageCodec::Jpeg2000);
 
         nb::enum_<VideoCodec>(m, "VideoCodec")
             .value("H264", VideoCodec::H264)

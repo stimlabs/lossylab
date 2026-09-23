@@ -1016,14 +1016,11 @@ namespace lossylab
         // -------------------------------------------------------------------
 
         /// A codec's coarse sweep over its whole quality scale, and the step
-        /// and bounds of the fine sweep around a notch.
+        /// of the fine sweep between a notch's two coarse neighbors.
         struct SweepPlan
         {
             std::vector<double> coarse;
-            double coarse_step = 1.0;
             double fine_step = 0.0;
-            double lowest = 0.0;
-            double highest = 0.0;
             std::map<std::string, std::string> encoder_options;
         };
 
@@ -1045,14 +1042,10 @@ namespace lossylab
             {
             case ImageCodec::Mjpeg:
                 plan.coarse = evenly_spaced(1, 31, 1);
-                plan.lowest = 1;
-                plan.highest = 31;
                 break;
             case ImageCodec::WebP:
                 plan.coarse = evenly_spaced(5, 100, 5);
-                plan.coarse_step = 5;
                 plan.fine_step = 1;
-                plan.highest = 100;
                 break;
             case ImageCodec::Avif:
             {
@@ -1060,17 +1053,12 @@ namespace lossylab
                 if (encoder_name == "librav1e")
                 {
                     plan.coarse = evenly_spaced(15, 255, 16);
-                    plan.coarse_step = 16;
                     plan.fine_step = 4;
-                    plan.highest = 255;
                 }
                 else
                 {
                     plan.coarse = evenly_spaced(3, 63, 4);
-                    plan.coarse_step = 4;
                     plan.fine_step = 1;
-                    plan.lowest = encoder_name == "libsvtav1" ? 1 : 0;
-                    plan.highest = 63;
                 }
                 if (encoder_name == "libaom-av1")
                 {
@@ -1080,10 +1068,18 @@ namespace lossylab
             }
             case ImageCodec::Jxl:
                 plan.coarse = evenly_spaced(0.5, 6, 0.5);
-                plan.coarse_step = 0.5;
                 plan.fine_step = 0.1;
-                plan.lowest = 0.01;
-                plan.highest = 15;
+                break;
+            case ImageCodec::Jpeg2000:
+                // Compression ratios, which the encoder takes as integers,
+                // spaced roughly evenly in their logarithm. FFmpeg's nominal
+                // RGB ratio is about three times the true one, so the sweep
+                // reaches well past the ratios files are written at, and
+                // starts at 4: at 2 and 3 an RGB re-encode is all but
+                // lossless, which leaves the same flat start as a prior does.
+                plan.coarse = {4,  5,  6,  7,  8,  10, 12,  14,  16,  20,  24,  28,
+                               32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 200};
+                plan.fine_step = 1;
                 break;
             case ImageCodec::Png:
             case ImageCodec::Heif:
@@ -1091,6 +1087,32 @@ namespace lossylab
                                   "; it has no lossy quality scale to sweep");
             }
             return plan;
+        }
+
+        /// Whether recompression_curve() re-encodes a frame of this layout
+        /// with this codec in RGB by default, so that the error has to cover
+        /// every plane; it covers luma alone otherwise.
+        bool reencodes_in_rgb(const ImageCodec codec, const Subsampling subsampling)
+        {
+            switch (codec)
+            {
+            case ImageCodec::Jxl:
+            case ImageCodec::Jpeg2000: return subsampling != Subsampling::Gray;
+            case ImageCodec::Mjpeg:
+            case ImageCodec::WebP:
+            case ImageCodec::Avif:
+            case ImageCodec::Png:
+            case ImageCodec::Heif: return false;
+            }
+            return false;
+        }
+
+        /// The point of a curve at `parameter`, which must be one of its
+        /// parameters.
+        const RecompressionPoint& point_at(const RecompressionCurve& curve, const double parameter)
+        {
+            return *std::find_if(curve.points.begin(), curve.points.end(),
+                                 [&](const RecompressionPoint& point) { return point.quality_parameter == parameter; });
         }
 
         /// The parameter at a curve's deepest interior notch, when its log
@@ -1219,9 +1241,9 @@ namespace lossylab
                     {
                         sweep.pixel_format = mjpeg_format_for(known_subsampling(history));
                     }
-                    const bool rgb_target = codec == ImageCodec::Jxl &&
-                                            analyzed.pixel_format().subsampling() != Subsampling::Gray;
-                    sweep.planes = rgb_target ? RecompressionPlanes::All : RecompressionPlanes::Luma;
+                    sweep.planes = reencodes_in_rgb(codec, analyzed.pixel_format().subsampling())
+                                       ? RecompressionPlanes::All
+                                       : RecompressionPlanes::Luma;
 
                     RecompressionCurve coarse = recompression_curve(analyzed, sweep);
                     std::optional<double> quality = deepest_notch(coarse);
@@ -1230,29 +1252,32 @@ namespace lossylab
                     const std::string quality_scale = coarse.record.params.at("quality_scale").is_string()
                                                           ? coarse.record.params.at("quality_scale").get<std::string>()
                                                           : std::string();
-                    history.recompression_curves.push_back(std::move(coarse));
 
+                    // A notch is never at either end, so it has two coarse
+                    // neighbors; the fine sweep runs between them.
+                    std::vector<double> fine_parameters;
                     if (quality.has_value() && plan.fine_step > 0.0 && confidence >= min_refine_confidence)
                     {
-                        const int reach = static_cast<int>(std::lround(plan.coarse_step / plan.fine_step)) - 1;
-                        sweep.parameter_range.clear();
-                        for (int i = -reach; i <= reach; ++i)
+                        const RecompressionPoint* notch = &point_at(coarse, *quality);
+                        const double previous = (notch - 1)->quality_parameter;
+                        const double next = (notch + 1)->quality_parameter;
+                        const auto steps = static_cast<int>(std::lround((next - previous) / plan.fine_step));
+                        for (int i = 1; i < steps; ++i)
                         {
-                            const double parameter = *quality + i * plan.fine_step;
-                            if (parameter >= plan.lowest - 1e-9 && parameter <= plan.highest + 1e-9)
-                            {
-                                sweep.parameter_range.push_back(parameter);
-                            }
+                            fine_parameters.push_back(previous + i * plan.fine_step);
                         }
-                        if (sweep.parameter_range.size() >= 3)
+                    }
+                    history.recompression_curves.push_back(std::move(coarse));
+
+                    if (fine_parameters.size() >= 3)
+                    {
+                        sweep.parameter_range = std::move(fine_parameters);
+                        RecompressionCurve fine = recompression_curve(analyzed, sweep);
+                        if (const std::optional<double> refined = deepest_notch(fine))
                         {
-                            RecompressionCurve fine = recompression_curve(analyzed, sweep);
-                            if (const std::optional<double> refined = deepest_notch(fine))
-                            {
-                                quality = refined;
-                            }
-                            history.recompression_curves.push_back(std::move(fine));
+                            quality = refined;
                         }
+                        history.recompression_curves.push_back(std::move(fine));
                     }
 
                     const long analyzed_pixels = static_cast<long>(analyzed.width()) * analyzed.height();
@@ -1279,7 +1304,7 @@ namespace lossylab
                 {"codecs", json::to_array(options.recompression_codecs,
                                           [](const ImageCodec codec) { return to_string(codec); })},
                 {"crop", crop},
-                {"planes", "luma, or all for JPEG XL in RGB"},
+                {"planes", "luma, or all for JPEG XL and JPEG 2000 in RGB"},
                 {"min_refine_confidence", min_refine_confidence},
                 {"min_trace_pixels", min_recompression_trace_pixels},
                 {"skipped", skipped},

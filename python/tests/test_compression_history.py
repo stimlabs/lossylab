@@ -2,7 +2,7 @@ import io
 
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image, features
 
 import lossylab
 
@@ -142,6 +142,23 @@ def test_a_webp_saved_as_png_shows_its_quality():
     [chroma] = traces_of(history, lossylab.TraceEvidence.ChromaSubsampling)
     assert chroma.subsampling == lossylab.Subsampling.Yuv420
     assert history.chroma.upsampling == lossylab.ChromaUpsampling.Triangle
+
+
+@pytest.mark.skipif(not features.check("jpg_2000"), reason="Pillow built without OpenJPEG")
+@pytest.mark.parametrize("mode", ["RGB", "L"])
+def test_an_openjpeg_file_saved_as_png_shows_a_jpeg_2000_trace(mode):
+    options = lossylab.CompressionHistoryOptions()
+    options.recompression_codecs = [lossylab.ImageCodec.Jpeg2000]
+    image = through(texture().convert(mode), "JPEG2000", quality_mode="rates", quality_layers=[16], irreversible=True)
+
+    # The ratio is in FFmpeg's nominal units, not OpenJPEG's true ones: this
+    # file's 16 reads about 14 for gray and 42 for RGB.
+    [trace] = traces_of(lossylab.compression_history(as_png(image), options), lossylab.TraceEvidence.Recompression)
+    assert trace.codec == lossylab.ImageCodec.Jpeg2000
+    assert trace.confidence >= 0.7
+
+    pristine = lossylab.compression_history(as_png(texture().convert(mode)), options)
+    assert traces_of(pristine, lossylab.TraceEvidence.Recompression) == []
 
 
 def test_a_never_compressed_png_shows_no_trace():

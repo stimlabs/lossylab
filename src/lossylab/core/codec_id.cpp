@@ -14,6 +14,7 @@ namespace lossylab
         case ImageCodec::Avif: return "avif";
         case ImageCodec::Jxl: return "jxl";
         case ImageCodec::Heif: return "heif";
+        case ImageCodec::Jpeg2000: return "jpeg2000";
         }
         return "unknown";
     }
@@ -67,6 +68,7 @@ namespace lossylab
         if (name == "avif") { return ImageCodec::Avif; }
         if (name == "jxl" || name == "jpegxl") { return ImageCodec::Jxl; }
         if (name == "heif" || name == "heic") { return ImageCodec::Heif; }
+        if (name == "jpeg2000" || name == "j2k" || name == "jp2") { return ImageCodec::Jpeg2000; }
         throw ConfigError("unknown image codec '" + std::string(name) + "'");
     }
 
@@ -107,7 +109,7 @@ namespace lossylab
     std::vector<ImageCodec> all_image_codecs()
     {
         return {ImageCodec::Png, ImageCodec::Mjpeg, ImageCodec::WebP,
-                ImageCodec::Avif, ImageCodec::Jxl, ImageCodec::Heif};
+                ImageCodec::Avif, ImageCodec::Jxl, ImageCodec::Heif, ImageCodec::Jpeg2000};
     }
 
     std::vector<VideoCodec> all_video_codecs()
@@ -126,6 +128,7 @@ namespace lossylab
         // takes every chroma subsampling.
         case ImageCodec::Avif: return {"libaom-av1", "libsvtav1", "librav1e"};
         case ImageCodec::Jxl: return {"libjxl"};
+        case ImageCodec::Jpeg2000: return {"jpeg2000"};
 
         // FFmpeg has no HEIF muxer, so no encoder can produce a HEIF file.
         case ImageCodec::Heif: return {};
@@ -201,6 +204,7 @@ namespace lossylab
         case ImageCodec::Avif: return {"libdav1d", "av1"};
         case ImageCodec::Jxl: return {"libjxl", "jpegxl"};
         case ImageCodec::Heif: return {"hevc"};
+        case ImageCodec::Jpeg2000: return {"jpeg2000"};
         }
         return {};
     }

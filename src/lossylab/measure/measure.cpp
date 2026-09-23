@@ -1187,12 +1187,13 @@ namespace lossylab
                 default: return PixelFormat::from_name("yuv420p");
                 }
             case ImageCodec::Jxl:
+            case ImageCodec::Jpeg2000:
                 return PixelFormat::from_name(subsampling == Subsampling::Gray ? "gray" : "rgb24");
             case ImageCodec::Png:
             case ImageCodec::Heif: break;
             }
-            throw ConfigError("recompression_curve() needs a lossy codec to sweep: MJPEG, WebP, AVIF or JPEG XL, "
-                              "not " + to_string(codec));
+            throw ConfigError("recompression_curve() needs a lossy codec to sweep: MJPEG, WebP, AVIF, JPEG XL or "
+                              "JPEG 2000, not " + to_string(codec));
         }
 
         /// The color a codec's bitstream implies for what a frame leaves

@@ -198,7 +198,7 @@ namespace
             const char* pixel_format;
         };
         for (const Case& lossless : {Case{ImageCodec::Png, "rgb24"}, Case{ImageCodec::WebP, "bgra"},
-                                     Case{ImageCodec::Jxl, "rgb24"}})
+                                     Case{ImageCodec::Jxl, "rgb24"}, Case{ImageCodec::Jpeg2000, "rgb24"}})
         {
             if (!capabilities().supports(lossless.codec))
             {
@@ -238,6 +238,36 @@ namespace
         // tiny test pattern.
         const double psnr = psnr_of(source, roundtrip(source, options, decode_spec).frame);
         assert(psnr > 20.0 && std::isfinite(psnr));
+    }
+
+    void test_lossy_jpeg_2000_encodes_at_a_compression_ratio()
+    {
+        if (!capabilities().supports(ImageCodec::Jpeg2000))
+        {
+            return;
+        }
+        const Frame source = rgb_source();
+        const EncodeImageOptions options = image_options(ImageCodec::Jpeg2000, "rgb24", 8);
+        const EncodedResult encoded = encode_image(source, options);
+        assert(starts_with(encoded.bytes, 4, "jP  "));
+        assert(encoded.record.encoder_settings.at("resolved").at("options").at("layer_rates").get<std::string>() ==
+               "8");
+        assert(encoded.record.encoder_settings.at("quality_scale").get<std::string>().starts_with("a nominal"));
+
+        const auto coarser = encode_image(source, image_options(ImageCodec::Jpeg2000, "rgb24", 32)).bytes.size();
+        assert(coarser < encoded.bytes.size());
+
+        DecodeSpec decode_spec;
+        decode_spec.pixel_format = source.pixel_format();
+        const double psnr = psnr_of(source, roundtrip(source, options, decode_spec).frame);
+        assert(psnr > 25.0 && std::isfinite(psnr));
+
+        expect_throw<ConfigError>([&] { (void)encode_image(source, image_options(ImageCodec::Jpeg2000, "rgb24", 0)); });
+        expect_throw<ConfigError>(
+            [&] { (void)encode_image(source, image_options(ImageCodec::Jpeg2000, "rgb24", 8.5)); });
+        EncodeImageOptions crf = options;
+        crf.rate_control = RateControl::crf(20);
+        expect_throw<ConfigError>([&] { (void)encode_image(source, crf); });
     }
 
     void test_avif_is_muxed_into_an_avif_file()
@@ -281,6 +311,7 @@ int main()
     test_lossy_webp_roundtrips_through_its_decoder();
     test_lossless_formats_roundtrip_exactly();
     test_lossy_jpeg_xl_encodes_at_a_distance();
+    test_lossy_jpeg_2000_encodes_at_a_compression_ratio();
     test_avif_is_muxed_into_an_avif_file();
     test_heif_cannot_be_encoded();
     return 0;

@@ -233,9 +233,11 @@ namespace lossylab
     {
         /// Codecs to test by recompression, each with a coarse sweep of its
         /// whole quality scale and a fine one around the curve's notch. WebP
-        /// by default. JPEG needs none: its tables are read directly. AVIF
-        /// and JPEG XL are accepted, but see recompression_curve() for how
-        /// little their curves have been checked. A codec this build cannot
+        /// by default. JPEG needs none: its tables are read directly. AVIF,
+        /// JPEG XL and JPEG 2000 are accepted, but see recompression_curve()
+        /// for how little their curves have been checked. JPEG 2000 sweeps
+        /// nominal ratios 4 to 200, so a file at ratio 4 or less (all but
+        /// lossless) is not found. A codec this build cannot
         /// both encode and decode is skipped, and listed in the record.
         std::vector<ImageCodec> recompression_codecs{ImageCodec::WebP};
 

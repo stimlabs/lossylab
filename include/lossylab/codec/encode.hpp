@@ -200,9 +200,13 @@ namespace lossylab
         /// lossy WebP limited-range BT.601 with centered chroma.
         std::optional<ColorSpec> color;
 
-        /// Encode losslessly. PNG requires it; WebP and JPEG XL support it;
-        /// MJPEG and AVIF refuse it. PNG and lossless JPEG XL have no quality
-        /// parameter, and ignore the rate control.
+        /// Encode losslessly. PNG requires it; WebP, JPEG XL and JPEG 2000
+        /// (the reversible 5/3 wavelet) support it; MJPEG and AVIF refuse it.
+        /// PNG, lossless JPEG XL and lossless JPEG 2000 have no quality
+        /// parameter, and ignore the rate control. Lossy JPEG 2000 takes a
+        /// quality that is FFmpeg's nominal compression ratio (layer_rates),
+        /// not the achieved one: rgb24 at 8 came out at 7 to 9 bits per pixel
+        /// on test textures, gray at 8 at 1.
         bool lossless = false;
 
         std::map<std::string, std::string> encoder_options;
@@ -219,7 +223,8 @@ namespace lossylab
     /// Covers the platform delivery formats. FFmpeg's MJPEG is available as a
     /// second JPEG implementation when encoder diversity is the point; PIL
     /// remains the primary JPEG path by design. The bytes are a complete
-    /// file: JPEG, PNG, WebP, a JPEG XL codestream, or AVIF muxed by FFmpeg.
+    /// file: JPEG, PNG, WebP, a JPEG XL codestream, a JP2 file (FFmpeg's own
+    /// JPEG 2000 encoder), or AVIF muxed by FFmpeg.
     /// HEIF cannot be encoded, since FFmpeg has no HEIF muxer. The block grid
     /// is set for JPEG and JPEG XL (8x8) and lossy WebP (16x16 macroblocks).
     [[nodiscard]] EncodedResult encode_image(const Frame& frame,

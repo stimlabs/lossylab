@@ -255,7 +255,8 @@ namespace lossylab
 
     struct RecompressionOptions
     {
-        /// The codec to re-encode with: MJPEG, WebP (lossy), AVIF or JPEG XL.
+        /// The codec to re-encode with: MJPEG, WebP (lossy), AVIF, JPEG XL or
+        /// JPEG 2000.
         /// Its encode_image() rules apply at every point, with the quality
         /// parameter in RateControl::quality() units.
         ImageCodec codec = ImageCodec::Mjpeg;
@@ -276,7 +277,7 @@ namespace lossylab
         /// frame's chroma subsampling (yuvj420p for RGB, yuvj444p with
         /// neutral chroma for gray), for WebP yuv420p, for AVIF 8-bit
         /// yuv444p, yuv422p or yuv420p (yuv420p for RGB, gray for gray), and
-        /// for JPEG XL rgb24, or gray for gray. None of these has alpha:
+        /// for JPEG XL and JPEG 2000 rgb24, or gray for gray. None of these has alpha:
         /// alpha is dropped and only the color planes are measured.
         std::optional<PixelFormat> pixel_format;
 
@@ -319,9 +320,14 @@ namespace lossylab
     /// setting when re-encoded with the same encoder and settings (libaom crf
     /// 11 to 43 and libjxl distance 1 to 4.5 on the test pattern), but for
     /// AVIF a never-compressed frame can show one of similar confidence too,
-    /// and neither has been checked against other encoders. A resize after the original
-    /// compression usually destroys the signal entirely. The record's params
-    /// hold each point's notch depth.
+    /// and neither has been checked against other encoders. JPEG 2000 leaves
+    /// a strong notch (confidence 0.6 to 0.97): FFmpeg's own output at
+    /// nominal ratio 8 to 60 is found mostly exactly and at worst 25% off,
+    /// since several ratios re-encode it unchanged, and OpenJPEG's (through
+    /// Pillow) is found too, but its true ratio reads about 2.5 times higher
+    /// in FFmpeg's nominal units for RGB, and a little lower for gray. A
+    /// resize after the original compression usually destroys the signal
+    /// entirely. The record's params hold each point's notch depth.
     [[nodiscard]] RecompressionCurve recompression_curve(const Frame& frame,
                                                          const RecompressionOptions& options);
 }

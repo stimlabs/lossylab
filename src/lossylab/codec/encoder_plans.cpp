@@ -246,6 +246,22 @@ namespace lossylab::detail
             plan_avif(encoder_name, rate_control, plan);
             break;
 
+        case ImageCodec::Jpeg2000:
+            if (options.lossless)
+            {
+                plan.setup.options["pred"] = "dwt53";
+            }
+            else
+            {
+                require_mode(rate_control, {RateControl::Mode::Quality}, encoder_name);
+                const QualityScale scale{1, 1000, true,
+                                         "a nominal compression ratio (FFmpeg's layer_rates), an integer from 1 to "
+                                         "1000, lower is better"};
+                plan.setup.options["layer_rates"] = number_text(scaled_value(rate_control, encoder_name, scale, plan));
+            }
+            plan.extension = "jp2";
+            break;
+
         case ImageCodec::Heif:
             throw UnsupportedCapability("image muxer", "heif", build_info().build_id);
         }
