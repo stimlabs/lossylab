@@ -46,7 +46,7 @@ def test_max_slices_limits_the_read():
 
 def test_to_dict_carries_the_schema_version():
     as_dict = read_fixture("testsrc_64x48_hevc.mp4").to_dict()
-    assert as_dict["codec"] == "hevc"
+    assert as_dict["codec_name"] == "hevc"
     assert "schema_version" in as_dict
 
 

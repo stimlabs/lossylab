@@ -1,3 +1,4 @@
+#include "bind_reflected.hpp"
 #include "bindings.hpp"
 #include "json_convert.hpp"
 
@@ -26,9 +27,7 @@ namespace lossylab::pybind
             .value("SceneChange", Analyzer::SceneChange)
             .value("DuplicateFrames", Analyzer::DuplicateFrames);
 
-        nb::class_<MeasureOptions>(m, "MeasureOptions")
-            .def(nb::init<>())
-            .def_rw("strict", &MeasureOptions::strict);
+        bind_reflected_rw<MeasureOptions>(m, "MeasureOptions");
 
         nb::class_<FrameMeasurement>(m, "FrameMeasurement")
             .def_ro("index", &FrameMeasurement::index)
@@ -51,9 +50,7 @@ namespace lossylab::pybind
               nb::overload_cast<const Frame&, const std::vector<Analyzer>&, const MeasureOptions&>(&measure),
               "frame"_a, "analyzers"_a, "options"_a = MeasureOptions{}, nb::call_guard<nb::gil_scoped_release>());
 
-        nb::class_<CompareOptions>(m, "CompareOptions")
-            .def(nb::init<>())
-            .def_rw("strict", &CompareOptions::strict);
+        bind_reflected_rw<CompareOptions>(m, "CompareOptions");
 
         nb::class_<CompareResult>(m, "CompareResult")
             .def_ro("frames", &CompareResult::frames)
@@ -72,14 +69,7 @@ namespace lossylab::pybind
               "reference"_a, "distorted"_a, "metrics"_a, "options"_a = CompareOptions{},
               nb::call_guard<nb::gil_scoped_release>());
 
-        nb::class_<RecompressionOptions>(m, "RecompressionOptions")
-            .def(nb::init<>())
-            .def_rw("codec", &RecompressionOptions::codec)
-            .def_rw("parameter_range", &RecompressionOptions::parameter_range)
-            .def_rw("metric", &RecompressionOptions::metric)
-            .def_rw("pixel_format", &RecompressionOptions::pixel_format)
-            .def_rw("color", &RecompressionOptions::color)
-            .def_rw("encoder_options", &RecompressionOptions::encoder_options);
+        bind_reflected_rw<RecompressionOptions>(m, "RecompressionOptions");
 
         nb::class_<RecompressionPoint>(m, "RecompressionPoint")
             .def_ro("quality_parameter", &RecompressionPoint::quality_parameter)

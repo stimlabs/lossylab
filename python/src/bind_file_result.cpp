@@ -1,3 +1,4 @@
+#include "bind_reflected.hpp"
 #include "bindings.hpp"
 #include "json_convert.hpp"
 
@@ -19,6 +20,10 @@ namespace lossylab::pybind
     {
         /// What one VideoReader read produced: the selected frames and the
         /// record describing the read.
+        // Not reflected: LOSSYLAB_REFLECT's explicit specialization must be
+        // declared inside a namespace enclosing lossylab::reflect, and this
+        // anonymous namespace (nested in lossylab::pybind, a sibling of
+        // lossylab::reflect) does not qualify.
         struct VideoFramesResult
         {
             std::vector<VideoFrame> frames;
@@ -53,12 +58,7 @@ namespace lossylab::pybind
             .value("OutOfMemory", FileErrorKind::OutOfMemory)
             .value("Internal", FileErrorKind::Internal);
 
-        nb::class_<FileError>(m, "FileError")
-            .def_ro("kind", &FileError::kind)
-            .def_ro("operation", &FileError::operation)
-            .def_ro("source", &FileError::source)
-            .def_ro("message", &FileError::message)
-            .def_prop_ro("details", [](const FileError& self) { return to_python(self.details); })
+        bind_reflected<FileError>(m, "FileError")
             .def("__eq__", [](const FileError& self, const FileError& other) { return self == other; })
             .def("to_dict", [](const FileError& self) { return to_python(self.to_json()); })
             .def_static("from_dict", [](nb::dict value) { return FileError::from_json(to_json(value)); });

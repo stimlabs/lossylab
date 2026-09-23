@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lossylab/core/json.hpp"
+#include "lossylab/core/reflect.hpp"
 
 #include <string>
 #include <vector>
@@ -46,6 +47,8 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
     };
 
+    LOSSYLAB_REFLECT(LibraryVersion, name, major, minor, micro, compiled_major, compiled_minor, compiled_micro);
+
     /// Everything about the FFmpeg build that can change an output byte.
     ///
     /// Stored with experiment metadata and hashed into `build_id`, which every
@@ -80,6 +83,8 @@ namespace lossylab
 
         [[nodiscard]] json::Value to_json() const;
     };
+
+    LOSSYLAB_REFLECT(BuildInfo, version, configuration, license, libraries, external_libraries, build_id);
 
     /// Describes the linked FFmpeg. Computed once and cached; the result is
     /// pure data, so it is safe to call before a fork.

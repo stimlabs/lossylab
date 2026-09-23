@@ -1,3 +1,4 @@
+#include "bind_reflected.hpp"
 #include "bindings.hpp"
 #include "json_convert.hpp"
 
@@ -28,25 +29,12 @@ namespace lossylab::pybind
 
         m.def("permits_proprietary_distribution", &permits_proprietary_distribution, "license"_a);
 
-        nb::class_<LibraryVersion>(m, "LibraryVersion")
-            .def_ro("name", &LibraryVersion::name)
-            .def_ro("major", &LibraryVersion::major)
-            .def_ro("minor", &LibraryVersion::minor)
-            .def_ro("micro", &LibraryVersion::micro)
-            .def_ro("compiled_major", &LibraryVersion::compiled_major)
-            .def_ro("compiled_minor", &LibraryVersion::compiled_minor)
-            .def_ro("compiled_micro", &LibraryVersion::compiled_micro)
+        bind_reflected<LibraryVersion>(m, "LibraryVersion")
             .def("to_string", &LibraryVersion::to_string)
             .def("matches_compiled", &LibraryVersion::matches_compiled)
             .def("to_dict", [](const LibraryVersion& self) { return to_python(self.to_json()); });
 
-        nb::class_<BuildInfo>(m, "BuildInfo")
-            .def_ro("version", &BuildInfo::version)
-            .def_ro("configuration", &BuildInfo::configuration)
-            .def_ro("license", &BuildInfo::license)
-            .def_ro("libraries", &BuildInfo::libraries)
-            .def_ro("external_libraries", &BuildInfo::external_libraries)
-            .def_ro("build_id", &BuildInfo::build_id)
+        bind_reflected<BuildInfo>(m, "BuildInfo")
             .def("is_consistent", &BuildInfo::is_consistent)
             .def("has_external_library", &BuildInfo::has_external_library, "name"_a)
             .def("to_dict", [](const BuildInfo& self) { return to_python(self.to_json()); });
@@ -54,41 +42,18 @@ namespace lossylab::pybind
         m.def("build_info", &build_info, nb::rv_policy::reference);
 
         // ---- capabilities.hpp --------------------------------------------------
-        nb::class_<OptionSchema>(m, "OptionSchema")
-            .def_ro("name", &OptionSchema::name)
-            .def_ro("help", &OptionSchema::help)
-            .def_ro("type", &OptionSchema::type)
-            .def_ro("min_value", &OptionSchema::min_value)
-            .def_ro("max_value", &OptionSchema::max_value)
-            .def_ro("default_value", &OptionSchema::default_value)
-            .def_ro("choices", &OptionSchema::choices)
+        bind_reflected<OptionSchema>(m, "OptionSchema")
             .def("to_dict", [](const OptionSchema& self) { return to_python(self.to_json()); });
 
-        nb::class_<CodecInfo>(m, "CodecInfo")
-            .def_ro("name", &CodecInfo::name)
-            .def_ro("long_name", &CodecInfo::long_name)
-            .def_ro("codec_name", &CodecInfo::codec_name)
-            .def_ro("is_encoder", &CodecInfo::is_encoder)
-            .def_ro("is_hardware", &CodecInfo::is_hardware)
-            .def_ro("experimental", &CodecInfo::experimental)
-            .def_ro("pixel_formats", &CodecInfo::pixel_formats)
-            .def_ro("options", &CodecInfo::options)
+        bind_reflected<CodecInfo>(m, "CodecInfo")
             .def("accepts", &CodecInfo::accepts, "pixel_format"_a)
             .def("find_option", &CodecInfo::find_option, "name"_a, nb::rv_policy::reference_internal)
             .def("to_dict", [](const CodecInfo& self) { return to_python(self.to_json()); });
 
-        nb::class_<FilterInfo>(m, "FilterInfo")
-            .def_ro("name", &FilterInfo::name)
-            .def_ro("description", &FilterInfo::description)
-            .def_ro("input_count", &FilterInfo::input_count)
-            .def_ro("output_count", &FilterInfo::output_count)
-            .def_ro("dynamic_inputs", &FilterInfo::dynamic_inputs)
-            .def_ro("dynamic_outputs", &FilterInfo::dynamic_outputs)
-            .def_ro("supports_slice_threads", &FilterInfo::supports_slice_threads)
-            .def_ro("options", &FilterInfo::options)
+        bind_reflected<FilterInfo>(m, "FilterInfo")
             .def("to_dict", [](const FilterInfo& self) { return to_python(self.to_json()); });
 
-        nb::class_<HardwareDeviceInfo>(m, "HardwareDeviceInfo").def_ro("name", &HardwareDeviceInfo::name);
+        bind_reflected<HardwareDeviceInfo>(m, "HardwareDeviceInfo");
 
         m.def("hardware_device_usable", &hardware_device_usable, "name"_a,
               "Opens the device and may load vendor drivers. Call in the parent process, before "
@@ -153,10 +118,7 @@ namespace lossylab::pybind
             .value("Debug", LogLevel::Debug)
             .value("Trace", LogLevel::Trace);
 
-        nb::class_<LogMessage>(m, "LogMessage")
-            .def_ro("level", &LogMessage::level)
-            .def_ro("component", &LogMessage::component)
-            .def_ro("text", &LogMessage::text)
+        bind_reflected<LogMessage>(m, "LogMessage")
             .def("__eq__", [](const LogMessage& self, const LogMessage& other) { return self == other; })
             .def("to_dict", [](const LogMessage& self) { return to_python(self.to_json()); });
 

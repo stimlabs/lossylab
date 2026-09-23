@@ -4,6 +4,7 @@
 #include "lossylab/core/frame.hpp"
 #include "lossylab/core/json.hpp"
 #include "lossylab/core/record.hpp"
+#include "lossylab/core/reflect.hpp"
 #include "lossylab/core/strict.hpp"
 
 #include <map>
@@ -120,6 +121,8 @@ namespace lossylab
         Strict strict = Strict::Refuse;
     };
 
+    LOSSYLAB_REFLECT(MeasureOptions, strict);
+
     /// Runs no-reference analyzers over frames.
     ///
     /// The frames must share one size, pixel format and color. Interlacing,
@@ -166,6 +169,8 @@ namespace lossylab
         /// conversion is recorded.
         Strict strict = Strict::Refuse;
     };
+
+    LOSSYLAB_REFLECT(CompareOptions, strict);
 
     /// Compares distorted frames against a reference.
     ///
@@ -253,6 +258,8 @@ namespace lossylab
         /// a faster AVIF sweep.
         std::map<std::string, std::string> encoder_options;
     };
+
+    LOSSYLAB_REFLECT(RecompressionOptions, codec, parameter_range, metric, pixel_format, color, encoder_options);
 
     /// Sweeps a codec's quality parameter, measuring how much re-encoding
     /// changes the input at each setting.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lossylab/core/json.hpp"
+#include "lossylab/core/reflect.hpp"
 
 #include <functional>
 #include <string>
@@ -47,6 +48,8 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
         static LogMessage from_json(const json::Value& value);
     };
+
+    LOSSYLAB_REFLECT(LogMessage, level, component, text);
 
     bool operator==(const LogMessage& left, const LogMessage& right) noexcept;
     inline bool operator!=(const LogMessage& left, const LogMessage& right) noexcept

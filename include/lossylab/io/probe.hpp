@@ -5,6 +5,7 @@
 #include "lossylab/core/json.hpp"
 #include "lossylab/core/pixel_format.hpp"
 #include "lossylab/core/rational.hpp"
+#include "lossylab/core/reflect.hpp"
 #include "lossylab/io/icc_profile.hpp"
 #include "lossylab/io/source.hpp"
 
@@ -56,6 +57,9 @@ namespace lossylab
 
         [[nodiscard]] json::Value to_json() const;
     };
+
+    LOSSYLAB_REFLECT(ImageContainerInfo, has_alpha, is_animated, compression, frame_count, canvas_width,
+                      canvas_height, is_still_image);
 
     /// What a JPEG file's markers declare: how it was coded and with which
     /// tables. FFmpeg decodes JPEG without reporting any of it, and it is most
@@ -153,6 +157,10 @@ namespace lossylab
 
         [[nodiscard]] json::Value to_json() const;
     };
+
+    LOSSYLAB_REFLECT(JpegInfo, process, arithmetic_coding, precision, components, quantization_tables, ijg_quality,
+                      ijg_quality_exact, huffman_tables, restart_interval, scan_count, segments, comment,
+                      adobe_transform, has_end_of_image, trailing_bytes);
 
     /// One stream's properties, as the container and codec parameters describe
     /// them. Nothing here required decoding a single frame.
@@ -272,6 +280,43 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
     };
 
+    LOSSYLAB_REFLECT(
+        StreamInfo,
+        index,
+        type,
+        codec_name,
+        codec_long_name,
+        profile,
+        level,
+        width,
+        height,
+        pixel_format,
+        bit_depth,
+        color,
+        color_fully_tagged,
+        frame_rate,
+        average_frame_rate,
+        time_base,
+        sample_aspect_ratio,
+        is_variable_frame_rate,
+        rotation,
+        orientation,
+        orientation_source,
+        orientation_availability,
+        icc_profile,
+        icc_profile_availability,
+        icc_matches_tagged_color,
+        frame_count,
+        duration_us,
+        bit_rate,
+        metadata,
+        has_hdr_metadata,
+        is_default,
+        is_dependent,
+        image_container,
+        jpeg
+    );
+
     /// An image assembled from tiles, as AVIF/HEIF grid images are: iPhone
     /// photos, for instance, are 512x512 tiles. Each tile is its own stream.
     struct TileGrid
@@ -315,6 +360,9 @@ namespace lossylab
 
         [[nodiscard]] json::Value to_json() const;
     };
+
+    LOSSYLAB_REFLECT(TileGrid, id, is_primary, title, width, height, coded_width, coded_height, orientation,
+                      icc_profile, tiles);
 
     /// What `probe` found.
     ///
@@ -387,6 +435,9 @@ namespace lossylab
 
         [[nodiscard]] json::Value to_json() const;
     };
+
+    LOSSYLAB_REFLECT(ProbeResult, format_name, format_long_name, duration_us, bit_rate, size_bytes, streams,
+                      tile_grids, metadata, major_brand, compatible_brands, claimed_extension, format_mismatch);
 
     /// Reads container and stream properties without decoding.
     ///

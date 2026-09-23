@@ -1,3 +1,4 @@
+#include "bind_reflected.hpp"
 #include "bindings.hpp"
 #include "json_convert.hpp"
 
@@ -58,30 +59,9 @@ namespace lossylab::pybind
             .def("to_dict", [](const GopStructure& self) { return to_python(self.to_json()); })
             .def_static("from_dict", [](nb::dict value) { return GopStructure::from_json(to_json(value)); });
 
-        nb::class_<EncodeVideoOptions>(m, "EncodeVideoOptions")
-            .def(nb::init<>())
-            .def_rw("codec", &EncodeVideoOptions::codec)
-            .def_rw("backend", &EncodeVideoOptions::backend)
-            .def_rw("rate_control", &EncodeVideoOptions::rate_control)
-            .def_rw("gop", &EncodeVideoOptions::gop)
-            .def_rw("container", &EncodeVideoOptions::container)
-            .def_rw("pixel_format", &EncodeVideoOptions::pixel_format)
-            .def_rw("color", &EncodeVideoOptions::color)
-            .def_rw("frame_rate", &EncodeVideoOptions::frame_rate)
-            .def_rw("encoder_options", &EncodeVideoOptions::encoder_options)
-            .def_rw("thread_count", &EncodeVideoOptions::thread_count)
-            .def_rw("strict", &EncodeVideoOptions::strict);
+        bind_reflected_rw<EncodeVideoOptions>(m, "EncodeVideoOptions");
 
-        nb::class_<EncodeImageOptions>(m, "EncodeImageOptions")
-            .def(nb::init<>())
-            .def_rw("codec", &EncodeImageOptions::codec)
-            .def_rw("rate_control", &EncodeImageOptions::rate_control)
-            .def_rw("pixel_format", &EncodeImageOptions::pixel_format)
-            .def_rw("color", &EncodeImageOptions::color)
-            .def_rw("lossless", &EncodeImageOptions::lossless)
-            .def_rw("encoder_options", &EncodeImageOptions::encoder_options)
-            .def_rw("thread_count", &EncodeImageOptions::thread_count)
-            .def_rw("strict", &EncodeImageOptions::strict);
+        bind_reflected_rw<EncodeImageOptions>(m, "EncodeImageOptions");
 
         nb::class_<DecodeSpec>(m, "DecodeSpec")
             .def(nb::init<>())

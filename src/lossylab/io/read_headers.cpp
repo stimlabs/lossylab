@@ -39,7 +39,7 @@ namespace lossylab
     {
         return json::object({
             {"schema_version", schema_version},
-            {"codec", codec_name},
+            {"codec_name", codec_name},
             {"embedded_encoder_settings", json::optional_or_null(embedded_encoder_settings)},
             {"embedded_encoder_settings_availability",
              to_string(embedded_encoder_settings_availability)},

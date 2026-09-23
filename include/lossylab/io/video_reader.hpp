@@ -3,6 +3,7 @@
 #include "lossylab/core/availability.hpp"
 #include "lossylab/core/frame.hpp"
 #include "lossylab/core/record.hpp"
+#include "lossylab/core/reflect.hpp"
 #include "lossylab/core/result.hpp"
 #include "lossylab/io/probe.hpp"
 #include "lossylab/io/source.hpp"
@@ -28,6 +29,8 @@ namespace lossylab
         /// positive for a future one.
         int source_index = 0;
     };
+
+    LOSSYLAB_REFLECT(MotionVector, source_x, source_y, dest_x, dest_y, block_width, block_height, source_index);
 
     /// A decoded frame together with what the decoder reported about it.
     struct VideoFrame
@@ -65,6 +68,9 @@ namespace lossylab
         /// "the decoder cannot export motion vectors for this codec."
         Availability motion_vector_availability = Availability::NotPresent;
     };
+
+    LOSSYLAB_REFLECT(VideoFrame, frame, index, stats, qp_map, qp_map_availability, motion_vectors,
+                      motion_vector_availability);
 
     /// Which frames to pull out of a clip.
     ///
@@ -159,6 +165,9 @@ namespace lossylab
         /// Applies to the conversion, when one was requested.
         Strict strict = Strict::AllowRecorded;
     };
+
+    LOSSYLAB_REFLECT(VideoReaderOptions, stream_index, pixel_format, color, assumed_color, export_qp_maps,
+                      export_motion_vectors, thread_count, strict);
 
     /// Reads frames from a clip.
     ///

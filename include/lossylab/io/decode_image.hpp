@@ -2,6 +2,7 @@
 
 #include "lossylab/core/color_spec.hpp"
 #include "lossylab/core/pixel_format.hpp"
+#include "lossylab/core/reflect.hpp"
 #include "lossylab/core/result.hpp"
 #include "lossylab/core/strict.hpp"
 #include "lossylab/io/source.hpp"
@@ -57,6 +58,8 @@ namespace lossylab
         /// is requested.
         Strict strict = Strict::AllowRecorded;
     };
+
+    LOSSYLAB_REFLECT(DecodeImageOptions, pixel_format, color, assumed_color, orientation, strict);
 
     /// Decodes a still image.
     ///

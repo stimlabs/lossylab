@@ -3,6 +3,7 @@
 #include "lossylab/core/codec_id.hpp"
 #include "lossylab/core/json.hpp"
 #include "lossylab/core/pixel_format.hpp"
+#include "lossylab/core/reflect.hpp"
 
 #include <optional>
 #include <string>
@@ -35,6 +36,8 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
     };
 
+    LOSSYLAB_REFLECT(OptionSchema, name, help, type, min_value, max_value, default_value, choices);
+
     /// An encoder or decoder present in the build.
     struct CodecInfo
     {
@@ -64,6 +67,9 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
     };
 
+    LOSSYLAB_REFLECT(CodecInfo, name, long_name, codec_name, is_encoder, is_hardware, experimental, pixel_formats,
+                      options);
+
     struct FilterInfo
     {
         std::string name;
@@ -83,6 +89,9 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
     };
 
+    LOSSYLAB_REFLECT(FilterInfo, name, description, input_count, output_count, dynamic_inputs, dynamic_outputs,
+                      supports_slice_threads, options);
+
     /// A hardware device type the build knows about.
     ///
     /// Being compiled in is not the same as being present: a build can know
@@ -95,6 +104,8 @@ namespace lossylab
         /// "cuda", "vaapi", "qsv", "videotoolbox", ...
         std::string name;
     };
+
+    LOSSYLAB_REFLECT(HardwareDeviceInfo, name);
 
     /// Tries to open a device of this type, returning whether it succeeded.
     ///

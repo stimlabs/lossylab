@@ -3,6 +3,7 @@
 #include "lossylab/core/error.hpp"
 #include "lossylab/core/json.hpp"
 #include "lossylab/core/json_io.hpp"
+#include "lossylab/core/reflect.hpp"
 #include "lossylab/env/log.hpp"
 #include "lossylab/io/source.hpp"
 
@@ -84,6 +85,8 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
         static FileError from_json(const json::Value& value);
     };
+
+    LOSSYLAB_REFLECT(FileError, kind, operation, source, message, details);
 
     bool operator==(const FileError& left, const FileError& right) noexcept;
     inline bool operator!=(const FileError& left, const FileError& right) noexcept

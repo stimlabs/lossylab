@@ -3,6 +3,7 @@
 #include "lossylab/core/codec_id.hpp"
 #include "lossylab/core/frame.hpp"
 #include "lossylab/core/json.hpp"
+#include "lossylab/core/reflect.hpp"
 #include "lossylab/core/result.hpp"
 #include "lossylab/core/strict.hpp"
 
@@ -163,6 +164,9 @@ namespace lossylab
         Strict strict = Strict::Refuse;
     };
 
+    LOSSYLAB_REFLECT(EncodeVideoOptions, codec, backend, rate_control, gop, container, pixel_format, color,
+                      frame_rate, encoder_options, thread_count, strict);
+
     /// Encodes frames to a byte stream.
     ///
     /// The record carries per-frame type, size and quantizer, the achieved bits
@@ -204,6 +208,9 @@ namespace lossylab
         int thread_count = 1;
         Strict strict = Strict::Refuse;
     };
+
+    LOSSYLAB_REFLECT(EncodeImageOptions, codec, rate_control, pixel_format, color, lossless, encoder_options,
+                      thread_count, strict);
 
     /// Encodes a single image.
     ///

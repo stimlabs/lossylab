@@ -2,6 +2,7 @@
 
 #include "lossylab/core/availability.hpp"
 #include "lossylab/core/json.hpp"
+#include "lossylab/core/reflect.hpp"
 #include "lossylab/io/source.hpp"
 
 #include <cstdint>
@@ -26,6 +27,8 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
     };
 
+    LOSSYLAB_REFLECT(ParameterSet, kind, id, fields);
+
     /// Per-slice quantization, as coded.
     struct SliceInfo
     {
@@ -43,6 +46,8 @@ namespace lossylab
 
         [[nodiscard]] json::Value to_json() const;
     };
+
+    LOSSYLAB_REFLECT(SliceInfo, index, slice_type, qp, size_bytes);
 
     /// What `read_headers` recovered.
     ///
@@ -87,6 +92,18 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
     };
 
+    LOSSYLAB_REFLECT(
+        HeaderInfo,
+        codec_name,
+        parameter_sets,
+        slices,
+        embedded_encoder_settings,
+        embedded_encoder_settings_availability,
+        encoder_settings,
+        quantizer_indices,
+        bitstream_color
+    );
+
     struct ReadHeadersOptions
     {
         /// Stop after this many slices, or for VP9 and AV1 coded frames.
@@ -98,6 +115,8 @@ namespace lossylab
         /// Which stream to parse. Negative means the first video stream.
         int stream_index = -1;
     };
+
+    LOSSYLAB_REFLECT(ReadHeadersOptions, max_slices, stream_index);
 
     /// Parses bitstream syntax without decoding.
     ///

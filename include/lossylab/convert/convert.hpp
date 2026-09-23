@@ -5,6 +5,7 @@
 #include "lossylab/core/frame.hpp"
 #include "lossylab/core/kernel.hpp"
 #include "lossylab/core/pixel_format.hpp"
+#include "lossylab/core/reflect.hpp"
 #include "lossylab/core/result.hpp"
 #include "lossylab/core/strict.hpp"
 
@@ -48,6 +49,8 @@ namespace lossylab
         Strict strict = Strict::AllowRecorded;
     };
 
+    LOSSYLAB_REFLECT(ConvertOptions, pixel_format, color, chroma_down, chroma_up, backend, strict);
+
     /// Converts pixel format, bit depth, subsampling and color in one step.
     ///
     /// The building block of every codec path. Spatial dimensions are not
@@ -89,6 +92,9 @@ namespace lossylab
         ResizeBackend backend = ResizeBackend::Swscale;
         Strict strict = Strict::AllowRecorded;
     };
+
+    LOSSYLAB_REFLECT(ChromaRoundtripOptions, subsampling, color, chroma_down, chroma_up, intermediate_bit_depth,
+                      backend, strict);
 
     /// RGB to subsampled YUV and back, in one call.
     ///
