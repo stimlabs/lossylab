@@ -355,16 +355,10 @@ namespace
         assert(result.additional_images().stream_indices.empty());
     }
 
-    void test_decode_image_refuses_a_grid_rather_than_returning_a_tile()
+    void test_decoding_a_single_image_records_no_tile_grid()
     {
-        try
-        {
-            static_cast<void>(decode_image(Source::from_path(data_path(avif_grid_fixture))));
-            assert(false && "expected NotImplemented");
-        }
-        catch (const NotImplemented&)
-        {
-        }
+        const FrameResult result = decode_image(Source::from_path(data_path(png_fixture)));
+        assert(result.record.params.at("tile_grid").is_null());
     }
 
     // JPEG fixtures written by Pillow 12.3 (libjpeg-turbo) from the 64x48
@@ -762,7 +756,7 @@ int main()
     test_an_alpha_grid_is_an_additional_image();
     test_a_single_image_alpha_plane_is_an_additional_image();
     test_a_video_has_no_additional_images();
-    test_decode_image_refuses_a_grid_rather_than_returning_a_tile();
+    test_decoding_a_single_image_records_no_tile_grid();
     test_probing_from_memory_matches_probing_from_a_path();
     test_an_owning_memory_source_keeps_its_bytes_alive();
     test_a_copied_owning_source_outlives_the_original();

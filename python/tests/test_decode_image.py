@@ -49,6 +49,19 @@ def test_plane_array_keeps_frame_alive():
     assert plane[0, 0, 0] >= 0
 
 
+def software_av1_decoder_available():
+    capabilities = lossylab.capabilities()
+    return capabilities.has_decoder("libdav1d") or capabilities.has_decoder("libaom-av1")
+
+
+@pytest.mark.skipif(not software_av1_decoder_available(), reason="no software AV1 decoder in this FFmpeg build")
+def test_a_grid_avif_decodes_to_the_whole_image():
+    result = lossylab.decode_image(lossylab.Source.from_path(str(DATA_DIR / "testsrc_128x96_grid_420.avif")))
+    assert (result.frame.width(), result.frame.height()) == (128, 96)
+    assert result.frame.plane(0).shape == (96, 128)
+    assert result.record.params["tile_grid"]["tiles"] == 4
+
+
 def test_decode_image_record_describes_the_decode():
     result = lossylab.decode_image(lossylab.Source.from_path(str(DATA_DIR / "testsrc_64x48.jpg")))
     assert result.record.kind == lossylab.StageKind.Decode
