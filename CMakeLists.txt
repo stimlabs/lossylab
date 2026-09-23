@@ -104,7 +104,7 @@ set_target_properties(lossylab PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # ---------------------------------------------------------------------------
 
 if(BUILD_PYTHON_BINDINGS)
-    find_package(Python 3.9 COMPONENTS Interpreter Development.Module REQUIRED)
+    find_package(Python 3.10 COMPONENTS Interpreter Development.Module REQUIRED)
     find_package(nanobind CONFIG REQUIRED)
 
     nanobind_add_module(_lossylab

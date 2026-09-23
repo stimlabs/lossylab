@@ -6,12 +6,11 @@ build-backend = "scikit_build_core.build"
 name = "lossylab"
 version = "0.1.0"
 description = "Model, apply and inspect the processing history of images and video frames."
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = ["numpy"]
 
 [project.optional-dependencies]
 test = ["pytest", "pillow"]
-dev = ["mypy"]
 
 [tool.scikit-build]
 wheel.packages = ["python/lossylab"]
@@ -20,6 +19,23 @@ wheel.packages = ["python/lossylab"]
 BUILD_PYTHON_BINDINGS = "ON"
 LOSSYLAB_BUILD_TESTS = "OFF"
 LOSSYLAB_BUILD_TOOLS = "OFF"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "ruff>=0.16.8",
+]
+
+[tool.ruff]
+line-length = 120
+indent-width = 4
+
+[tool.ruff.lint]
+extend-select = ["I"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+split-on-trailing-comma = false
 
 # No editable rebuild-on-import: it needs a build-dir persisted across
 # builds, but uv's build-isolation venv (where cmake/ninja/nanobind live
