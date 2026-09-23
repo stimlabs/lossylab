@@ -21,6 +21,19 @@ namespace
         return decode_image(Source::from_path(data_path("testsrc_64x48.png"))).frame;
     }
 
+    /// A YUV preset's matrix, range and siting with the sRGB source's primaries
+    /// and transfer, which convert() cannot change.
+    ColorSpec keeping_source_gamut(ColorSpec target)
+    {
+        target.primaries = ColorPrimaries::Bt709;
+        target.transfer = TransferCharacteristic::Srgb;
+        return target;
+    }
+
+    ColorSpec bt709_yuv() { return keeping_source_gamut(ColorSpec::bt709_limited()); }
+    ColorSpec bt709_full_yuv() { return keeping_source_gamut(ColorSpec::bt709_full()); }
+    ColorSpec bt601_yuv() { return keeping_source_gamut(ColorSpec::bt601_limited()); }
+
     bool has_conversion(const ConversionList& conversions, const std::string& property)
     {
         for (const ConversionEvent& conversion : conversions)
@@ -56,10 +69,10 @@ namespace
     {
         const Frame source = rgb_source();
         const FrameResult result =
-            convert(source, PixelFormat::from_name("yuv420p"), ColorSpec::bt709_limited());
+            convert(source, PixelFormat::from_name("yuv420p"), bt709_yuv());
 
         assert(result.frame.pixel_format().name() == std::string("yuv420p"));
-        assert(result.frame.color() == ColorSpec::bt709_limited());
+        assert(result.frame.color() == bt709_yuv());
 
         // Geometry is untouched; that is resize's job, not convert's.
         assert(result.frame.width() == source.width());
@@ -71,7 +84,7 @@ namespace
     {
         const Frame source = rgb_source();
         const FrameResult result =
-            convert(source, PixelFormat::from_name("yuv422p"), ColorSpec::bt709_limited());
+            convert(source, PixelFormat::from_name("yuv422p"), bt709_yuv());
 
         assert(result.record.input == source.describe());
         assert(result.record.output == result.frame.describe());
@@ -83,7 +96,7 @@ namespace
     {
         const Frame source = rgb_source();
         const FrameResult result =
-            convert(source, PixelFormat::from_name("yuv420p10le"), ColorSpec::bt709_limited());
+            convert(source, PixelFormat::from_name("yuv420p10le"), bt709_yuv());
 
         // Each axis is reported separately, so a record can be grouped on any of
         // them across a dataset.
@@ -112,11 +125,11 @@ namespace
         // The caller named the target format and the target color, so there is
         // nothing to refuse. Strict::Refuse is an opt-in assertion, not the default.
         const Frame source = rgb_source();
-        (void)convert(source, PixelFormat::from_name("yuv420p"), ColorSpec::bt709_limited());
+        (void)convert(source, PixelFormat::from_name("yuv420p"), bt709_yuv());
 
         try
         {
-            (void)convert(source, PixelFormat::from_name("yuv420p"), ColorSpec::bt709_limited(),
+            (void)convert(source, PixelFormat::from_name("yuv420p"), bt709_yuv(),
                           Strict::Refuse);
             assert(false && "expected throw");
         }
@@ -130,12 +143,12 @@ namespace
         // Within YUV, changing the matrix is a real color decision rather than a
         // consequence of the layout, so the default refuses it.
         const Frame yuv =
-            convert(rgb_source(), PixelFormat::from_name("yuv420p"), ColorSpec::bt709_limited())
+            convert(rgb_source(), PixelFormat::from_name("yuv420p"), bt709_yuv())
                 .frame;
 
         ConvertOptions options;
         options.pixel_format = PixelFormat::from_name("yuv420p");
-        options.color = ColorSpec::bt601_limited();
+        options.color = bt601_yuv();
         options.strict = Strict::Refuse;
 
         try
@@ -151,12 +164,12 @@ namespace
     void test_strict_mode_refuses_a_range_change()
     {
         const Frame yuv =
-            convert(rgb_source(), PixelFormat::from_name("yuv420p"), ColorSpec::bt709_limited())
+            convert(rgb_source(), PixelFormat::from_name("yuv420p"), bt709_yuv())
                 .frame;
 
         ConvertOptions options;
         options.pixel_format = PixelFormat::from_name("yuv420p");
-        options.color = ColorSpec::bt709_full();
+        options.color = bt709_full_yuv();
         options.strict = Strict::Refuse;
 
         try
@@ -172,17 +185,50 @@ namespace
     void test_allow_recorded_performs_the_same_conversion_and_logs_it()
     {
         const Frame yuv =
-            convert(rgb_source(), PixelFormat::from_name("yuv420p"), ColorSpec::bt709_limited())
+            convert(rgb_source(), PixelFormat::from_name("yuv420p"), bt709_yuv())
                 .frame;
 
         ConvertOptions options;
         options.pixel_format = PixelFormat::from_name("yuv420p");
-        options.color = ColorSpec::bt601_limited();
+        options.color = bt601_yuv();
         options.strict = Strict::AllowRecorded;
 
         const FrameResult result = convert(yuv, options);
 
-        assert(result.frame.color() == ColorSpec::bt601_limited());
+        assert(result.frame.color() == bt601_yuv());
+        assert(has_conversion(result.record.conversions, "color_matrix"));
+    }
+
+    void test_a_gamut_or_tone_curve_change_is_refused_under_any_policy()
+    {
+        // swscale would apply the matrix and range and leave the samples in
+        // their old gamut, while the output claimed the new one.
+        const Frame source = rgb_source();
+        for (const Strict strict : {Strict::AllowRecorded, Strict::Refuse})
+        {
+            for (const ColorSpec& target : {ColorSpec::bt709_limited(), ColorSpec::bt601_limited()})
+            {
+                try
+                {
+                    (void)convert(source, PixelFormat::from_name("yuv420p"), target, strict);
+                    assert(false && "expected throw");
+                }
+                catch (const NotImplemented&)
+                {
+                }
+            }
+        }
+    }
+
+    void test_a_chroma_roundtrip_keeps_the_source_gamut_whatever_color_it_names()
+    {
+        // The default names BT.709 limited, whose transfer differs from the
+        // sRGB source's; only its matrix, range and siting are used.
+        ChromaRoundtripOptions options;
+        options.color = ColorSpec::bt601_limited();
+        const FrameResult result = chroma_roundtrip(rgb_source(), options);
+        assert(!has_conversion(result.record.conversions, "primaries"));
+        assert(!has_conversion(result.record.conversions, "transfer"));
         assert(has_conversion(result.record.conversions, "color_matrix"));
     }
 
@@ -209,7 +255,7 @@ namespace
         try
         {
             (void)convert(Frame(), PixelFormat::from_name("yuv420p"),
-                          ColorSpec::bt709_limited());
+                          bt709_yuv());
             assert(false && "expected throw");
         }
         catch (const ConfigError&)
@@ -218,7 +264,7 @@ namespace
 
         ConvertOptions options;
         options.pixel_format = PixelFormat();
-        options.color = ColorSpec::bt709_limited();
+        options.color = bt709_yuv();
         try
         {
             (void)convert(rgb_source(), options);
@@ -235,7 +281,7 @@ namespace
 
         ConvertOptions options;
         options.pixel_format = PixelFormat::from_name("yuv420p");
-        options.color = ColorSpec::bt709_limited();
+        options.color = bt709_yuv();
         options.chroma_down = KernelSpec{Kernel::Lanczos, {}};
 
         const FrameResult result = convert(source, options);
@@ -256,7 +302,7 @@ namespace
 
         ConvertOptions area;
         area.pixel_format = PixelFormat::from_name("yuv420p");
-        area.color = ColorSpec::bt709_limited();
+        area.color = bt709_yuv();
         area.chroma_down = KernelSpec{Kernel::Area, {}};
 
         ConvertOptions point = area;
@@ -372,12 +418,12 @@ namespace
     void test_reinterpret_changes_the_label_and_nothing_else()
     {
         const Frame yuv =
-            convert(rgb_source(), PixelFormat::from_name("yuv420p"), ColorSpec::bt709_limited())
+            convert(rgb_source(), PixelFormat::from_name("yuv420p"), bt709_yuv())
                 .frame;
 
-        const FrameResult result = reinterpret(yuv, ColorSpec::bt601_limited());
+        const FrameResult result = reinterpret(yuv, bt601_yuv());
 
-        assert(result.frame.color() == ColorSpec::bt601_limited());
+        assert(result.frame.color() == bt601_yuv());
         assert(result.frame.pixel_format() == yuv.pixel_format());
 
         // Not one sample may differ: this models a lost or misread tag, not a
@@ -389,10 +435,10 @@ namespace
     void test_reinterpret_records_every_field_it_relabeled()
     {
         const Frame yuv =
-            convert(rgb_source(), PixelFormat::from_name("yuv420p"), ColorSpec::bt709_limited())
+            convert(rgb_source(), PixelFormat::from_name("yuv420p"), bt709_yuv())
                 .frame;
 
-        const FrameResult result = reinterpret(yuv, ColorSpec::bt601_limited());
+        const FrameResult result = reinterpret(yuv, bt601_yuv());
 
         // Lossless is not the same as invisible: every downstream stage reads these
         // samples differently now, so the relabeling has to be in the record.
@@ -403,11 +449,11 @@ namespace
     void test_reinterpret_is_reversible()
     {
         const Frame yuv =
-            convert(rgb_source(), PixelFormat::from_name("yuv420p"), ColorSpec::bt709_limited())
+            convert(rgb_source(), PixelFormat::from_name("yuv420p"), bt709_yuv())
                 .frame;
 
-        const Frame there = reinterpret(yuv, ColorSpec::bt601_limited()).frame;
-        const Frame back = reinterpret(there, ColorSpec::bt709_limited()).frame;
+        const Frame there = reinterpret(yuv, bt601_yuv()).frame;
+        const Frame back = reinterpret(there, bt709_yuv()).frame;
 
         assert(back.color() == yuv.color());
         assert(std::abs(plane_difference(yuv, back) - 0.0) < 1e-12);
@@ -416,10 +462,10 @@ namespace
     void test_relabeling_to_the_same_color_records_nothing()
     {
         const Frame yuv =
-            convert(rgb_source(), PixelFormat::from_name("yuv420p"), ColorSpec::bt709_limited())
+            convert(rgb_source(), PixelFormat::from_name("yuv420p"), bt709_yuv())
                 .frame;
 
-        const FrameResult result = reinterpret(yuv, ColorSpec::bt709_limited());
+        const FrameResult result = reinterpret(yuv, bt709_yuv());
         assert(result.record.conversions.empty());
     }
 
@@ -430,16 +476,16 @@ namespace
         // numbers alone. Confusing them is a real pipeline bug, and the two must
         // not produce the same frame.
         const Frame yuv =
-            convert(rgb_source(), PixelFormat::from_name("yuv420p"), ColorSpec::bt709_limited())
+            convert(rgb_source(), PixelFormat::from_name("yuv420p"), bt709_yuv())
                 .frame;
 
         ConvertOptions options;
         options.pixel_format = PixelFormat::from_name("yuv420p");
-        options.color = ColorSpec::bt601_limited();
+        options.color = bt601_yuv();
         options.strict = Strict::AllowRecorded;
 
         const Frame converted = convert(yuv, options).frame;
-        const Frame relabeled = reinterpret(yuv, ColorSpec::bt601_limited()).frame;
+        const Frame relabeled = reinterpret(yuv, bt601_yuv()).frame;
 
         assert(converted.color() == relabeled.color());
         assert(plane_difference(converted, relabeled) > 0.0);
@@ -456,6 +502,8 @@ int main()
     test_strict_mode_refuses_a_color_change_that_was_not_entailed();
     test_strict_mode_refuses_a_range_change();
     test_allow_recorded_performs_the_same_conversion_and_logs_it();
+    test_a_gamut_or_tone_curve_change_is_refused_under_any_policy();
+    test_a_chroma_roundtrip_keeps_the_source_gamut_whatever_color_it_names();
     test_an_unspecified_color_is_refused_rather_than_guessed();
     test_convert_rejects_empty_frames_and_invalid_targets();
     test_the_kernel_used_is_named_in_the_record();

@@ -140,6 +140,19 @@ namespace lossylab
             frame.color().require_fully_specified("convert() source");
             options.color.require_fully_specified("convert() target");
 
+            // swscale's matrix-and-range path leaves gamut and tone curve
+            // alone. Labeling its output with other primaries or another
+            // transfer would claim a conversion that never happened.
+            if (frame.color().primaries != options.color.primaries ||
+                frame.color().transfer != options.color.transfer)
+            {
+                throw NotImplemented("convert() between primaries or transfer characteristics (from " +
+                                     to_string(frame.color().primaries) + "/" + to_string(frame.color().transfer) +
+                                     " to " + to_string(options.color.primaries) + "/" +
+                                     to_string(options.color.transfer) +
+                                     "); reinterpret() relabels them without converting");
+            }
+
             if (options.backend == ResizeBackend::Zscale)
             {
                 // zscale is a libavfilter filter rather than a swscale mode, so
@@ -257,9 +270,15 @@ namespace lossylab
         const PixelFormat intermediate = PixelFormat::planar_yuv(options.subsampling, depth);
 
         // Down to the subsampled intermediate...
+        // The trip changes the matrix, range and chroma siting; the samples
+        // keep the source's gamut and tone curve throughout.
+        ColorSpec intermediate_color = options.color;
+        intermediate_color.primaries = frame.color().primaries;
+        intermediate_color.transfer = frame.color().transfer;
+
         ConvertOptions to_intermediate;
         to_intermediate.pixel_format = intermediate;
-        to_intermediate.color = options.color;
+        to_intermediate.color = intermediate_color;
         to_intermediate.chroma_down = options.chroma_down;
         to_intermediate.chroma_up = options.chroma_down;
         to_intermediate.backend = options.backend;

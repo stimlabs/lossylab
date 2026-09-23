@@ -2,7 +2,12 @@
 
 #include "lossylab/io/source_reader.hpp"
 
+#include <zlib.h>
+
+#include <algorithm>
+#include <array>
 #include <cstring>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -19,6 +24,45 @@ namespace lossylab::detail
         std::uint32_t little_endian_32(const std::uint8_t* bytes)
         {
             return little_endian_24(bytes) | (static_cast<std::uint32_t>(bytes[3]) << 24);
+        }
+
+        std::uint32_t big_endian_32(const std::uint8_t* bytes)
+        {
+            return (static_cast<std::uint32_t>(bytes[0]) << 24) | (static_cast<std::uint32_t>(bytes[1]) << 16) |
+                   (static_cast<std::uint32_t>(bytes[2]) << 8) | static_cast<std::uint32_t>(bytes[3]);
+        }
+
+        /// Inflates a zlib stream, stopping at `embedded_payload_limit`
+        /// bytes of output so a small chunk cannot expand without bound.
+        /// Nullopt when the stream is damaged or would exceed the limit.
+        std::optional<std::vector<std::uint8_t>> inflate_bounded(const std::span<const std::uint8_t> compressed)
+        {
+            z_stream stream{};
+            if (inflateInit(&stream) != Z_OK)
+            {
+                return std::nullopt;
+            }
+            stream.next_in = const_cast<Bytef*>(compressed.data());
+            stream.avail_in = static_cast<uInt>(compressed.size());
+
+            std::vector<std::uint8_t> output;
+            constexpr std::size_t step = 64 * 1024;
+            int status = Z_OK;
+            while (status == Z_OK && output.size() < static_cast<std::size_t>(embedded_payload_limit))
+            {
+                const std::size_t written = output.size();
+                output.resize(written + step);
+                stream.next_out = output.data() + written;
+                stream.avail_out = static_cast<uInt>(step);
+                status = inflate(&stream, Z_NO_FLUSH);
+                output.resize(written + step - stream.avail_out);
+            }
+            inflateEnd(&stream);
+            if (status != Z_STREAM_END)
+            {
+                return std::nullopt;
+            }
+            return output;
         }
 
         bool fourcc_is(const std::vector<std::uint8_t>& bytes, const std::size_t offset, const std::string_view fourcc)
@@ -80,6 +124,31 @@ namespace lossylab::detail
                         chunks.canvas_height = static_cast<int>(little_endian_24(extended.data() + 7)) + 1;
                     }
                 }
+                else if ((fourcc_is(header, 0, "ICCP") && !chunks.icc_profile.has_value()) ||
+                         (fourcc_is(header, 0, "EXIF") && !chunks.exif.has_value()))
+                {
+                    const bool is_icc = fourcc_is(header, 0, "ICCP");
+                    std::vector<std::uint8_t> payload;
+                    if (payload_size > embedded_payload_limit)
+                    {
+                        if (is_icc)
+                        {
+                            chunks.icc_problems.push_back("the ICCP chunk's " + std::to_string(payload_size) +
+                                                          " bytes exceed the " +
+                                                          std::to_string(embedded_payload_limit) +
+                                                          "-byte limit and were not read");
+                        }
+                    }
+                    else
+                    {
+                        payload = reader.read(payload_offset, static_cast<std::size_t>(payload_size));
+                        if (is_icc && payload.size() < static_cast<std::size_t>(payload_size))
+                        {
+                            chunks.icc_problems.emplace_back("the ICCP chunk is cut short");
+                        }
+                    }
+                    (is_icc ? chunks.icc_profile : chunks.exif) = std::move(payload);
+                }
                 else if (fourcc_is(header, 0, "ANIM"))
                 {
                     chunks.is_animated = true;
@@ -114,6 +183,77 @@ namespace lossylab::detail
         if (!chunks.is_animated)
         {
             chunks.frame_count = 1;
+        }
+        return chunks;
+    }
+
+    std::optional<PngChunks> read_png_chunks(const Source& source)
+    {
+        constexpr std::array<std::uint8_t, 8> png_signature = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
+        SourceReader reader(source);
+        const std::vector<std::uint8_t> signature = reader.read(0, png_signature.size());
+        if (!std::equal(signature.begin(), signature.end(), png_signature.begin(), png_signature.end()))
+        {
+            return std::nullopt;
+        }
+
+        // Each chunk is a 4-byte length, a 4-byte type, the data and a CRC.
+        PngChunks chunks;
+        constexpr std::int64_t chunk_header_size = 8;
+        constexpr std::int64_t crc_size = 4;
+        std::int64_t offset = png_signature.size();
+        while (true)
+        {
+            const std::vector<std::uint8_t> header = reader.read(offset, chunk_header_size);
+            if (header.size() < chunk_header_size || fourcc_is(header, 4, "IEND"))
+            {
+                break;
+            }
+            const std::int64_t payload_offset = offset + chunk_header_size;
+            const std::int64_t payload_size = big_endian_32(header.data());
+            const bool is_icc = fourcc_is(header, 4, "iCCP") && !chunks.icc_profile.has_value();
+            const bool is_exif = fourcc_is(header, 4, "eXIf") && !chunks.exif.has_value();
+            if (is_icc && payload_size > embedded_payload_limit)
+            {
+                chunks.icc_problems.push_back("the iCCP chunk's " + std::to_string(payload_size) +
+                                              " bytes exceed the " + std::to_string(embedded_payload_limit) +
+                                              "-byte limit and were not read");
+                chunks.icc_profile = std::vector<std::uint8_t>();
+            }
+            else if (is_exif && payload_size > embedded_payload_limit)
+            {
+                chunks.exif = std::vector<std::uint8_t>();
+            }
+            else if (is_exif)
+            {
+                chunks.exif = reader.read(payload_offset, static_cast<std::size_t>(payload_size));
+            }
+            else if (is_icc)
+            {
+                // A Latin-1 name of 1-79 bytes, a NUL, a compression method
+                // (0, zlib), then the compressed profile.
+                const std::vector<std::uint8_t> payload =
+                    reader.read(payload_offset, static_cast<std::size_t>(payload_size));
+                const auto terminator = std::find(payload.begin(), payload.end(), std::uint8_t{0});
+                if (terminator == payload.end() || terminator + 1 == payload.end() || *(terminator + 1) != 0)
+                {
+                    chunks.icc_problems.emplace_back("the iCCP chunk has no name terminator or an unknown compression");
+                    chunks.icc_profile = std::vector<std::uint8_t>();
+                }
+                else
+                {
+                    chunks.icc_profile_name.assign(payload.begin(), terminator);
+                    const auto compressed_start = static_cast<std::size_t>(terminator - payload.begin()) + 2;
+                    std::optional<std::vector<std::uint8_t>> profile =
+                        inflate_bounded(std::span<const std::uint8_t>(payload).subspan(compressed_start));
+                    if (!profile.has_value())
+                    {
+                        chunks.icc_problems.emplace_back("the iCCP chunk's profile does not decompress within the limit");
+                    }
+                    chunks.icc_profile = std::move(profile).value_or(std::vector<std::uint8_t>());
+                }
+            }
+            offset = payload_offset + payload_size + crc_size;
         }
         return chunks;
     }

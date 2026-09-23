@@ -5,6 +5,9 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <string>
+#include <tuple>
+#include <utility>
 
 namespace lossylab
 {
@@ -95,6 +98,25 @@ namespace lossylab
     CoordinateTransform CoordinateTransform::crop(const double x, const double y) noexcept
     {
         return translation(-x, -y);
+    }
+
+    CoordinateTransform CoordinateTransform::orientation(const int exif_orientation, const int width,
+                                                         const int height)
+    {
+        const double last_column = width - 1;
+        const double last_row = height - 1;
+        switch (exif_orientation)
+        {
+        case 1: return identity();
+        case 2: return {-1.0, 0.0, last_column, 0.0, 1.0, 0.0};
+        case 3: return {-1.0, 0.0, last_column, 0.0, -1.0, last_row};
+        case 4: return {1.0, 0.0, 0.0, 0.0, -1.0, last_row};
+        case 5: return {0.0, 1.0, 0.0, 1.0, 0.0, 0.0};
+        case 6: return {0.0, -1.0, last_row, 1.0, 0.0, 0.0};
+        case 7: return {0.0, -1.0, last_row, -1.0, 0.0, last_column};
+        case 8: return {0.0, 1.0, 0.0, -1.0, 0.0, last_column};
+        default: throw ConfigError("EXIF orientation " + std::to_string(exif_orientation) + " is not in 1-8");
+        }
     }
 
     CoordinateTransform CoordinateTransform::then(const CoordinateTransform& after) const noexcept
@@ -259,20 +281,41 @@ namespace lossylab
         {
             return result;
         }
-        if (!transform.is_integer_translation())
+        const auto is_unit_or_zero = [](const double value)
+        { return near(value, 0.0) || near(value, 1.0) || near(value, -1.0); };
+        const bool permutes_axes = is_unit_or_zero(transform.scale_x) && is_unit_or_zero(transform.shear_x) &&
+                                   is_unit_or_zero(transform.shear_y) && is_unit_or_zero(transform.scale_y) &&
+                                   near(std::abs(transform.scale_x) + std::abs(transform.shear_x), 1.0) &&
+                                   near(std::abs(transform.shear_y) + std::abs(transform.scale_y), 1.0) &&
+                                   near(std::abs(transform.determinant()), 1.0);
+        if (!permutes_axes || !is_whole(transform.translate_x) || !is_whole(transform.translate_y))
         {
-            // Resampling, rotation or a sub-pixel shift: block boundaries no
-            // longer align to anything in the new sampling grid.
+            // Resampling, rotation by other than quarter turns, or a sub-pixel
+            // shift: block boundaries no longer align to anything in the new
+            // sampling grid.
             result.valid = false;
             return result;
         }
 
-        const auto shift_x = static_cast<int>(std::llround(transform.translate_x));
-        const auto shift_y = static_cast<int>(std::llround(transform.translate_y));
+        // Each output axis is one input axis, possibly reversed, shifted by
+        // whole pixels. A reversed axis puts a block's last pixel first, so
+        // its new start is where the old end lands.
+        const auto output_axis = [this](const double from_x, const double from_y, const double translate)
+        {
+            const bool from_input_x = !near(from_x, 0.0);
+            const double sign = from_input_x ? from_x : from_y;
+            const int size = from_input_x ? block_width : block_height;
+            const int phase = from_input_x ? phase_x : phase_y;
+            const auto shift = static_cast<int>(std::llround(translate));
+            const int start = sign > 0.0 ? phase + shift : shift - phase - size + 1;
 
-        // Euclidean modulo: the phase stays in [0, size) for negative shifts too.
-        result.phase_x = ((phase_x + shift_x) % block_width + block_width) % block_width;
-        result.phase_y = ((phase_y + shift_y) % block_height + block_height) % block_height;
+            // Euclidean modulo: the phase stays in [0, size) for negative shifts too.
+            return std::pair<int, int>{size, (start % size + size) % size};
+        };
+        std::tie(result.block_width, result.phase_x) =
+            output_axis(transform.scale_x, transform.shear_x, transform.translate_x);
+        std::tie(result.block_height, result.phase_y) =
+            output_axis(transform.shear_y, transform.scale_y, transform.translate_y);
         return result;
     }
 

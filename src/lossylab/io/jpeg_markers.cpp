@@ -285,6 +285,31 @@ namespace lossylab::detail
                 return m_standard_huffman_tables == 0 ? "custom" : "mixed";
             }
 
+            /// The ICC chunks in sequence order, with any missing one reported.
+            [[nodiscard]] std::vector<std::uint8_t> assembled_icc_profile()
+            {
+                std::vector<std::uint8_t> profile;
+                if (m_icc_chunks.empty())
+                {
+                    return profile;
+                }
+                for (int sequence = 1; sequence <= m_icc_chunk_count; ++sequence)
+                {
+                    const auto it = m_icc_chunks.find(sequence);
+                    if (it == m_icc_chunks.end())
+                    {
+                        m_icc_problems.push_back("ICC_PROFILE chunk " + std::to_string(sequence) + " of " +
+                                                 std::to_string(m_icc_chunk_count) + " is missing");
+                        continue;
+                    }
+                    profile.insert(profile.end(), it->second.begin(), it->second.end());
+                }
+                return profile;
+            }
+
+            [[nodiscard]] std::vector<std::string>& icc_problems() noexcept { return m_icc_problems; }
+            [[nodiscard]] std::optional<std::vector<std::uint8_t>>& exif() noexcept { return m_exif; }
+
         private:
             /// The next marker code, skipping the 0xFF fill bytes that may
             /// precede one and any stray bytes before it.
@@ -452,7 +477,7 @@ namespace lossylab::detail
 
             void read_application_segment(const std::uint8_t marker, const int payload_size)
             {
-                const std::vector<std::uint8_t> prefix =
+                std::vector<std::uint8_t> prefix =
                     m_input.take(std::min(static_cast<std::size_t>(payload_size), signature_prefix_size));
                 JpegInfo::Segment segment;
                 segment.marker = "APP" + std::to_string(marker - 0xe0);
@@ -466,6 +491,49 @@ namespace lossylab::detail
                     !m_info.adobe_transform.has_value())
                 {
                     m_info.adobe_transform = prefix[adobe_transform_offset];
+                }
+
+                const bool is_icc_chunk = marker == 0xe2 && segment.identifier == "ICC_PROFILE";
+                const bool is_first_exif = marker == 0xe1 && segment.identifier == "Exif" && !m_exif.has_value();
+                if (!is_icc_chunk && !is_first_exif)
+                {
+                    return;
+                }
+                const std::vector<std::uint8_t> rest =
+                    m_input.take(static_cast<std::size_t>(payload_size) - prefix.size());
+                prefix.insert(prefix.end(), rest.begin(), rest.end());
+                if (is_first_exif)
+                {
+                    m_exif = std::move(prefix);
+                }
+                else
+                {
+                    read_icc_chunk(prefix);
+                }
+            }
+
+            /// "ICC_PROFILE\0", the chunk's 1-based sequence number, the
+            /// number of chunks, then that chunk's part of the profile.
+            void read_icc_chunk(const std::vector<std::uint8_t>& payload)
+            {
+                constexpr std::size_t chunk_header_size = 14;
+                if (payload.size() < chunk_header_size)
+                {
+                    m_icc_problems.emplace_back("an ICC_PROFILE segment is too short to hold a chunk");
+                    return;
+                }
+                const int sequence = payload[12];
+                const int count = payload[13];
+                if (m_icc_chunk_count != 0 && count != m_icc_chunk_count)
+                {
+                    m_icc_problems.push_back("ICC_PROFILE segments disagree on the chunk count (" +
+                                             std::to_string(m_icc_chunk_count) + " and " + std::to_string(count) +
+                                             ")");
+                }
+                m_icc_chunk_count = std::max(m_icc_chunk_count, count);
+                if (!m_icc_chunks.try_emplace(sequence, payload.begin() + chunk_header_size, payload.end()).second)
+                {
+                    m_icc_problems.push_back("ICC_PROFILE chunk " + std::to_string(sequence) + " appears twice");
                 }
             }
 
@@ -490,10 +558,14 @@ namespace lossylab::detail
             std::map<int, JpegInfo::QuantizationTable> m_tables_at_frame;
             int m_standard_huffman_tables = 0;
             int m_custom_huffman_tables = 0;
+            std::map<int, std::vector<std::uint8_t>> m_icc_chunks;
+            int m_icc_chunk_count = 0;
+            std::vector<std::string> m_icc_problems;
+            std::optional<std::vector<std::uint8_t>> m_exif;
         };
     }
 
-    std::optional<JpegInfo> read_jpeg_markers(const Source& source)
+    std::optional<JpegMarkers> read_jpeg_markers(const Source& source)
     {
         SourceReader reader(source);
         const std::vector<std::uint8_t> start = reader.read(0, 2);
@@ -505,7 +577,8 @@ namespace lossylab::detail
         SequentialReader input(reader);
         input.skip(2);
 
-        JpegInfo info;
+        JpegMarkers markers;
+        JpegInfo& info = markers.info;
         MarkerWalk walk(input, info);
         walk.run();
         info.huffman_tables = walk.huffman_summary();
@@ -518,6 +591,10 @@ namespace lossylab::detail
                 info.trailing_bytes = std::max<std::int64_t>(0, *size - input.position());
             }
         }
-        return info;
+
+        markers.icc_profile = walk.assembled_icc_profile();
+        markers.icc_problems = std::move(walk.icc_problems());
+        markers.exif = std::move(walk.exif());
+        return markers;
     }
 }

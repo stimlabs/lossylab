@@ -131,11 +131,19 @@ namespace
         assert(indices_of(reader.frames(FrameSelector::evenly_spaced(10))) == (std::vector<int>{0, 1, 2, 3, 4}));
     }
 
+    /// RGB that keeps the clip's BT.709 transfer, which convert() cannot change.
+    ColorSpec rgb_with_the_clips_transfer()
+    {
+        ColorSpec color = ColorSpec::srgb();
+        color.transfer = TransferCharacteristic::Bt709;
+        return color;
+    }
+
     void test_a_predicate_sees_the_native_frame()
     {
         VideoReaderOptions options;
         options.pixel_format = PixelFormat::from_name("rgb24");
-        options.color = ColorSpec::srgb();
+        options.color = rgb_with_the_clips_transfer();
         VideoReader reader = fixture_reader(options);
 
         const std::vector<VideoFrame> frames = reader.frames(FrameSelector::where(
@@ -252,7 +260,7 @@ namespace
     {
         VideoReaderOptions options;
         options.pixel_format = PixelFormat::from_name("rgb24");
-        options.color = ColorSpec::srgb();
+        options.color = rgb_with_the_clips_transfer();
         VideoReader reader = fixture_reader(options);
 
         const std::vector<VideoFrame> frames = reader.frames(FrameSelector::indices({0}));

@@ -318,6 +318,19 @@ namespace
         assert(result.additional_images().tile_grid_ids.empty());
     }
 
+    void test_a_grid_images_rotation_is_reported_on_the_grid()
+    {
+        // irot 3 is three quarter turns anticlockwise: EXIF orientation 6. An
+        // iPhone photo taken in portrait carries it on the grid, not on a stream.
+        const ProbeResult result = probe(Source::from_path(data_path("testsrc_128x96_grid_irot3.avif")));
+        const TileGrid* grid = result.primary_tile_grid();
+        assert(grid != nullptr);
+        assert(grid->orientation == 6);
+        assert(grid->to_json().at("orientation") == 6);
+
+        assert(!probe(Source::from_path(data_path(avif_grid_fixture))).primary_tile_grid()->orientation.has_value());
+    }
+
     void test_an_alpha_grid_is_an_additional_image()
     {
         const ProbeResult result = probe(Source::from_path(data_path(avif_grid_alpha_fixture)));
@@ -658,14 +671,19 @@ namespace
 
     void test_decoding_to_an_explicit_format_records_the_conversion()
     {
+        // BT.709 YUV with the sRGB transfer the untagged PNG is assumed to
+        // have, since convert() cannot change the transfer.
+        ColorSpec target = ColorSpec::bt709_limited();
+        target.transfer = TransferCharacteristic::Srgb;
+
         DecodeImageOptions options;
         options.pixel_format = PixelFormat::from_name("yuv420p");
-        options.color = ColorSpec::bt709_limited();
+        options.color = target;
 
         const FrameResult result = decode_image(Source::from_path(data_path(png_fixture)), options);
 
         assert(result.frame.pixel_format().name() == std::string("yuv420p"));
-        assert(result.frame.color() == ColorSpec::bt709_limited());
+        assert(result.frame.color() == target);
 
         // The record's output has to describe what actually came back.
         assert(result.record.output.pixel_format == result.frame.pixel_format());
@@ -753,6 +771,7 @@ int main()
     test_non_jpeg_streams_have_no_jpeg_info();
     test_a_grid_image_reports_its_tile_grid();
     test_a_grid_image_has_no_primary_stream();
+    test_a_grid_images_rotation_is_reported_on_the_grid();
     test_an_alpha_grid_is_an_additional_image();
     test_a_single_image_alpha_plane_is_an_additional_image();
     test_a_video_has_no_additional_images();

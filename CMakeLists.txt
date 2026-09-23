@@ -37,6 +37,9 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
 
 message(STATUS "FFmpeg: libavcodec ${FFMPEG_libavcodec_VERSION} from ${FFMPEG_libavcodec_LIBDIR}")
 
+# zlib decompresses a PNG's embedded ICC profile. FFmpeg depends on it already.
+find_package(ZLIB REQUIRED)
+
 # ---------------------------------------------------------------------------
 # Library
 # ---------------------------------------------------------------------------
@@ -63,8 +66,10 @@ add_library(lossylab STATIC
         src/lossylab/io/source.cpp
         src/lossylab/io/input_context.cpp
         src/lossylab/io/probe.cpp
+        src/lossylab/io/icc_profile.cpp
         src/lossylab/io/image_container.cpp
         src/lossylab/io/jpeg_markers.cpp
+        src/lossylab/io/orientation.cpp
         src/lossylab/io/source_reader.cpp
         src/lossylab/io/decode_image.cpp
         src/lossylab/io/file_result.cpp
@@ -88,7 +93,7 @@ target_include_directories(lossylab
 )
 
 # FFmpeg is an implementation detail: no public header includes libav*.
-target_link_libraries(lossylab PRIVATE PkgConfig::FFMPEG)
+target_link_libraries(lossylab PRIVATE PkgConfig::FFMPEG ZLIB::ZLIB)
 lossylab_set_warnings(lossylab)
 set_target_properties(lossylab PROPERTIES POSITION_INDEPENDENT_CODE ON)
 

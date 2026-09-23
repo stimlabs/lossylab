@@ -1,9 +1,11 @@
 #pragma once
 
+#include "lossylab/core/availability.hpp"
 #include "lossylab/core/color_spec.hpp"
 #include "lossylab/core/json.hpp"
 #include "lossylab/core/pixel_format.hpp"
 #include "lossylab/core/rational.hpp"
+#include "lossylab/io/icc_profile.hpp"
 #include "lossylab/io/source.hpp"
 
 #include <array>
@@ -199,8 +201,45 @@ namespace lossylab
         bool is_variable_frame_rate = false;
 
         /// Display rotation in degrees from the display matrix side data.
-        /// A rotation the container asks for but has not applied.
+        /// A rotation the container asks for but has not applied. Says
+        /// nothing about mirroring; `orientation` does.
         std::optional<double> rotation;
+
+        /// How the stored image must be turned to display upright, as an EXIF
+        /// orientation: 1 upright, 2 mirrored left to right, 3 rotated 180
+        /// degrees, 4 mirrored top to bottom, 5 transposed (mirrored along
+        /// the main diagonal), 6 rotated 90 degrees clockwise, 7 transversed
+        /// (mirrored along the other diagonal), 8 rotated 90 degrees
+        /// counterclockwise. Decoding leaves the pixels as stored unless asked
+        /// otherwise; see `DecodeImageOptions::orientation`.
+        std::optional<int> orientation;
+
+        /// Where `orientation` came from: "exif" for the Orientation tag of a
+        /// JPEG's, PNG's or WebP's EXIF block; "irot_imir" for an AVIF/HEIF
+        /// image's rotation and mirror properties, which take precedence over
+        /// any EXIF there; "display_matrix" for a video track's matrix.
+        std::string orientation_source;
+
+        /// `Present` when the file declares an orientation. `NotPresent` when
+        /// probe read where one would be and found none, or the demuxer
+        /// reported none. `NotSupportedByBuild` for a still-image format whose
+        /// orientation probe cannot read without decoding (JPEG XL, TIFF, and
+        /// others FFmpeg reads with a bare image parser); decode_image()
+        /// reports it for those.
+        Availability orientation_availability = Availability::NotPresent;
+
+        /// The embedded ICC profile, from a JPEG's APP2 segments, a PNG's
+        /// iCCP chunk, a WebP's ICCP chunk, or an ISOBMFF colr box.
+        std::optional<IccProfileInfo> icc_profile;
+
+        /// As `orientation_availability`, for `icc_profile`.
+        Availability icc_profile_availability = Availability::NotPresent;
+
+        /// When the stream carries both an ICC profile and color tags naming
+        /// its primaries or transfer (AVIF and PNG may carry both): whether
+        /// the profile describes what the tags say. A disagreement means one
+        /// of them is wrong, and different software will pick different ones.
+        std::optional<bool> icc_matches_tagged_color;
 
         std::optional<std::int64_t> frame_count;
         std::optional<std::int64_t> duration_us;
@@ -255,6 +294,14 @@ namespace lossylab
         /// The canvas the tiles are placed on, before cropping.
         int coded_width = 0;
         int coded_height = 0;
+
+        /// The grid image's orientation, from its irot and imir properties,
+        /// with the meaning of `StreamInfo::orientation`. An iPhone photo
+        /// taken in portrait carries it here, not on any stream.
+        std::optional<int> orientation;
+
+        /// The grid image's ICC profile.
+        std::optional<IccProfileInfo> icc_profile;
 
         struct Tile
         {

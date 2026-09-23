@@ -2,6 +2,7 @@
 #include "json_convert.hpp"
 
 #include "lossylab/io/decode_image.hpp"
+#include "lossylab/io/icc_profile.hpp"
 #include "lossylab/io/probe.hpp"
 #include "lossylab/io/read_headers.hpp"
 #include "lossylab/io/source.hpp"
@@ -47,6 +48,52 @@ namespace lossylab::pybind
             .def("is_path", &Source::is_path)
             .def("path", &Source::path)
             .def("describe", &Source::describe);
+
+        // ---- icc_profile.hpp --------------------------------------------------
+        nb::class_<Chromaticity>(m, "Chromaticity")
+            .def_ro("x", &Chromaticity::x)
+            .def_ro("y", &Chromaticity::y)
+            .def("to_dict", [](const Chromaticity& self) { return to_python(self.to_json()); });
+
+        auto icc_profile_info = nb::class_<IccProfileInfo>(m, "IccProfileInfo");
+        nb::class_<IccProfileInfo::Colorants>(icc_profile_info, "Colorants")
+            .def_ro("red", &IccProfileInfo::Colorants::red)
+            .def_ro("green", &IccProfileInfo::Colorants::green)
+            .def_ro("blue", &IccProfileInfo::Colorants::blue)
+            .def_ro("white", &IccProfileInfo::Colorants::white)
+            .def("to_dict", [](const IccProfileInfo::Colorants& self) { return to_python(self.to_json()); });
+        icc_profile_info.def_ro("size_bytes", &IccProfileInfo::size_bytes)
+            .def_ro("version", &IccProfileInfo::version)
+            .def_ro("device_class", &IccProfileInfo::device_class)
+            .def_ro("data_color_space", &IccProfileInfo::data_color_space)
+            .def_ro("connection_space", &IccProfileInfo::connection_space)
+            .def_ro("preferred_cmm", &IccProfileInfo::preferred_cmm)
+            .def_ro("creator", &IccProfileInfo::creator)
+            .def_ro("profile_id", &IccProfileInfo::profile_id)
+            .def_ro("profile_id_embedded", &IccProfileInfo::profile_id_embedded)
+            .def_ro("description", &IccProfileInfo::description)
+            .def_ro("copyright", &IccProfileInfo::copyright)
+            .def_ro("is_matrix_shaper", &IccProfileInfo::is_matrix_shaper)
+            .def_ro("has_lookup_table", &IccProfileInfo::has_lookup_table)
+            .def_ro("colorants", &IccProfileInfo::colorants)
+            .def_ro("transfer_curve", &IccProfileInfo::transfer_curve)
+            .def_ro("gamma", &IccProfileInfo::gamma)
+            .def_ro("primaries", &IccProfileInfo::primaries)
+            .def_ro("transfer", &IccProfileInfo::transfer)
+            .def_ro("known_as", &IccProfileInfo::known_as)
+            .def_ro("problems", &IccProfileInfo::problems)
+            .def("is_expressible_as_tags", &IccProfileInfo::is_expressible_as_tags)
+            .def("agrees_with", &IccProfileInfo::agrees_with, "tagged"_a)
+            .def("to_dict", [](const IccProfileInfo& self) { return to_python(self.to_json()); });
+
+        m.def(
+            "describe_icc_profile",
+            [](nb::bytes data)
+            {
+                const auto* begin = reinterpret_cast<const std::uint8_t*>(data.c_str());
+                return describe_icc_profile(std::span<const std::uint8_t>(begin, data.size()));
+            },
+            "data"_a, "Reads an ICC profile's header and tags. Malformed input is reported in `problems`, not raised.");
 
         // ---- probe.hpp --------------------------------------------------
         nb::class_<ImageContainerInfo>(m, "ImageContainerInfo")
@@ -109,6 +156,12 @@ namespace lossylab::pybind
             .def_ro("time_base", &StreamInfo::time_base)
             .def_ro("sample_aspect_ratio", &StreamInfo::sample_aspect_ratio)
             .def_ro("rotation", &StreamInfo::rotation)
+            .def_ro("orientation", &StreamInfo::orientation)
+            .def_ro("orientation_source", &StreamInfo::orientation_source)
+            .def_ro("orientation_availability", &StreamInfo::orientation_availability)
+            .def_ro("icc_profile", &StreamInfo::icc_profile)
+            .def_ro("icc_profile_availability", &StreamInfo::icc_profile_availability)
+            .def_ro("icc_matches_tagged_color", &StreamInfo::icc_matches_tagged_color)
             .def_ro("frame_count", &StreamInfo::frame_count)
             .def_ro("duration_us", &StreamInfo::duration_us)
             .def_ro("bit_rate", &StreamInfo::bit_rate)
@@ -132,6 +185,8 @@ namespace lossylab::pybind
             .def_ro("height", &TileGrid::height)
             .def_ro("coded_width", &TileGrid::coded_width)
             .def_ro("coded_height", &TileGrid::coded_height)
+            .def_ro("orientation", &TileGrid::orientation)
+            .def_ro("icc_profile", &TileGrid::icc_profile)
             .def_ro("tiles", &TileGrid::tiles)
             .def("to_dict", [](const TileGrid& self) { return to_python(self.to_json()); });
 
@@ -161,11 +216,16 @@ namespace lossylab::pybind
         m.def("probe", &probe, "source"_a, nb::call_guard<nb::gil_scoped_release>());
 
         // ---- decode_image.hpp --------------------------------------------------
+        nb::enum_<OrientationHandling>(m, "OrientationHandling")
+            .value("Report", OrientationHandling::Report)
+            .value("Apply", OrientationHandling::Apply);
+
         nb::class_<DecodeImageOptions>(m, "DecodeImageOptions")
             .def(nb::init<>())
             .def_rw("pixel_format", &DecodeImageOptions::pixel_format)
             .def_rw("color", &DecodeImageOptions::color)
             .def_rw("assumed_color", &DecodeImageOptions::assumed_color)
+            .def_rw("orientation", &DecodeImageOptions::orientation)
             .def_rw("strict", &DecodeImageOptions::strict);
 
         m.def("decode_image", &decode_image, "source"_a, "options"_a = DecodeImageOptions{},

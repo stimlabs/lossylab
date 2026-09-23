@@ -63,6 +63,12 @@ namespace lossylab
         /// Maps a crop whose top-left corner lies at (x, y) in the input.
         static CoordinateTransform crop(double x, double y) noexcept;
 
+        /// Maps a `width` x `height` image onto the same image turned
+        /// upright for an EXIF orientation (1-8): whole-pixel flips and
+        /// quarter turns, so pixel centers land exactly on pixel centers.
+        /// Throws ConfigError outside 1-8.
+        static CoordinateTransform orientation(int exif_orientation, int width, int height);
+
         /// `after` applied to the result of `*this`, i.e. `after ∘ this`.
         [[nodiscard]] CoordinateTransform then(const CoordinateTransform& after) const noexcept;
 
@@ -121,7 +127,8 @@ namespace lossylab
     /// Where a compression stage's block boundaries fall in the current frame.
     ///
     /// `valid` is the interesting field: a grid survives cropping and padding
-    /// by whole pixels (its phase merely shifts) but is destroyed by resampling,
+    /// by whole pixels (its phase merely shifts) and quarter turns or flips
+    /// (its axes swap or reverse), but is destroyed by resampling, any other
     /// rotation or any fractional shift. `apply_transform` enforces that rule
     /// centrally, so no individual stage has to remember it.
     struct BlockGrid
@@ -136,7 +143,9 @@ namespace lossylab
         static BlockGrid for_kind(BlockGridKind kind) noexcept;
 
         /// Returns the grid as seen after `transform` is applied. An integer
-        /// translation shifts the phase; anything else invalidates the grid.
+        /// translation shifts the phase; a quarter turn or flip about whole
+        /// pixels swaps or reverses the axes as well; anything else
+        /// invalidates the grid.
         [[nodiscard]] BlockGrid apply_transform(const CoordinateTransform& transform) const noexcept;
 
         /// True when (x, y) in output coordinates is the top-left corner of a

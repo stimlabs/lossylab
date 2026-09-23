@@ -7,9 +7,11 @@
 #include "lossylab/io/image_container.hpp"
 #include "lossylab/io/input_context.hpp"
 #include "lossylab/io/jpeg_markers.hpp"
+#include "lossylab/io/orientation.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <span>
 #include <sstream>
 
 extern "C" {
@@ -56,6 +58,39 @@ namespace lossylab
                 return std::nullopt;
             }
             return degrees;
+        }
+
+        std::optional<std::span<const std::uint8_t>> find_side_data(const AVPacketSideData* side_data, const int count,
+                                                                    const AVPacketSideDataType type)
+        {
+            const AVPacketSideData* found = av_packet_side_data_get(side_data, count, type);
+            if (found == nullptr)
+            {
+                return std::nullopt;
+            }
+            return std::span<const std::uint8_t>(found->data, found->size);
+        }
+
+        /// The ICC profile and orientation in a stream's or a grid's side
+        /// data, as FFmpeg's ISOBMFF demuxer exports them.
+        struct SideDataEmbedded
+        {
+            std::optional<IccProfileInfo> icc_profile;
+            std::optional<int> orientation;
+        };
+
+        SideDataEmbedded read_side_data_embedded(const AVPacketSideData* side_data, const int count)
+        {
+            SideDataEmbedded embedded;
+            if (const auto profile = find_side_data(side_data, count, AV_PKT_DATA_ICC_PROFILE))
+            {
+                embedded.icc_profile = describe_icc_profile(*profile);
+            }
+            if (const auto matrix = find_side_data(side_data, count, AV_PKT_DATA_DISPLAYMATRIX))
+            {
+                embedded.orientation = detail::orientation_from_display_matrix(*matrix);
+            }
+            return embedded;
         }
 
         bool has_hdr_side_data(const AVStream& stream)
@@ -144,6 +179,19 @@ namespace lossylab
                 info.color_fully_tagged = info.color.is_fully_specified();
 
                 info.rotation = read_rotation(stream);
+                const SideDataEmbedded embedded =
+                    read_side_data_embedded(params.coded_side_data, params.nb_coded_side_data);
+                if (embedded.icc_profile.has_value())
+                {
+                    info.icc_profile = embedded.icc_profile;
+                    info.icc_profile_availability = Availability::Present;
+                }
+                if (embedded.orientation.has_value())
+                {
+                    info.orientation = embedded.orientation;
+                    info.orientation_source = "display_matrix";
+                    info.orientation_availability = Availability::Present;
+                }
                 info.has_hdr_metadata = has_hdr_side_data(stream);
                 info.is_variable_frame_rate =
                     frame_rate_is_variable(info.frame_rate, info.average_frame_rate);
@@ -179,6 +227,10 @@ namespace lossylab
             info.height = grid.height;
             info.coded_width = grid.coded_width;
             info.coded_height = grid.coded_height;
+
+            const SideDataEmbedded embedded = read_side_data_embedded(grid.coded_side_data, grid.nb_coded_side_data);
+            info.orientation = embedded.orientation;
+            info.icc_profile = embedded.icc_profile;
 
             // An offset names its tile by position within the group, not by
             // the stream's index in the file.
@@ -300,13 +352,14 @@ namespace lossylab
         /// decoding. WebP's come from its RIFF chunks, which say what FFmpeg
         /// does not: lossy or lossless, alpha, and animation. AVIF's and
         /// HEIF's come from what probing already recovered.
-        void fill_image_container(const ProbeResult& result, const Source& source, StreamInfo& stream)
+        void fill_image_container(const ProbeResult& result, const std::optional<detail::WebpChunks>& webp_chunks,
+                                  StreamInfo& stream)
         {
             if (result.format_name.find("webp") != std::string::npos)
             {
-                if (const std::optional<detail::WebpChunks> chunks = detail::read_webp_chunks(source))
+                if (webp_chunks.has_value())
                 {
-                    stream.image_container = webp_container_info(*chunks);
+                    stream.image_container = webp_container_info(*webp_chunks);
                 }
                 return;
             }
@@ -322,6 +375,45 @@ namespace lossylab
             info.is_still_image = stream.frame_count.has_value() && *stream.frame_count == 1;
             stream.image_container = info;
         }
+
+        /// The raw ICC profile and EXIF block a format walker found.
+        struct WalkedEmbedded
+        {
+            std::optional<std::vector<std::uint8_t>> icc_profile;
+            std::vector<std::string> icc_problems;
+            std::optional<std::vector<std::uint8_t>> exif;
+        };
+
+        /// Interprets what a walker found. The walker read every place the
+        /// format keeps these, so what it did not find is not there.
+        void apply_walked_embedded(const WalkedEmbedded& embedded, StreamInfo& stream)
+        {
+            if (embedded.icc_profile.has_value())
+            {
+                IccProfileInfo info = describe_icc_profile(*embedded.icc_profile);
+                info.problems.insert(info.problems.begin(), embedded.icc_problems.begin(),
+                                     embedded.icc_problems.end());
+                stream.icc_profile = std::move(info);
+                stream.icc_profile_availability = Availability::Present;
+            }
+            const std::optional<int> orientation =
+                embedded.exif.has_value() ? detail::exif_orientation(*embedded.exif) : std::nullopt;
+            if (orientation.has_value())
+            {
+                stream.orientation = orientation;
+                stream.orientation_source = "exif";
+                stream.orientation_availability = Availability::Present;
+            }
+        }
+
+        /// A still image FFmpeg reads with a bare image parser rather than
+        /// a container demuxer: the demuxer exports no side data, so what
+        /// the file embeds is known only after decoding.
+        bool is_bare_image_format(const std::string& format_name)
+        {
+            return format_name == "image2" || format_name.ends_with("_pipe") || format_name == "jpegxl_anim";
+        }
+
     }
 
     json::Value ImageContainerInfo::to_json() const
@@ -402,6 +494,8 @@ namespace lossylab
             {"height", height},
             {"coded_width", coded_width},
             {"coded_height", coded_height},
+            {"orientation", json::optional_or_null(orientation)},
+            {"icc_profile", json::optional_or_null(icc_profile)},
             {"tiles", json::array(std::move(tile_values))},
         });
     }
@@ -427,6 +521,12 @@ namespace lossylab
             {"time_base", time_base.to_json()},
             {"sample_aspect_ratio", sample_aspect_ratio.to_json()},
             {"rotation", json::optional_or_null(rotation)},
+            {"orientation", json::optional_or_null(orientation)},
+            {"orientation_source", orientation_source},
+            {"orientation_availability", to_string(orientation_availability)},
+            {"icc_profile", json::optional_or_null(icc_profile)},
+            {"icc_profile_availability", to_string(icc_profile_availability)},
+            {"icc_matches_tagged_color", json::optional_or_null(icc_matches_tagged_color)},
             {"frame_count", json::optional_or_null(frame_count)},
             {"duration_us", json::optional_or_null(duration_us)},
             {"bit_rate", json::optional_or_null(bit_rate)},
@@ -599,17 +699,59 @@ namespace lossylab
             }
         }
 
+        const bool is_webp = result.format_name.find("webp") != std::string::npos;
+        const std::optional<detail::WebpChunks> webp_chunks =
+            is_webp ? detail::read_webp_chunks(source) : std::nullopt;
+        const bool single_stream = result.streams.size() == 1;
+
         for (StreamInfo& stream : result.streams)
         {
-            if (stream.type == "video")
+            if (stream.type != "video")
             {
-                fill_image_container(result, source, stream);
+                continue;
             }
-            // A JPEG file is one stream; motion JPEG inside a video container
-            // does not start with a JPEG marker and is left alone.
-            if (stream.codec_name == "mjpeg" && result.streams.size() == 1)
+            fill_image_container(result, webp_chunks, stream);
+
+            // A JPEG or PNG file is one stream; motion JPEG inside a video
+            // container does not start with a JPEG marker and is left alone.
+            if (stream.codec_name == "mjpeg" && single_stream)
             {
-                stream.jpeg = detail::read_jpeg_markers(source);
+                if (std::optional<detail::JpegMarkers> markers = detail::read_jpeg_markers(source))
+                {
+                    stream.jpeg = std::move(markers->info);
+                    WalkedEmbedded embedded{std::nullopt, std::move(markers->icc_problems), std::move(markers->exif)};
+                    if (!markers->icc_profile.empty() || !embedded.icc_problems.empty())
+                    {
+                        embedded.icc_profile = std::move(markers->icc_profile);
+                    }
+                    apply_walked_embedded(embedded, stream);
+                }
+            }
+            else if (webp_chunks.has_value())
+            {
+                apply_walked_embedded({webp_chunks->icc_profile, webp_chunks->icc_problems, webp_chunks->exif},
+                                      stream);
+            }
+            else if ((stream.codec_name == "png" || stream.codec_name == "apng") && single_stream)
+            {
+                if (const std::optional<detail::PngChunks> chunks = detail::read_png_chunks(source))
+                {
+                    apply_walked_embedded({chunks->icc_profile, chunks->icc_problems, chunks->exif}, stream);
+                }
+            }
+            else if (is_bare_image_format(result.format_name))
+            {
+                stream.icc_profile_availability = Availability::NotSupportedByBuild;
+                stream.orientation_availability = Availability::NotSupportedByBuild;
+            }
+
+            if (is_image_item_container(result) && stream.orientation.has_value())
+            {
+                stream.orientation_source = "irot_imir";
+            }
+            if (stream.icc_profile.has_value())
+            {
+                stream.icc_matches_tagged_color = stream.icc_profile->agrees_with(stream.color);
             }
         }
 

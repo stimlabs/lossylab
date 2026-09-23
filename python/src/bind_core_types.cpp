@@ -257,6 +257,8 @@ namespace lossylab::pybind
             .def_static("resize", &CoordinateTransform::resize, "input_width"_a, "input_height"_a,
                         "output_width"_a, "output_height"_a)
             .def_static("crop", &CoordinateTransform::crop, "x"_a, "y"_a)
+            .def_static("orientation", &CoordinateTransform::orientation, "exif_orientation"_a, "width"_a,
+                        "height"_a)
             .def("then", &CoordinateTransform::then, "after"_a)
             .def("map_forward", &CoordinateTransform::map_forward, "point"_a)
             .def("map_inverse", &CoordinateTransform::map_inverse, "point"_a)

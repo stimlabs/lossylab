@@ -15,12 +15,21 @@ def _decode(name):
     return lossylab.decode_image(lossylab.Source.from_path(str(DATA_DIR / name))).frame
 
 
+def _bt709_yuv_keeping_gamut_of(frame):
+    """BT.709 limited YUV with the frame's own primaries and transfer, which convert() cannot change."""
+    color = lossylab.ColorSpec.bt709_limited()
+    color.primaries = frame.color().primaries
+    color.transfer = frame.color().transfer
+    return color
+
+
 def test_convert_convenience_overload_changes_format_and_color():
     frame = _decode("testsrc_64x48.png")
-    result = lossylab.convert(frame, lossylab.PixelFormat.from_name("yuv420p"), lossylab.ColorSpec.bt709_limited())
+    target = _bt709_yuv_keeping_gamut_of(frame)
+    result = lossylab.convert(frame, lossylab.PixelFormat.from_name("yuv420p"), target)
 
     assert result.frame.pixel_format().name() == "yuv420p"
-    assert result.frame.color() == lossylab.ColorSpec.bt709_limited()
+    assert result.frame.color() == target
     assert result.frame.width() == frame.width()
     assert result.frame.height() == frame.height()
 
@@ -38,11 +47,11 @@ def test_convert_options_overload_matches_convenience_overload():
     frame = _decode("testsrc_64x48.png")
     options = lossylab.ConvertOptions()
     options.pixel_format = lossylab.PixelFormat.from_name("yuv420p")
-    options.color = lossylab.ColorSpec.bt709_limited()
+    options.color = _bt709_yuv_keeping_gamut_of(frame)
     result = lossylab.convert(frame, options)
 
     assert result.frame.pixel_format().name() == "yuv420p"
-    assert result.frame.color() == lossylab.ColorSpec.bt709_limited()
+    assert result.frame.color() == options.color
 
 
 def test_strict_refuse_permits_the_rgb_to_yuv_matrix_change_it_entails():
@@ -67,9 +76,15 @@ def test_strict_refuse_rejects_conversions_beyond_the_rgb_yuv_boundary():
     frame = _decode("testsrc_64x48.png")
     with pytest.raises(lossylab.ConversionRefused):
         lossylab.convert(
-            frame, lossylab.PixelFormat.from_name("yuv420p"), lossylab.ColorSpec.bt709_limited(),
+            frame, lossylab.PixelFormat.from_name("yuv420p"), _bt709_yuv_keeping_gamut_of(frame),
             strict=lossylab.Strict.Refuse,
         )
+
+
+def test_a_gamut_or_tone_curve_change_is_not_performed():
+    frame = _decode("testsrc_64x48.png")
+    with pytest.raises(lossylab.NotImplemented):
+        lossylab.convert(frame, lossylab.PixelFormat.from_name("yuv420p"), lossylab.ColorSpec.bt709_limited())
 
 
 def test_reinterpret_does_not_touch_samples():

@@ -55,6 +55,11 @@ namespace lossylab
     /// target formats, the kernels actually used, and every property that
     /// changed, so two datasets can be compared on their conversion history
     /// rather than on trust.
+    ///
+    /// The target must keep the source's primaries and transfer: swscale's
+    /// path here applies the YUV matrix and range only, so a change of gamut
+    /// or tone curve throws NotImplemented rather than being labeled as done.
+    /// `reinterpret` relabels those fields when that is what is meant.
     [[nodiscard]] FrameResult convert(const Frame& frame, const ConvertOptions& options);
 
     /// Convenience overload for the common case: a target format and color with
@@ -71,7 +76,8 @@ namespace lossylab
 
         /// The color interpretation used for the RGB->YUV->RGB journey. Must be
         /// fully specified: which matrix and range the trip runs through is
-        /// itself part of the trace being applied.
+        /// itself part of the trace being applied. Its primaries and transfer
+        /// are not used: the intermediate keeps the source's.
         ColorSpec color = ColorSpec::bt709_limited();
 
         KernelSpec chroma_down{Kernel::Area, {}};

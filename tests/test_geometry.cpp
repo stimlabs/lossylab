@@ -1,6 +1,7 @@
 #include "lossylab/core/error.hpp"
 #include "lossylab/core/geometry.hpp"
 
+#include <array>
 #include <cassert>
 #include <cmath>
 
@@ -202,6 +203,82 @@ namespace
         assert(!grid.is_block_origin(3, 0));
     }
 
+    void test_orientation_transforms_map_corners_onto_corners()
+    {
+        // A 4x3 image's top-left pixel, and where each orientation shows it.
+        constexpr int width = 4;
+        constexpr int height = 3;
+        const std::array<Point, 8> expected = {{
+            {0, 0}, {3, 0}, {3, 2}, {0, 2}, {0, 0}, {2, 0}, {2, 3}, {0, 3},
+        }};
+        for (int orientation = 1; orientation <= 8; ++orientation)
+        {
+            const CoordinateTransform t = CoordinateTransform::orientation(orientation, width, height);
+            const Point top_left = t.map_forward({0, 0});
+            const Point wanted = expected[static_cast<std::size_t>(orientation - 1)];
+            assert(std::abs(top_left.x - wanted.x) < tol && std::abs(top_left.y - wanted.y) < tol);
+
+            // Every corner lands on a corner of the output, never off it.
+            const bool transposes = orientation >= 5;
+            const Rect bounds = t.map_bounds({0, 0, width - 1, height - 1});
+            assert(std::abs(bounds.x) < tol && std::abs(bounds.y) < tol);
+            assert(std::abs(bounds.width - (transposes ? height - 1 : width - 1)) < tol);
+        }
+
+        // Orientation 6 turns the image clockwise: the top-right pixel ends up
+        // at the bottom right.
+        const Point top_right = CoordinateTransform::orientation(6, width, height).map_forward({3, 0});
+        assert(std::abs(top_right.x - 2) < tol && std::abs(top_right.y - 3) < tol);
+
+        bool threw = false;
+        try
+        {
+            (void)CoordinateTransform::orientation(9, width, height);
+        }
+        catch (const ConfigError&)
+        {
+            threw = true;
+        }
+        assert(threw);
+    }
+
+    void test_a_flip_keeps_the_grid_with_the_phase_measured_from_the_far_edge()
+    {
+        // 20 pixels wide: blocks start at 0, 8 and 16 (a partial block). Mirrored,
+        // the partial block's 4 pixels come first, so blocks start at 4.
+        const BlockGrid grid = BlockGrid::for_kind(BlockGridKind::Dct8);
+        const BlockGrid mirrored = grid.apply_transform(CoordinateTransform::orientation(2, 20, 16));
+        assert(mirrored.valid);
+        assert(mirrored.phase_x == 4);
+        assert(mirrored.phase_y == 0);
+
+        const BlockGrid both = grid.apply_transform(CoordinateTransform::orientation(3, 20, 13));
+        assert(both.phase_x == 4);
+        assert(both.phase_y == 5);
+    }
+
+    void test_a_quarter_turn_swaps_the_grid_axes()
+    {
+        BlockGrid grid = BlockGrid::for_kind(BlockGridKind::Dct8);
+        grid.block_width = 16;
+        grid.phase_x = 3;
+        grid.phase_y = 1;
+
+        const BlockGrid transposed = grid.apply_transform(CoordinateTransform::orientation(5, 20, 12));
+        assert(transposed.valid);
+        assert(transposed.block_width == 8 && transposed.block_height == 16);
+        assert(transposed.phase_x == 1 && transposed.phase_y == 3);
+
+        // Clockwise: output x runs along the input's rows from the bottom.
+        // Blocks along y start at 1 and 9 in 12 rows, so reversed they start
+        // at 11 - 8 - 1 + 1 = 3.
+        const BlockGrid clockwise = grid.apply_transform(CoordinateTransform::orientation(6, 20, 12));
+        assert(clockwise.phase_x == 3 && clockwise.phase_y == 3);
+
+        // A quarter turn built from an angle survives too.
+        assert(grid.apply_transform(CoordinateTransform::rotation_degrees(90.0)).valid);
+    }
+
     void test_block_grid_json_round_trip()
     {
         BlockGrid grid = BlockGrid::for_kind(BlockGridKind::Ctu64);
@@ -231,5 +308,8 @@ int main()
     test_resampling_destroys_the_grid();
     test_an_invalid_grid_stays_invalid();
     test_block_origins_follow_the_phase();
+    test_orientation_transforms_map_corners_onto_corners();
+    test_a_flip_keeps_the_grid_with_the_phase_measured_from_the_far_edge();
+    test_a_quarter_turn_swaps_the_grid_axes();
     test_block_grid_json_round_trip();
 }

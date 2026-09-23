@@ -4,9 +4,13 @@
 #include "lossylab/core/error.hpp"
 #include "lossylab/detail/ff_error.hpp"
 #include "lossylab/detail/ff_ptr.hpp"
+#include "lossylab/core/json_io.hpp"
+#include "lossylab/io/icc_profile.hpp"
 #include "lossylab/io/input_context.hpp"
+#include "lossylab/io/orientation.hpp"
 
 extern "C" {
+#include <libavutil/frame.h>
 #include <libavutil/pixdesc.h>
 }
 
@@ -121,7 +125,28 @@ namespace lossylab
 
             /// Describes the grid for a tile-grid image; null otherwise.
             json::Value tile_grid;
+
+            /// The embedded ICC profile, and the EXIF orientation the display
+            /// matrix describes, as FFmpeg attached them to the picture.
+            std::optional<std::vector<std::uint8_t>> icc_profile;
+            std::optional<int> orientation;
         };
+
+        /// Fills in whatever of the ICC profile and orientation `image` does
+        /// not have yet from container side data.
+        void take_embedded_from(const AVPacketSideData* side_data, const int count, DecodedImage& image)
+        {
+            if (const AVPacketSideData* profile = av_packet_side_data_get(side_data, count, AV_PKT_DATA_ICC_PROFILE);
+                profile != nullptr && !image.icc_profile.has_value())
+            {
+                image.icc_profile = std::vector<std::uint8_t>(profile->data, profile->data + profile->size);
+            }
+            if (const AVPacketSideData* matrix = av_packet_side_data_get(side_data, count, AV_PKT_DATA_DISPLAYMATRIX);
+                matrix != nullptr && !image.orientation.has_value())
+            {
+                image.orientation = detail::orientation_from_display_matrix({matrix->data, matrix->size});
+            }
+        }
 
         DecodedImage decode_single_image(AVFormatContext& format)
         {
@@ -133,7 +158,21 @@ namespace lossylab
 
             Frame frame = Frame::from_av_frame(decoded.get());
             frame.set_time_base(Rational{stream.time_base.num, stream.time_base.den});
-            return DecodedImage{std::move(frame), decoder_name(*decoder), json::Value()};
+            DecodedImage image{std::move(frame), decoder_name(*decoder), json::Value(), std::nullopt, std::nullopt};
+
+            // Decoders attach what the bitstream carries (a JPEG's APP2 and
+            // EXIF, a PNG's iCCP, a WebP's ICCP) to the frame; the container's
+            // side data covers what only the demuxer saw.
+            if (const AVFrameSideData* profile = av_frame_get_side_data(decoded.get(), AV_FRAME_DATA_ICC_PROFILE))
+            {
+                image.icc_profile = std::vector<std::uint8_t>(profile->data, profile->data + profile->size);
+            }
+            if (const AVFrameSideData* matrix = av_frame_get_side_data(decoded.get(), AV_FRAME_DATA_DISPLAYMATRIX))
+            {
+                image.orientation = detail::orientation_from_display_matrix({matrix->data, matrix->size});
+            }
+            take_embedded_from(stream.codecpar->coded_side_data, stream.codecpar->nb_coded_side_data, image);
+            return image;
         }
 
         const AVStreamGroup* find_primary_tile_grid(const AVFormatContext& format)
@@ -362,8 +401,72 @@ namespace lossylab
                                        {"width", grid.width},
                                        {"height", grid.height}})},
             });
-            return DecodedImage{std::move(*image), decoder_name(*decoder), std::move(description)};
+            DecodedImage decoded{std::move(*image), decoder_name(*decoder), std::move(description), std::nullopt,
+                                 std::nullopt};
+            take_embedded_from(grid.coded_side_data, grid.nb_coded_side_data, decoded);
+            return decoded;
         }
+
+        /// Fills the primaries and transfer a file left unspecified from its
+        /// ICC profile, when the profile matches a pair the tags can name.
+        /// Returns the color and records the change.
+        ColorSpec color_with_icc_profile(const ColorSpec& tagged, const std::optional<IccProfileInfo>& profile,
+                                         ConversionList& conversions)
+        {
+            ColorSpec color = tagged;
+            if (!profile.has_value() || !profile->is_expressible_as_tags())
+            {
+                return color;
+            }
+            if (color.primaries == ColorPrimaries::Unspecified)
+            {
+                color.primaries = *profile->primaries;
+            }
+            if (color.transfer == TransferCharacteristic::Unspecified)
+            {
+                color.transfer = *profile->transfer;
+            }
+            if (color != tagged)
+            {
+                conversions.push_back(ConversionEvent{"color_tags", tagged.describe(), color.describe(),
+                                                      ConversionCause::Requested, "icc_profile"});
+            }
+            return color;
+        }
+
+        /// What an ICC profile is called in a record: the color space it was
+        /// recognized as, else its own description.
+        std::string profile_name(const IccProfileInfo& profile)
+        {
+            if (!profile.known_as.empty())
+            {
+                return profile.known_as;
+            }
+            return profile.description.empty() ? "an unnamed ICC profile" : profile.description;
+        }
+    }
+
+    std::string to_string(const OrientationHandling handling)
+    {
+        switch (handling)
+        {
+        case OrientationHandling::Report: return "report";
+        case OrientationHandling::Apply: return "apply";
+        }
+        return "report";
+    }
+
+    OrientationHandling orientation_handling_from_string(const std::string_view name)
+    {
+        if (name == "report")
+        {
+            return OrientationHandling::Report;
+        }
+        if (name == "apply")
+        {
+            return OrientationHandling::Apply;
+        }
+        throw ConfigError("unknown orientation handling '" + std::string(name) + "'");
     }
 
     FrameResult decode_image(const Source& source, const DecodeImageOptions& options)
@@ -378,35 +481,73 @@ namespace lossylab
         DecodedImage decoded = tile_grid != nullptr ? decode_tile_grid(format, *tile_grid)
                                                     : decode_single_image(format);
         Frame frame = std::move(decoded.frame);
+        const std::optional<IccProfileInfo> icc_profile =
+            decoded.icc_profile.has_value() ? std::optional(describe_icc_profile(*decoded.icc_profile))
+                                            : std::nullopt;
 
         StageRecord record;
         record.kind = StageKind::Decode;
         record.implementation = decoded.decoder_name;
         record.transform = CoordinateTransform::identity();
-        record.input = frame.describe();
 
-        // A file that tags no color is not an error, but the assumption made on
-        // its behalf is a decision, so it is recorded as one rather than
-        // quietly applied.
+        // A file that tags no color is not an error, but what stands in for
+        // the tags is a decision, so it is recorded as one rather than quietly
+        // applied: first the embedded ICC profile, when it names a pair the
+        // tags can express, then the caller's assumption.
         const ColorSpec tagged = frame.color();
-        if (!tagged.is_fully_specified())
+        const ColorSpec with_profile = color_with_icc_profile(tagged, icc_profile, record.conversions);
+        ColorSpec resolved = with_profile;
+        if (!with_profile.is_fully_specified())
         {
-            const ColorSpec assumed = tagged.with_defaults_from(options.assumed_color);
-            frame.set_color(assumed);
-            frame.sync_color_to_av_frame();
+            resolved = with_profile.with_defaults_from(options.assumed_color);
             record.conversions.push_back(ConversionEvent{
-                "color_tags", tagged.describe(), assumed.describe(),
+                "color_tags", with_profile.describe(), resolved.describe(),
                 ConversionCause::Requested, "assumed_color"});
         }
-
+        if (resolved != tagged)
+        {
+            frame.set_color(resolved);
+            frame.sync_color_to_av_frame();
+        }
         record.input = frame.describe();
-        record.output = record.input;
+
+        // A converted image's color would claim to account for the profile.
+        if (icc_profile.has_value() && !icc_profile->is_expressible_as_tags() && options.color.has_value())
+        {
+            record_or_refuse(options.strict, record.conversions, "icc_profile", profile_name(*icc_profile),
+                             "ignored", ConversionCause::Requested, "decode_image",
+                             "decode_image(): the embedded ICC profile has no color tag equivalent, so the requested "
+                             "color conversion cannot take it into account");
+        }
+
+        // libjxl turns a JPEG XL image upright itself and FFmpeg removes the
+        // orientation it applied, so there is nothing left to apply.
+        std::string orientation_handling = "reported";
+        if (decoded.decoder_name == "libjxl")
+        {
+            orientation_handling = "applied_by_decoder";
+        }
+        else if (options.orientation == OrientationHandling::Apply && decoded.orientation.has_value())
+        {
+            const int stored_width = frame.width();
+            const int stored_height = frame.height();
+            frame = detail::apply_orientation(frame, *decoded.orientation, options.strict, record.conversions);
+            record.transform = CoordinateTransform::orientation(*decoded.orientation, stored_width, stored_height);
+            orientation_handling = "applied";
+        }
+
+        record.output = frame.describe();
         record.params = json::object({
             {"source", source.describe()},
             {"codec", record.implementation},
             {"tagged_color", tagged.to_json()},
             {"color_fully_tagged", tagged.is_fully_specified()},
             {"assumed_color", options.assumed_color.to_json()},
+            {"icc_profile", json::optional_or_null(icc_profile)},
+            {"icc_matches_tagged_color",
+             icc_profile.has_value() ? json::optional_or_null(icc_profile->agrees_with(tagged)) : json::Value()},
+            {"orientation", json::optional_or_null(decoded.orientation)},
+            {"orientation_handling", orientation_handling},
             {"tile_grid", decoded.tile_grid},
         });
 
