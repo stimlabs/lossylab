@@ -215,6 +215,8 @@ namespace lossylab::pybind
 
         bind_reflected_rw<Rect>(m, "Rect")
             .def(nb::init<double, double, double, double>(), "x"_a, "y"_a, "width"_a, "height"_a)
+            .def(nb::self == nb::self)
+            .def(nb::self != nb::self)
             .def_static("from_dict", [](nb::dict value) { return Rect::from_json(to_json(value)); });
 
         auto coordinate_transform = nb::class_<CoordinateTransform>(m, "CoordinateTransform")

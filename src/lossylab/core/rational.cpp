@@ -63,12 +63,12 @@ namespace lossylab
 
     json::Value Rational::to_json() const
     {
-        return json::Value(to_string());
+        return json::object({{"num", num}, {"den", den}});
     }
 
     Rational Rational::from_json(const json::Value& value)
     {
-        return parse(value.get_ref<const std::string&>());
+        return {value.at("num").get<int>(), value.at("den").get<int>()};
     }
 
     bool operator==(const Rational left, const Rational right) noexcept

@@ -34,6 +34,12 @@ namespace lossylab
 
     LOSSYLAB_REFLECT(Rect, x, y, width, height);
 
+    bool operator==(const Rect& left, const Rect& right) noexcept;
+    inline bool operator!=(const Rect& left, const Rect& right) noexcept
+    {
+        return !(left == right);
+    }
+
     /// An affine map from input pixel coordinates to output pixel coordinates,
     /// stored as the 2x3 matrix
     ///

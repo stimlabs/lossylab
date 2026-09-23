@@ -44,6 +44,12 @@ namespace lossylab
         };
     }
 
+    bool operator==(const Rect& left, const Rect& right) noexcept
+    {
+        return left.x == right.x && left.y == right.y && left.width == right.width &&
+               left.height == right.height;
+    }
+
     CoordinateTransform::CoordinateTransform(const double initial_scale_x,
                                              const double initial_shear_x,
                                              const double initial_translate_x,
