@@ -47,15 +47,20 @@ namespace lossylab::pybind
 
     /// Binds every field in T's LOSSYLAB_REFLECT list as a read-only Python
     /// attribute of a new class. Struct changes only need to touch
-    /// LOSSYLAB_REFLECT; this stays generic across every reflected type.
-    /// Does not add to_dict(): callers with a hand-written T::to_json() (e.g.
-    /// one that adds schema_version) bind that separately, as before.
+    /// LOSSYLAB_REFLECT; this stays generic across every reflected type. When
+    /// T has a to_json(), to_dict() is added automatically; a caller whose
+    /// to_json() adds extra keys (e.g. schema_version) can still bind its own
+    /// to_dict afterward, overriding this one.
     template <typename T>
     nb::class_<T> bind_reflected(nb::module_& m, const char* name)
     {
         nb::class_<T> cls(m, name);
         std::apply([&](const auto&... fields) { (detail::bind_reflected_field(cls, fields), ...); },
                    reflect::Fields<T>::members);
+        if constexpr (json::Writable<T>)
+        {
+            cls.def("to_dict", [](const T& self) { return to_python(self.to_json()); });
+        }
         return cls;
     }
 
@@ -72,6 +77,10 @@ namespace lossylab::pybind
         cls.def(nb::init<>());
         std::apply([&](const auto&... fields) { (detail::bind_reflected_field_rw(cls, fields), ...); },
                    reflect::Fields<T>::members);
+        if constexpr (json::Writable<T>)
+        {
+            cls.def("to_dict", [](const T& self) { return to_python(self.to_json()); });
+        }
         return cls;
     }
 }

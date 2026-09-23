@@ -60,7 +60,6 @@ namespace lossylab::pybind
 
         bind_reflected<FileError>(m, "FileError")
             .def("__eq__", [](const FileError& self, const FileError& other) { return self == other; })
-            .def("to_dict", [](const FileError& self) { return to_python(self.to_json()); })
             .def_static("from_dict", [](nb::dict value) { return FileError::from_json(to_json(value)); });
 
         bind_file_result<ProbeResult>(m, "ProbeFileResult")

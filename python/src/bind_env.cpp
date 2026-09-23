@@ -31,27 +31,22 @@ namespace lossylab::pybind
 
         bind_reflected<LibraryVersion>(m, "LibraryVersion")
             .def("to_string", &LibraryVersion::to_string)
-            .def("matches_compiled", &LibraryVersion::matches_compiled)
-            .def("to_dict", [](const LibraryVersion& self) { return to_python(self.to_json()); });
+            .def("matches_compiled", &LibraryVersion::matches_compiled);
 
         bind_reflected<BuildInfo>(m, "BuildInfo")
             .def("is_consistent", &BuildInfo::is_consistent)
-            .def("has_external_library", &BuildInfo::has_external_library, "name"_a)
-            .def("to_dict", [](const BuildInfo& self) { return to_python(self.to_json()); });
+            .def("has_external_library", &BuildInfo::has_external_library, "name"_a);
 
         m.def("build_info", &build_info, nb::rv_policy::reference);
 
         // ---- capabilities.hpp --------------------------------------------------
-        bind_reflected<OptionSchema>(m, "OptionSchema")
-            .def("to_dict", [](const OptionSchema& self) { return to_python(self.to_json()); });
+        bind_reflected<OptionSchema>(m, "OptionSchema");
 
         bind_reflected<CodecInfo>(m, "CodecInfo")
             .def("accepts", &CodecInfo::accepts, "pixel_format"_a)
-            .def("find_option", &CodecInfo::find_option, "name"_a, nb::rv_policy::reference_internal)
-            .def("to_dict", [](const CodecInfo& self) { return to_python(self.to_json()); });
+            .def("find_option", &CodecInfo::find_option, "name"_a, nb::rv_policy::reference_internal);
 
-        bind_reflected<FilterInfo>(m, "FilterInfo")
-            .def("to_dict", [](const FilterInfo& self) { return to_python(self.to_json()); });
+        bind_reflected<FilterInfo>(m, "FilterInfo");
 
         bind_reflected<HardwareDeviceInfo>(m, "HardwareDeviceInfo");
 
@@ -119,8 +114,7 @@ namespace lossylab::pybind
             .value("Trace", LogLevel::Trace);
 
         bind_reflected<LogMessage>(m, "LogMessage")
-            .def("__eq__", [](const LogMessage& self, const LogMessage& other) { return self == other; })
-            .def("to_dict", [](const LogMessage& self) { return to_python(self.to_json()); });
+            .def("__eq__", [](const LogMessage& self, const LogMessage& other) { return self == other; });
 
         // set_log_handler installs a process-global callback that FFmpeg calls
         // from arbitrary internal threads, not just from a thread that released

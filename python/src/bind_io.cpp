@@ -51,8 +51,7 @@ namespace lossylab::pybind
             .def("describe", &Source::describe);
 
         // ---- icc_profile.hpp --------------------------------------------------
-        bind_reflected<Chromaticity>(m, "Chromaticity")
-            .def("to_dict", [](const Chromaticity& self) { return to_python(self.to_json()); });
+        bind_reflected<Chromaticity>(m, "Chromaticity");
 
         // Colorants is a nested Python class (scoped under IccProfileInfo, not the
         // module), so it stays hand-written: bind_reflected only binds at module scope.
@@ -64,8 +63,7 @@ namespace lossylab::pybind
             .def_ro("white", &IccProfileInfo::Colorants::white)
             .def("to_dict", [](const IccProfileInfo::Colorants& self) { return to_python(self.to_json()); });
         icc_profile_info.def("is_expressible_as_tags", &IccProfileInfo::is_expressible_as_tags)
-            .def("agrees_with", &IccProfileInfo::agrees_with, "tagged"_a)
-            .def("to_dict", [](const IccProfileInfo& self) { return to_python(self.to_json()); });
+            .def("agrees_with", &IccProfileInfo::agrees_with, "tagged"_a);
 
         m.def(
             "describe_icc_profile",
@@ -77,8 +75,7 @@ namespace lossylab::pybind
             "data"_a, "Reads an ICC profile's header and tags. Malformed input is reported in `problems`, not raised.");
 
         // ---- probe.hpp --------------------------------------------------
-        bind_reflected<ImageContainerInfo>(m, "ImageContainerInfo")
-            .def("to_dict", [](const ImageContainerInfo& self) { return to_python(self.to_json()); });
+        bind_reflected<ImageContainerInfo>(m, "ImageContainerInfo");
 
         // Component/QuantizationTable/Segment are nested Python classes (scoped under
         // JpegInfo, not the module), so they stay hand-written.
@@ -96,10 +93,8 @@ namespace lossylab::pybind
             .def_ro("marker", &JpegInfo::Segment::marker)
             .def_ro("identifier", &JpegInfo::Segment::identifier)
             .def_ro("size_bytes", &JpegInfo::Segment::size_bytes);
-        jpeg_info.def("to_dict", [](const JpegInfo& self) { return to_python(self.to_json()); });
 
-        bind_reflected<StreamInfo>(m, "StreamInfo")
-            .def("to_dict", [](const StreamInfo& self) { return to_python(self.to_json()); });
+        bind_reflected<StreamInfo>(m, "StreamInfo");
 
         // Tile is a nested Python class (scoped under TileGrid, not the module), so it
         // stays hand-written.
@@ -108,7 +103,6 @@ namespace lossylab::pybind
             .def_ro("stream_index", &TileGrid::Tile::stream_index)
             .def_ro("x", &TileGrid::Tile::x)
             .def_ro("y", &TileGrid::Tile::y);
-        tile_grid.def("to_dict", [](const TileGrid& self) { return to_python(self.to_json()); });
 
         // AdditionalImages is a nested Python class (scoped under ProbeResult, not the
         // module), so it stays hand-written.
@@ -119,8 +113,7 @@ namespace lossylab::pybind
         probe_result.def("encoder_string", &ProbeResult::encoder_string)
             .def("primary_video_stream", &ProbeResult::primary_video_stream, nb::rv_policy::reference_internal)
             .def("primary_tile_grid", &ProbeResult::primary_tile_grid, nb::rv_policy::reference_internal)
-            .def("additional_images", &ProbeResult::additional_images)
-            .def("to_dict", [](const ProbeResult& self) { return to_python(self.to_json()); });
+            .def("additional_images", &ProbeResult::additional_images);
 
         m.def("probe", &probe, "source"_a, nb::call_guard<nb::gil_scoped_release>());
 
@@ -135,17 +128,14 @@ namespace lossylab::pybind
               nb::call_guard<nb::gil_scoped_release>());
 
         // ---- read_headers.hpp --------------------------------------------------
-        bind_reflected<ParameterSet>(m, "ParameterSet")
-            .def("to_dict", [](const ParameterSet& self) { return to_python(self.to_json()); });
+        bind_reflected<ParameterSet>(m, "ParameterSet");
 
-        bind_reflected<SliceInfo>(m, "SliceInfo")
-            .def("to_dict", [](const SliceInfo& self) { return to_python(self.to_json()); });
+        bind_reflected<SliceInfo>(m, "SliceInfo");
 
         // Fields come from HeaderInfo's LOSSYLAB_REFLECT list (read_headers.hpp), so a
         // member added there without a matching name in that list fails to build instead
         // of silently missing here.
-        bind_reflected<HeaderInfo>(m, "HeaderInfo")
-            .def("to_dict", [](const HeaderInfo& self) { return to_python(self.to_json()); });
+        bind_reflected<HeaderInfo>(m, "HeaderInfo");
 
         bind_reflected_rw<ReadHeadersOptions>(m, "ReadHeadersOptions");
 
