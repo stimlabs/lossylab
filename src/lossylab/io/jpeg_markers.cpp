@@ -12,24 +12,21 @@
 
 namespace lossylab::detail
 {
+    std::array<int, 64> ijg_scaled_table(const std::array<int, 64>& base, const int quality)
+    {
+        const int scale = quality < 50 ? 5000 / quality : 200 - quality * 2;
+        std::array<int, 64> scaled{};
+        for (std::size_t i = 0; i < scaled.size(); ++i)
+        {
+            scaled[i] = std::clamp((base[i] * scale + 50) / 100, 1, 255);
+        }
+        return scaled;
+    }
+
     namespace
     {
-        // Tables from the JPEG standard (ITU-T T.81, Annex K), as libjpeg and
-        // FFmpeg (libavcodec/jpegquanttables.c, jpegtabs.h) carry them.
-
-        /// Example quantization tables, in natural order.
-        constexpr std::array<int, 64> standard_luminance_table = {
-            16, 11, 10, 16, 24,  40,  51,  61,  12, 12, 14, 19, 26,  58,  60,  55,
-            14, 13, 16, 24, 40,  57,  69,  56,  14, 17, 22, 29, 51,  87,  80,  62,
-            18, 22, 37, 56, 68,  109, 103, 77,  24, 35, 55, 64, 81,  104, 113, 92,
-            49, 64, 78, 87, 103, 121, 120, 101, 72, 92, 95, 98, 112, 100, 103, 99,
-        };
-
-        constexpr std::array<int, 64> standard_chrominance_table = {
-            17, 18, 24, 47, 99, 99, 99, 99, 18, 21, 26, 66, 99, 99, 99, 99, 24, 26, 56, 99, 99, 99,
-            99, 99, 47, 66, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
-            99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
-        };
+        // Huffman tables from the JPEG standard (ITU-T T.81, Annex K), as
+        // libjpeg and FFmpeg (libavcodec/jpegtabs.h) carry them.
 
         /// Natural-order position of each zigzag-order coefficient.
         constexpr std::array<int, 64> zigzag_to_natural = {
@@ -161,19 +158,6 @@ namespace lossylab::detail
                 return {};
             }
             return {signature.begin(), signature.end()};
-        }
-
-        /// libjpeg's scaling of a standard table to a quality setting
-        /// (jcparam.c, with force_baseline set, as its callers set it).
-        std::array<int, 64> ijg_scaled_table(const std::array<int, 64>& base, const int quality)
-        {
-            const int scale = quality < 50 ? 5000 / quality : 200 - quality * 2;
-            std::array<int, 64> scaled{};
-            for (std::size_t i = 0; i < scaled.size(); ++i)
-            {
-                scaled[i] = std::clamp((base[i] * scale + 50) / 100, 1, 255);
-            }
-            return scaled;
         }
 
         /// Fills `ijg_quality` and `ijg_quality_exact` from the tables in use

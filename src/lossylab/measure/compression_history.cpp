@@ -1,0 +1,1542 @@
+#include "lossylab/measure/compression_history.hpp"
+
+#include "lossylab/convert/convert.hpp"
+#include "lossylab/core/error.hpp"
+#include "lossylab/core/json_io.hpp"
+#include "lossylab/core/schema_version.hpp"
+#include "lossylab/env/capabilities.hpp"
+#include "lossylab/io/jpeg_markers.hpp"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <functional>
+#include <limits>
+#include <map>
+#include <numbers>
+#include <utility>
+
+namespace lossylab
+{
+    namespace
+    {
+        // JPEG quantization: the grid search fits all 63 AC coefficients and
+        // scores an offset by its best five, since which coefficients show
+        // the lattice depends on the quality: at high qualities the lowest
+        // ones have a step of 1 or 2.
+        constexpr std::size_t probe_count = 63;
+        constexpr std::size_t scored_probes = 5;
+        constexpr std::size_t max_grid_blocks = 2048;
+        constexpr std::size_t max_table_blocks = 16384;
+        constexpr int min_lattice_samples = 50;
+        constexpr double min_unit_share = 0.1;
+        constexpr double min_step_score = 0.55;
+        constexpr double min_grid_score = 0.5;
+        constexpr double min_grid_margin = 0.2;
+        constexpr int min_determined_steps = 3;
+        constexpr double min_tie_breaking_match = 0.9;
+        constexpr double min_quality_match = 0.8;
+
+        // Chroma subsampling.
+        constexpr double max_upsampled_residual = 0.25;
+        constexpr double max_phase_ratio = 0.85;
+
+        // A pairing this much better than the other is upsampling, whatever
+        // the rounding floor; blockiness alone gets no lower than about 0.5.
+        constexpr double max_phase_ratio_alone = 0.4;
+
+        // Upsampled chroma fits its own upsampling much better than the
+        // other, by 0.2 to 0.5; chroma that is only blocky fits both about
+        // as well, by 0.55 or more.
+        constexpr double max_upsampling_ratio = 0.45;
+        constexpr int max_pairing_lines = 512;
+        constexpr int pairing_margin = 4;
+        constexpr long min_pairing_samples = 1000;
+        constexpr double achromatic_limit = 0.5;
+
+        // Recompression: a coarse curve this confident gets a fine sweep.
+        constexpr double min_refine_confidence = 0.3;
+
+        // Below this many pixels (128 x 128), a notch is as likely to be
+        // noise as a trace: the curves are kept, but no trace is listed.
+        constexpr long min_recompression_trace_pixels = 128 * 128;
+
+        template <typename Enum>
+        json::Value enum_or_null(const std::optional<Enum>& value)
+        {
+            return value.has_value() ? json::Value(to_string(*value)) : json::Value();
+        }
+
+        /// One plane in 8-bit code values, with the samples that were
+        /// clipped to 0 or 255 (in any RGB channel they came from) marked.
+        struct Plane
+        {
+            int width = 0;
+            int height = 0;
+            std::vector<float> samples;
+            std::vector<std::uint8_t> clipped;
+
+            Plane() = default;
+            Plane(const int plane_width, const int plane_height)
+                : width(plane_width), height(plane_height),
+                  samples(static_cast<std::size_t>(plane_width) * static_cast<std::size_t>(plane_height)),
+                  clipped(samples.size())
+            {
+            }
+
+            [[nodiscard]] std::size_t index(const int x, const int y) const
+            {
+                return static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x);
+            }
+
+            [[nodiscard]] bool empty() const { return samples.empty(); }
+        };
+
+        /// The frame as JPEG's YCbCr: BT.601, full range, 8-bit code values.
+        struct WorkingPlanes
+        {
+            Plane luma;
+            Plane cb;
+            Plane cr;
+
+            /// Gray when there is no chroma; Yuv444 when the chroma is at full
+            /// resolution, whatever it was before; the frame's own layout
+            /// when it is still in the JPEG's YUV.
+            Subsampling chroma_layout = Subsampling::Gray;
+
+            bool achromatic = false;
+            std::string analyzed_as;
+        };
+
+        Plane plane_from_8bit(const ConstPlaneView& view)
+        {
+            Plane plane(view.width, view.height);
+            for (int y = 0; y < view.height; ++y)
+            {
+                const std::uint8_t* row = view.row(y);
+                for (int x = 0; x < view.width; ++x)
+                {
+                    plane.samples[plane.index(x, y)] = row[x];
+                    plane.clipped[plane.index(x, y)] = row[x] == 0 || row[x] == 255;
+                }
+            }
+            return plane;
+        }
+
+        bool has_jpeg_color(const ColorSpec& color)
+        {
+            return color.range == ColorRange::Full &&
+                   (color.matrix == ColorMatrix::Bt470bg || color.matrix == ColorMatrix::Smpte170m);
+        }
+
+        bool is_jpeg_layout(const Subsampling subsampling)
+        {
+            return subsampling == Subsampling::Yuv444 || subsampling == Subsampling::Yuv440 ||
+                   subsampling == Subsampling::Yuv422 || subsampling == Subsampling::Yuv420;
+        }
+
+        /// The frame in `target_format`, converted with its unspecified color
+        /// fields filled in and both steps recorded.
+        Frame converted_for_analysis(const Frame& frame, const PixelFormat& target_format, ConversionList& conversions)
+        {
+            ColorSpec source_color = frame.color();
+            if (!source_color.is_fully_specified())
+            {
+                ColorSpec fallback = ColorSpec::srgb();
+                if (!frame.pixel_format().is_rgb())
+                {
+                    fallback.matrix = ColorMatrix::Bt470bg;
+                    fallback.range = ColorRange::Limited;
+                    fallback.chroma_location = ChromaLocation::Center;
+                }
+                source_color = source_color.with_defaults_from(fallback);
+                conversions.push_back(ConversionEvent{"color_tags", frame.color().describe(), source_color.describe(),
+                                                      ConversionCause::Requested, "assumed_color"});
+            }
+            Frame source = frame;
+            source.set_color(source_color);
+            source.sync_color_to_av_frame();
+
+            ColorSpec target_color = source_color;
+            if (target_format.is_rgb())
+            {
+                target_color.matrix = ColorMatrix::Rgb;
+                target_color.range = ColorRange::Full;
+            }
+            FrameResult converted = convert(source, target_format, target_color, Strict::AllowRecorded);
+            for (ConversionEvent& event : converted.record.conversions)
+            {
+                event.cause = ConversionCause::CodecConstraint;
+                conversions.push_back(std::move(event));
+            }
+            return std::move(converted.frame);
+        }
+
+        /// JPEG's own RGB-to-YCbCr conversion (JFIF), unrounded.
+        void add_ycbcr_from_rgb(const Frame& rgb, WorkingPlanes& planes)
+        {
+            const ConstPlaneView view = rgb.plane(0);
+            planes.luma = Plane(view.width, view.height);
+            planes.cb = Plane(view.width, view.height);
+            planes.cr = Plane(view.width, view.height);
+            for (int y = 0; y < view.height; ++y)
+            {
+                const std::uint8_t* row = view.row(y);
+                for (int x = 0; x < view.width; ++x)
+                {
+                    const double red = row[3 * x];
+                    const double green = row[3 * x + 1];
+                    const double blue = row[3 * x + 2];
+                    const std::size_t at = planes.luma.index(x, y);
+                    planes.luma.samples[at] = static_cast<float>(0.299 * red + 0.587 * green + 0.114 * blue);
+                    const double cb = -0.168735892 * red - 0.331264108 * green + 0.5 * blue + 128.0;
+                    const double cr = 0.5 * red - 0.418687589 * green - 0.081312411 * blue + 128.0;
+                    planes.cb.samples[at] = static_cast<float>(cb);
+                    planes.cr.samples[at] = static_cast<float>(cr);
+
+                    const bool clipped = red == 0 || red == 255 || green == 0 || green == 255 || blue == 0 ||
+                                         blue == 255;
+                    planes.luma.clipped[at] = clipped;
+                    planes.cb.clipped[at] = clipped;
+                    planes.cr.clipped[at] = clipped;
+                }
+            }
+            planes.chroma_layout = Subsampling::Yuv444;
+        }
+
+        /// Whether every chroma sample is within `achromatic_limit` of
+        /// neutral, as for a gray image stored in color.
+        bool is_achromatic(const Plane& cb, const Plane& cr)
+        {
+            const auto neutral = [](const float sample) { return std::abs(sample - 128.0f) < achromatic_limit; };
+            return std::all_of(cb.samples.begin(), cb.samples.end(), neutral) &&
+                   std::all_of(cr.samples.begin(), cr.samples.end(), neutral);
+        }
+
+        WorkingPlanes working_planes(const Frame& frame, ConversionList& conversions)
+        {
+            const PixelFormat format = frame.pixel_format();
+            const Subsampling subsampling = format.subsampling();
+            const bool plain_eight_bit = format.bit_depth() == 8 && format.is_planar() && !format.is_big_endian();
+
+            WorkingPlanes planes;
+            if (plain_eight_bit && subsampling == Subsampling::Gray && !format.has_alpha())
+            {
+                planes.luma = plane_from_8bit(frame.plane(0));
+                planes.analyzed_as = format.name();
+                return planes;
+            }
+            if (plain_eight_bit && is_jpeg_layout(subsampling) && !format.is_rgb() && format.plane_count() >= 3 &&
+                has_jpeg_color(frame.color()))
+            {
+                planes.luma = plane_from_8bit(frame.plane(0));
+                planes.cb = plane_from_8bit(frame.plane(1));
+                planes.cr = plane_from_8bit(frame.plane(2));
+                planes.chroma_layout = subsampling;
+                planes.achromatic = is_achromatic(planes.cb, planes.cr);
+                planes.analyzed_as = format.name();
+                return planes;
+            }
+            if (subsampling == Subsampling::Gray)
+            {
+                planes.luma = plane_from_8bit(
+                    converted_for_analysis(frame, PixelFormat::from_name("gray"), conversions).plane(0));
+                planes.analyzed_as = "gray";
+                return planes;
+            }
+            add_ycbcr_from_rgb(converted_for_analysis(frame, PixelFormat::from_name("rgb24"), conversions), planes);
+            planes.achromatic = is_achromatic(planes.cb, planes.cr);
+            planes.analyzed_as = "rgb24";
+            return planes;
+        }
+
+        /// Counts of clipped samples over any rectangle in constant time.
+        class ClippedCounts
+        {
+        public:
+            explicit ClippedCounts(const Plane& plane)
+                : m_width(plane.width + 1),
+                  m_sums(static_cast<std::size_t>(plane.width + 1) * static_cast<std::size_t>(plane.height + 1))
+            {
+                for (int y = 0; y < plane.height; ++y)
+                {
+                    for (int x = 0; x < plane.width; ++x)
+                    {
+                        m_sums[at(x + 1, y + 1)] =
+                            plane.clipped[plane.index(x, y)] + m_sums[at(x, y + 1)] + m_sums[at(x + 1, y)] -
+                            m_sums[at(x, y)];
+                    }
+                }
+            }
+
+            [[nodiscard]] bool any_in(const int x, const int y, const int width, const int height) const
+            {
+                return m_sums[at(x + width, y + height)] - m_sums[at(x, y + height)] - m_sums[at(x + width, y)] +
+                           m_sums[at(x, y)] >
+                       0;
+            }
+
+        private:
+            [[nodiscard]] std::size_t at(const int x, const int y) const
+            {
+                return static_cast<std::size_t>(y) * static_cast<std::size_t>(m_width) + static_cast<std::size_t>(x);
+            }
+
+            int m_width;
+            std::vector<std::int64_t> m_sums;
+        };
+
+        /// The orthonormal 8-point DCT-II basis: basis[k][n], which is JPEG's
+        /// forward DCT.
+        const std::array<std::array<double, 8>, 8>& dct_basis()
+        {
+            static const std::array<std::array<double, 8>, 8> basis = []
+            {
+                std::array<std::array<double, 8>, 8> values{};
+                for (std::size_t k = 0; k < 8; ++k)
+                {
+                    const double scale = k == 0 ? std::sqrt(1.0 / 8.0) : std::sqrt(2.0 / 8.0);
+                    for (std::size_t n = 0; n < 8; ++n)
+                    {
+                        values[k][n] = scale * std::cos(std::numbers::pi * static_cast<double>((2 * n + 1) * k) / 16.0);
+                    }
+                }
+                return values;
+            }();
+            return basis;
+        }
+
+        /// A block's samples, level shifted by 128 as JPEG does.
+        std::array<double, 64> block_samples(const Plane& plane, const int x, const int y)
+        {
+            std::array<double, 64> samples{};
+            for (int row = 0; row < 8; ++row)
+            {
+                const float* source = &plane.samples[plane.index(x, y + row)];
+                for (int column = 0; column < 8; ++column)
+                {
+                    samples[static_cast<std::size_t>(row * 8 + column)] = source[column] - 128.0;
+                }
+            }
+            return samples;
+        }
+
+        /// All 64 DCT coefficients of a block, in natural order.
+        std::array<double, 64> block_dct(const std::array<double, 64>& samples)
+        {
+            const auto& basis = dct_basis();
+            std::array<double, 64> vertical{};
+            for (std::size_t u = 0; u < 8; ++u)
+            {
+                for (std::size_t column = 0; column < 8; ++column)
+                {
+                    double sum = 0.0;
+                    for (std::size_t row = 0; row < 8; ++row)
+                    {
+                        sum += basis[u][row] * samples[row * 8 + column];
+                    }
+                    vertical[u * 8 + column] = sum;
+                }
+            }
+            std::array<double, 64> coefficients{};
+            for (std::size_t u = 0; u < 8; ++u)
+            {
+                for (std::size_t v = 0; v < 8; ++v)
+                {
+                    double sum = 0.0;
+                    for (std::size_t column = 0; column < 8; ++column)
+                    {
+                        sum += vertical[u * 8 + column] * basis[v][column];
+                    }
+                    coefficients[u * 8 + v] = sum;
+                }
+            }
+            return coefficients;
+        }
+
+
+        struct BlockOrigin
+        {
+            const Plane* plane = nullptr;
+            int x = 0;
+            int y = 0;
+        };
+
+        /// The unclipped 8x8 blocks of the grid starting at (offset_x,
+        /// offset_y), across `planes`, thinned evenly to at most `max_blocks`.
+        std::vector<BlockOrigin> block_origins(const std::vector<const Plane*>& planes,
+                                               const std::vector<ClippedCounts>& clipped_counts, const int offset_x,
+                                               const int offset_y, const std::size_t max_blocks)
+        {
+            std::size_t total = 0;
+            for (const Plane* plane : planes)
+            {
+                const int columns = std::max(0, (plane->width - offset_x) / 8);
+                const int rows = std::max(0, (plane->height - offset_y) / 8);
+                total += static_cast<std::size_t>(columns) * static_cast<std::size_t>(rows);
+            }
+            const std::size_t stride = std::max<std::size_t>(1, (total + max_blocks - 1) / max_blocks);
+
+            std::vector<BlockOrigin> origins;
+            std::size_t counter = 0;
+            for (std::size_t plane_index = 0; plane_index < planes.size(); ++plane_index)
+            {
+                const Plane& plane = *planes[plane_index];
+                for (int y = offset_y; y + 8 <= plane.height; y += 8)
+                {
+                    for (int x = offset_x; x + 8 <= plane.width; x += 8)
+                    {
+                        if (counter++ % stride != 0 || clipped_counts[plane_index].any_in(x, y, 8, 8))
+                        {
+                            continue;
+                        }
+                        origins.push_back(BlockOrigin{&plane, x, y});
+                    }
+                }
+            }
+            return origins;
+        }
+
+        struct LatticeFit
+        {
+            /// 0 when no step had enough samples away from zero.
+            int step = 0;
+            double score = 0.0;
+
+            /// The samples the step was judged on.
+            std::size_t samples = 0;
+
+            /// The score less two standard deviations of its value for
+            /// samples unrelated to the lattice (about 0.9 per sample), so
+            /// that a fit on a few samples cannot outrank one on many.
+            [[nodiscard]] double lower_bound() const
+            {
+                return samples == 0 ? 0.0 : score - 2.0 * 0.9 / std::sqrt(static_cast<double>(samples));
+            }
+        };
+
+        /// The quantization step, from 2 to `max_step`, whose lattice the
+        /// samples fit best. A step is judged on the samples it would not
+        /// quantize to zero (at least half a step from it), by 1 - 12 times
+        /// their mean squared distance from the lattice in steps: 1 on it,
+        /// about 0 for samples unrelated to it, and negative at a multiple
+        /// of the true step. A divisor of the true step fits too, but less
+        /// well, since the rounding noise is larger relative to it.
+        ///
+        /// For an AC coefficient, whose quantized values are mostly -1, 0
+        /// and 1, a step also needs `min_unit_share` of its samples at one
+        /// step from zero. Otherwise a few samples far out, all of them at a
+        /// large true step, make any of its divisors fit, while too few of
+        /// them reach the true step for it to be judged.
+        LatticeFit fit_lattice(std::vector<double> values, const int max_step, const bool ac_coefficient)
+        {
+            std::sort(values.begin(), values.end(),
+                      [](const double left, const double right) { return std::abs(left) > std::abs(right); });
+
+            LatticeFit best;
+            std::vector<double> scores(static_cast<std::size_t>(max_step) + 1, -1.0);
+            std::vector<std::size_t> counts(scores.size(), 0);
+            for (int step = 2; step <= max_step; ++step)
+            {
+                const double half_step = step / 2.0;
+                const auto end = std::partition_point(values.begin(), values.end(),
+                                                      [half_step](const double value)
+                                                      { return std::abs(value) >= half_step; });
+                const auto count = static_cast<std::size_t>(end - values.begin());
+                if (count < static_cast<std::size_t>(min_lattice_samples))
+                {
+                    break;
+                }
+                double squared_distance = 0.0;
+                std::size_t unit_count = 0;
+                for (auto it = values.begin(); it != end; ++it)
+                {
+                    const double position = *it / step;
+                    const double index = std::round(position);
+                    const double distance = position - index;
+                    squared_distance += distance * distance;
+                    unit_count += std::abs(index) == 1.0;
+                }
+                if (ac_coefficient &&
+                    static_cast<double>(unit_count) < min_unit_share * static_cast<double>(count))
+                {
+                    continue;
+                }
+                const double score = 1.0 - 12.0 * squared_distance / static_cast<double>(count);
+                scores[static_cast<std::size_t>(step)] = score;
+                counts[static_cast<std::size_t>(step)] = count;
+                if (score > best.score)
+                {
+                    best = LatticeFit{step, score, count};
+                }
+            }
+
+            // A best fit at a divisor of the true step happens when few
+            // samples reach the true step; the true step still fits.
+            if (best.step != 0)
+            {
+                for (int multiple = 2 * best.step; multiple <= max_step; multiple += best.step)
+                {
+                    if (scores[static_cast<std::size_t>(multiple)] >= min_step_score)
+                    {
+                        best = LatticeFit{multiple, scores[static_cast<std::size_t>(multiple)],
+                                          counts[static_cast<std::size_t>(multiple)]};
+                    }
+                }
+            }
+            return best;
+        }
+
+        struct IjgMatch
+        {
+            std::optional<int> quality;
+            std::optional<int> lowest;
+            std::optional<int> highest;
+            double match = 0.0;
+        };
+
+        /// The libjpeg qualities whose tables agree with the most determined
+        /// values of the first of `estimates`, each against its standard
+        /// table; of several, those agreeing with the most of the next, and
+        /// so on, then those off by least in total. A later table only breaks
+        /// ties, so a poorly estimated chroma table cannot outvote the luma.
+        /// Qualities still tied cannot be told apart from these values: the
+        /// match spans them, and `quality` is the middle one.
+        IjgMatch match_ijg_quality(
+            const std::vector<std::pair<const QuantizationEstimate*, const std::array<int, 64>*>>& estimates)
+        {
+            int determined = 0;
+            for (const auto& [estimate, standard_table] : estimates)
+            {
+                determined += estimate->determined;
+            }
+            IjgMatch best;
+            if (determined == 0)
+            {
+                return best;
+            }
+            std::vector<int> best_matches;
+            long best_error = std::numeric_limits<long>::max();
+            for (int quality = 1; quality <= 100; ++quality)
+            {
+                std::vector<int> matches;
+                long error = 0;
+                for (const auto& [estimate, standard_table] : estimates)
+                {
+                    const std::array<int, 64> table = detail::ijg_scaled_table(*standard_table, quality);
+                    int table_matches = 0;
+                    for (std::size_t i = 0; i < table.size(); ++i)
+                    {
+                        if (estimate->values[i] != 0)
+                        {
+                            table_matches += estimate->values[i] == table[i];
+                            error += std::abs(estimate->values[i] - table[i]);
+                        }
+                    }
+                    matches.push_back(table_matches);
+                }
+                if (best_matches.empty() || matches > best_matches ||
+                    (matches == best_matches && error < best_error))
+                {
+                    best_matches = std::move(matches);
+                    best_error = error;
+                    best.lowest = quality;
+                    best.highest = quality;
+                }
+                else if (matches == best_matches && error == best_error)
+                {
+                    best.highest = quality;
+                }
+            }
+            best.quality = (*best.lowest + *best.highest + 1) / 2;
+            int total_matches = 0;
+            for (const int table_matches : best_matches)
+            {
+                total_matches += table_matches;
+            }
+            best.match = static_cast<double>(total_matches) / determined;
+            return best;
+        }
+
+        void match_ijg_quality(QuantizationEstimate& estimate, const std::array<int, 64>& standard_table)
+        {
+            const IjgMatch match = match_ijg_quality({{&estimate, &standard_table}});
+            estimate.ijg_quality = match.quality;
+            estimate.ijg_match = match.match;
+        }
+
+        struct GridEstimate
+        {
+            int grid_x = 0;
+            int grid_y = 0;
+            double grid_score = 0.0;
+            double runner_up_grid_score = 0.0;
+
+            /// Every offset's score, row by row from (0, 0).
+            std::vector<double> grid_scores;
+
+            int blocks = 0;
+            QuantizationEstimate table;
+        };
+
+        /// The grid offset whose blocks fit a lattice best, and the table
+        /// estimated at it, from blocks pooled across `planes` (Cb and Cr
+        /// share a table in every libjpeg-written file).
+        GridEstimate estimate_quantization(const std::vector<const Plane*>& planes,
+                                           const std::array<int, 64>& standard_table)
+        {
+            std::vector<ClippedCounts> clipped_counts;
+            clipped_counts.reserve(planes.size());
+            for (const Plane* plane : planes)
+            {
+                clipped_counts.emplace_back(*plane);
+            }
+
+            GridEstimate estimate;
+            std::vector<double> scores;
+            for (int offset_y = 0; offset_y < 8; ++offset_y)
+            {
+                for (int offset_x = 0; offset_x < 8; ++offset_x)
+                {
+                    const std::vector<BlockOrigin> origins =
+                        block_origins(planes, clipped_counts, offset_x, offset_y, max_grid_blocks);
+                    std::array<std::vector<double>, probe_count> probes;
+                    for (const BlockOrigin& origin : origins)
+                    {
+                        const std::array<double, 64> dct = block_dct(block_samples(*origin.plane, origin.x, origin.y));
+                        for (std::size_t probe = 0; probe < probe_count; ++probe)
+                        {
+                            probes[probe].push_back(dct[probe + 1]);
+                        }
+                    }
+                    std::vector<double> probe_scores;
+                    for (std::vector<double>& values : probes)
+                    {
+                        const LatticeFit fit = fit_lattice(std::move(values), 64, true);
+                        probe_scores.push_back(std::max(0.0, fit.lower_bound()));
+                    }
+                    std::partial_sort(probe_scores.begin(), probe_scores.begin() + scored_probes, probe_scores.end(),
+                                      std::greater<>());
+                    double score = 0.0;
+                    for (std::size_t i = 0; i < scored_probes; ++i)
+                    {
+                        score += probe_scores[i];
+                    }
+                    score /= static_cast<double>(scored_probes);
+                    scores.push_back(score);
+                    if (score > estimate.grid_score || scores.size() == 1)
+                    {
+                        estimate.grid_score = score;
+                        estimate.grid_x = offset_x;
+                        estimate.grid_y = offset_y;
+                    }
+                }
+            }
+            // An offset sharing a row or column with the true grid keeps that
+            // direction's block edges, and with them part of the lattice.
+            estimate.grid_scores = scores;
+            for (int offset_y = 0; offset_y < 8; ++offset_y)
+            {
+                for (int offset_x = 0; offset_x < 8; ++offset_x)
+                {
+                    if (offset_x != estimate.grid_x && offset_y != estimate.grid_y)
+                    {
+                        estimate.runner_up_grid_score = std::max(
+                            estimate.runner_up_grid_score, scores[static_cast<std::size_t>(offset_y * 8 + offset_x)]);
+                    }
+                }
+            }
+
+            const std::vector<BlockOrigin> origins =
+                block_origins(planes, clipped_counts, estimate.grid_x, estimate.grid_y, max_table_blocks);
+            estimate.blocks = static_cast<int>(origins.size());
+            std::array<std::vector<double>, 64> coefficients;
+            for (const BlockOrigin& origin : origins)
+            {
+                const std::array<double, 64> dct = block_dct(block_samples(*origin.plane, origin.x, origin.y));
+                for (std::size_t i = 0; i < dct.size(); ++i)
+                {
+                    coefficients[i].push_back(dct[i]);
+                }
+            }
+
+            QuantizationEstimate& table = estimate.table;
+            double total_score = 0.0;
+            for (std::size_t i = 0; i < coefficients.size(); ++i)
+            {
+                const LatticeFit fit = fit_lattice(std::move(coefficients[i]), 255, i != 0);
+                if (fit.step != 0 && fit.score >= min_step_score)
+                {
+                    table.values[i] = fit.step;
+                    table.determined += 1;
+                    total_score += fit.score;
+                }
+            }
+            if (table.determined > 0)
+            {
+                table.lattice_score = total_score / table.determined;
+            }
+            match_ijg_quality(table, standard_table);
+            return estimate;
+        }
+
+        // -------------------------------------------------------------------
+        // Chroma subsampling
+        // -------------------------------------------------------------------
+
+        /// Undoes the pair averages of triangle-upsampled samples: solves
+        /// (c[i-1] + 6 c[i] + c[i+1]) / 8 = average[i], with libjpeg's edge
+        /// rows (7 c[0] + c[1]) / 8 and (c[n-2] + 7 c[n-1]) / 8, by the
+        /// Thomas algorithm.
+        std::vector<double> undo_triangle(const std::vector<double>& averages)
+        {
+            const std::size_t count = averages.size();
+            std::vector<double> solution(count);
+            if (count == 1)
+            {
+                solution[0] = averages[0];
+                return solution;
+            }
+            constexpr double off_diagonal = 1.0 / 8.0;
+            std::vector<double> upper(count);
+            std::vector<double> right(count);
+            for (std::size_t i = 0; i < count; ++i)
+            {
+                const double diagonal = (i == 0 || i + 1 == count) ? 7.0 / 8.0 : 6.0 / 8.0;
+                const double lower = i == 0 ? 0.0 : off_diagonal;
+                const double denominator = diagonal - lower * (i == 0 ? 0.0 : upper[i - 1]);
+                upper[i] = off_diagonal / denominator;
+                right[i] = (averages[i] - lower * (i == 0 ? 0.0 : right[i - 1])) / denominator;
+            }
+            solution[count - 1] = right[count - 1];
+            for (std::size_t i = count - 1; i-- > 0;)
+            {
+                solution[i] = right[i] - upper[i] * solution[i + 1];
+            }
+            return solution;
+        }
+
+        /// The subsampled samples a line of `count` pairs from `first` came
+        /// from, under `upsampling`.
+        std::vector<double> undo_upsampling(const std::vector<double>& line, const int first, const int count,
+                                            const ChromaUpsampling upsampling)
+        {
+            std::vector<double> averages(static_cast<std::size_t>(count));
+            for (int i = 0; i < count; ++i)
+            {
+                const auto left = static_cast<std::size_t>(first + 2 * i);
+                averages[static_cast<std::size_t>(i)] = (line[left] + line[left + 1]) / 2.0;
+            }
+            return upsampling == ChromaUpsampling::Replicate ? averages : undo_triangle(averages);
+        }
+
+        double upsampled_at(const std::vector<double>& subsampled, const int index, const int half,
+                            const ChromaUpsampling upsampling)
+        {
+            const double center = subsampled[static_cast<std::size_t>(index)];
+            if (upsampling == ChromaUpsampling::Replicate)
+            {
+                return center;
+            }
+            const int neighbor = half == 0 ? index - 1 : index + 1;
+            return 0.75 * center + 0.25 * subsampled[static_cast<std::size_t>(neighbor)];
+        }
+
+        struct PairingResidual
+        {
+            double squared_sum = 0.0;
+            long count = 0;
+        };
+
+        /// Adds the change that undoing and redoing `upsampling` at pairs
+        /// starting from `phase` makes to the lines of `plane` in one
+        /// direction, leaving out clipped samples and each line's ends.
+        void add_pairing_residual(const Plane& plane, const bool horizontal, const ChromaUpsampling upsampling,
+                                  const int phase, PairingResidual& residual)
+        {
+            const int line_count = horizontal ? plane.height : plane.width;
+            const int length = horizontal ? plane.width : plane.height;
+            const int pair_count = (length - phase) / 2;
+            if (pair_count < 2 * pairing_margin + 4)
+            {
+                return;
+            }
+            const int stride = std::max(1, line_count / max_pairing_lines);
+            std::vector<double> line(static_cast<std::size_t>(length));
+            for (int line_index = 0; line_index < line_count; line_index += stride)
+            {
+                for (int position = 0; position < length; ++position)
+                {
+                    line[static_cast<std::size_t>(position)] =
+                        horizontal ? plane.samples[plane.index(position, line_index)]
+                                   : plane.samples[plane.index(line_index, position)];
+                }
+                const std::vector<double> subsampled = undo_upsampling(line, phase, pair_count, upsampling);
+                for (int pair = pairing_margin; pair < pair_count - pairing_margin; ++pair)
+                {
+                    for (int half = 0; half < 2; ++half)
+                    {
+                        const int position = phase + 2 * pair + half;
+                        const std::size_t at =
+                            horizontal ? plane.index(position, line_index) : plane.index(line_index, position);
+                        if (plane.clipped[at] != 0)
+                        {
+                            continue;
+                        }
+                        const double difference =
+                            line[static_cast<std::size_t>(position)] - upsampled_at(subsampled, pair, half, upsampling);
+                        residual.squared_sum += difference * difference;
+                        residual.count += 1;
+                    }
+                }
+            }
+        }
+
+        /// What pairing the chroma up in one direction shows.
+        struct AxisPairing
+        {
+            ChromaUpsampling upsampling = ChromaUpsampling::Triangle;
+            int phase = 0;
+            double residual = 0.0;
+            double phase_ratio = 1.0;
+
+            /// The residual over the other upsampling's, each at its better
+            /// pairing.
+            double upsampling_ratio = 1.0;
+
+            bool enough_samples = false;
+
+            /// How far past each rule's threshold the pairing is, from 0 at
+            /// the threshold to 1; the strongest of the three.
+            [[nodiscard]] double strength() const
+            {
+                const auto past = [](const double value, const double threshold)
+                { return std::clamp((threshold - value) / threshold, 0.0, 1.0); };
+                if (phase_ratio > max_phase_ratio)
+                {
+                    return past(phase_ratio, max_phase_ratio_alone);
+                }
+                return std::max({past(residual, max_upsampled_residual), past(phase_ratio, max_phase_ratio_alone),
+                                 past(upsampling_ratio, max_upsampling_ratio)});
+            }
+
+            [[nodiscard]] bool subsampled() const { return enough_samples && strength() > 0.0; }
+        };
+
+        AxisPairing pair_axis(const Plane& cb, const Plane& cr, const bool horizontal)
+        {
+            AxisPairing best;
+            bool first = true;
+            std::array<double, 2> method_residuals{};
+            std::size_t method_index = 0;
+            for (const ChromaUpsampling upsampling : {ChromaUpsampling::Triangle, ChromaUpsampling::Replicate})
+            {
+                std::array<double, 2> residuals{};
+                long count = 0;
+                for (int phase = 0; phase < 2; ++phase)
+                {
+                    PairingResidual residual;
+                    add_pairing_residual(cb, horizontal, upsampling, phase, residual);
+                    add_pairing_residual(cr, horizontal, upsampling, phase, residual);
+                    residuals[static_cast<std::size_t>(phase)] =
+                        residual.count > 0 ? std::sqrt(residual.squared_sum / static_cast<double>(residual.count))
+                                           : 0.0;
+                    count = phase == 0 ? residual.count : std::min(count, residual.count);
+                }
+                const int phase = residuals[1] < residuals[0] ? 1 : 0;
+                const double lower = residuals[static_cast<std::size_t>(phase)];
+                const double higher = residuals[static_cast<std::size_t>(1 - phase)];
+                method_residuals[method_index++] = lower;
+                if (first || lower < best.residual)
+                {
+                    best.upsampling = upsampling;
+                    best.phase = phase;
+                    best.residual = lower;
+                    best.phase_ratio = higher > 0.0 ? lower / higher : 1.0;
+                    best.enough_samples = count >= min_pairing_samples;
+                    first = false;
+                }
+            }
+            const double other = std::max(method_residuals[0], method_residuals[1]);
+            best.upsampling_ratio = other > 0.0 ? best.residual / other : 1.0;
+            return best;
+        }
+
+        struct ChromaPairing
+        {
+            AxisPairing horizontal;
+            AxisPairing vertical;
+        };
+
+        ChromaSubsamplingEvidence subsampling_evidence(const ChromaPairing& pairing)
+        {
+            ChromaSubsamplingEvidence evidence;
+            evidence.horizontal_residual = pairing.horizontal.residual;
+            evidence.horizontal_phase_ratio = pairing.horizontal.phase_ratio;
+            evidence.horizontal_upsampling_ratio = pairing.horizontal.upsampling_ratio;
+            evidence.vertical_residual = pairing.vertical.residual;
+            evidence.vertical_phase_ratio = pairing.vertical.phase_ratio;
+            evidence.vertical_upsampling_ratio = pairing.vertical.upsampling_ratio;
+            if (!pairing.horizontal.enough_samples || !pairing.vertical.enough_samples)
+            {
+                return evidence;
+            }
+
+            const bool horizontal = pairing.horizontal.subsampled();
+            const bool vertical = pairing.vertical.subsampled();
+            evidence.subsampling = horizontal && vertical ? Subsampling::Yuv420
+                                   : horizontal           ? Subsampling::Yuv422
+                                   : vertical             ? Subsampling::Yuv440
+                                                          : Subsampling::Yuv444;
+            if (horizontal || vertical)
+            {
+                const AxisPairing& weaker =
+                    !vertical || (horizontal && pairing.horizontal.strength() <= pairing.vertical.strength())
+                        ? pairing.horizontal
+                        : pairing.vertical;
+                evidence.upsampling = weaker.upsampling;
+                evidence.confidence = 0.5 + 0.5 * weaker.strength();
+            }
+            else
+            {
+                // How far the closer direction is from the residual and
+                // upsampling-ratio thresholds, both of which it misses.
+                const auto missed_by = [](const AxisPairing& axis)
+                {
+                    return std::min(std::clamp((axis.residual - max_upsampled_residual) / max_upsampled_residual,
+                                               0.0, 1.0),
+                                    std::clamp((axis.upsampling_ratio - max_upsampling_ratio) /
+                                                   (1.0 - max_upsampling_ratio),
+                                               0.0, 1.0));
+                };
+                evidence.confidence =
+                    0.5 + 0.5 * std::min(missed_by(pairing.horizontal), missed_by(pairing.vertical));
+            }
+            return evidence;
+        }
+
+        /// The subsampled plane `plane` was upsampled from, when it was, in
+        /// the given directions, with a sample clipped when any sample it
+        /// was recovered from was.
+        Plane undo_plane_upsampling(const Plane& plane, const AxisPairing* horizontal, const AxisPairing* vertical)
+        {
+            Plane result = plane;
+            for (const bool along_rows : {true, false})
+            {
+                const AxisPairing* pairing = along_rows ? horizontal : vertical;
+                if (pairing == nullptr)
+                {
+                    continue;
+                }
+                const Plane source = result;
+                const int length = along_rows ? source.width : source.height;
+                const int line_count = along_rows ? source.height : source.width;
+                const int pair_count = (length - pairing->phase) / 2;
+                result = along_rows ? Plane(pair_count, source.height) : Plane(source.width, pair_count);
+                std::vector<double> line(static_cast<std::size_t>(length));
+                for (int line_index = 0; line_index < line_count; ++line_index)
+                {
+                    for (int position = 0; position < length; ++position)
+                    {
+                        line[static_cast<std::size_t>(position)] =
+                            along_rows ? source.samples[source.index(position, line_index)]
+                                       : source.samples[source.index(line_index, position)];
+                    }
+                    const std::vector<double> subsampled =
+                        undo_upsampling(line, pairing->phase, pair_count, pairing->upsampling);
+                    for (int pair = 0; pair < pair_count; ++pair)
+                    {
+                        const int first = pairing->phase + 2 * pair;
+                        const bool clipped =
+                            along_rows ? source.clipped[source.index(first, line_index)] != 0 ||
+                                             source.clipped[source.index(first + 1, line_index)] != 0
+                                       : source.clipped[source.index(line_index, first)] != 0 ||
+                                             source.clipped[source.index(line_index, first + 1)] != 0;
+                        const std::size_t at =
+                            along_rows ? result.index(pair, line_index) : result.index(line_index, pair);
+                        result.samples[at] = static_cast<float>(subsampled[static_cast<std::size_t>(pair)]);
+                        result.clipped[at] = clipped;
+                    }
+                }
+            }
+            return result;
+        }
+
+        /// The JPEG chroma table and layout. Chroma still in the JPEG's YUV
+        /// has its layout; chroma at full resolution has the layout its
+        /// pairing showed, and is reduced to it first, undoing the
+        /// upsampling found. The pairing decides the layout, not the chroma
+        /// lattice, which is weak wherever the chroma is: a poor table under
+        /// a wrong layout can fit about as well as one under the right one.
+        /// Without a pairing to go on, only a 4:4:4 lattice can be read.
+        void add_chroma_quantization(const WorkingPlanes& planes, const std::optional<ChromaPairing>& pairing,
+                                     const std::optional<ChromaSubsamplingEvidence>& subsampling,
+                                     JpegQuantizationEvidence& evidence)
+        {
+            if (planes.chroma_layout != Subsampling::Yuv444)
+            {
+                const GridEstimate estimate =
+                    estimate_quantization({&planes.cb, &planes.cr}, detail::standard_chrominance_table);
+                if (estimate.grid_score >= min_grid_score)
+                {
+                    evidence.chroma = estimate.table;
+                }
+                evidence.chroma_subsampling = planes.chroma_layout;
+                return;
+            }
+
+            const bool horizontal = pairing.has_value() && pairing->horizontal.subsampled();
+            const bool vertical = pairing.has_value() && pairing->vertical.subsampled();
+            const Plane cb =
+                undo_plane_upsampling(planes.cb, horizontal ? &pairing->horizontal : nullptr,
+                                      vertical ? &pairing->vertical : nullptr);
+            const Plane cr =
+                undo_plane_upsampling(planes.cr, horizontal ? &pairing->horizontal : nullptr,
+                                      vertical ? &pairing->vertical : nullptr);
+            const GridEstimate estimate = estimate_quantization({&cb, &cr}, detail::standard_chrominance_table);
+            if (estimate.grid_score >= min_grid_score)
+            {
+                evidence.chroma = estimate.table;
+            }
+            if (pairing.has_value() && subsampling.has_value())
+            {
+                evidence.chroma_subsampling = subsampling->subsampling;
+            }
+            else if (evidence.chroma.has_value())
+            {
+                evidence.chroma_subsampling = Subsampling::Yuv444;
+            }
+        }
+
+        // -------------------------------------------------------------------
+        // Recompression
+        // -------------------------------------------------------------------
+
+        /// A codec's coarse sweep over its whole quality scale, and the step
+        /// and bounds of the fine sweep around a notch.
+        struct SweepPlan
+        {
+            std::vector<double> coarse;
+            double coarse_step = 1.0;
+            double fine_step = 0.0;
+            double lowest = 0.0;
+            double highest = 0.0;
+            std::map<std::string, std::string> encoder_options;
+        };
+
+        std::vector<double> evenly_spaced(const double first, const double last, const double step)
+        {
+            std::vector<double> values;
+            const auto count = static_cast<int>(std::floor((last - first) / step + 1e-9));
+            for (int i = 0; i <= count; ++i)
+            {
+                values.push_back(first + i * step);
+            }
+            return values;
+        }
+
+        SweepPlan sweep_plan(const ImageCodec codec)
+        {
+            SweepPlan plan;
+            switch (codec)
+            {
+            case ImageCodec::Mjpeg:
+                plan.coarse = evenly_spaced(1, 31, 1);
+                plan.lowest = 1;
+                plan.highest = 31;
+                break;
+            case ImageCodec::WebP:
+                plan.coarse = evenly_spaced(5, 100, 5);
+                plan.coarse_step = 5;
+                plan.fine_step = 1;
+                plan.highest = 100;
+                break;
+            case ImageCodec::Avif:
+            {
+                const std::string encoder_name = capabilities().require_encoder(codec).name;
+                if (encoder_name == "librav1e")
+                {
+                    plan.coarse = evenly_spaced(15, 255, 16);
+                    plan.coarse_step = 16;
+                    plan.fine_step = 4;
+                    plan.highest = 255;
+                }
+                else
+                {
+                    plan.coarse = evenly_spaced(3, 63, 4);
+                    plan.coarse_step = 4;
+                    plan.fine_step = 1;
+                    plan.lowest = encoder_name == "libsvtav1" ? 1 : 0;
+                    plan.highest = 63;
+                }
+                if (encoder_name == "libaom-av1")
+                {
+                    plan.encoder_options["cpu-used"] = "6";
+                }
+                break;
+            }
+            case ImageCodec::Jxl:
+                plan.coarse = evenly_spaced(0.5, 6, 0.5);
+                plan.coarse_step = 0.5;
+                plan.fine_step = 0.1;
+                plan.lowest = 0.01;
+                plan.highest = 15;
+                break;
+            case ImageCodec::Png:
+            case ImageCodec::Heif:
+                throw ConfigError("compression_history() cannot recompress with " + to_string(codec) +
+                                  "; it has no lossy quality scale to sweep");
+            }
+            return plan;
+        }
+
+        /// The parameter at a curve's deepest interior notch, when its log
+        /// error dips below its neighbors' anywhere.
+        std::optional<double> deepest_notch(const RecompressionCurve& curve)
+        {
+            const json::Value& depths = curve.record.params.at("notch_depths");
+            std::optional<double> parameter;
+            double deepest = 0.0;
+            for (std::size_t i = 1; i + 1 < curve.points.size(); ++i)
+            {
+                const double depth = depths.at(i).get<double>();
+                if (depth > deepest)
+                {
+                    deepest = depth;
+                    parameter = curve.points[i].quality_parameter;
+                }
+            }
+            return parameter;
+        }
+
+        /// The number of samples plane `plane_index` has for every
+        /// `luma_samples` luma samples across.
+        int plane_samples(const Frame& frame, const int plane_index, const int luma_samples, const bool across)
+        {
+            const ConstPlaneView view = frame.plane(plane_index);
+            const int plane_extent = across ? view.width : view.height;
+            const int frame_extent = across ? frame.width() : frame.height();
+            int shift = 0;
+            while ((frame_extent + (1 << shift) - 1) >> shift > plane_extent)
+            {
+                ++shift;
+            }
+            return luma_samples >> shift;
+        }
+
+        /// A copy of the rectangle at (x, y), which must lie on the 16-pixel
+        /// grid so that every chroma plane's corner is a whole sample.
+        Frame crop_frame(const Frame& frame, const int x, const int y, const int width, const int height)
+        {
+            Frame cropped = Frame::allocate(width, height, frame.pixel_format(), frame.color());
+            for (int plane_index = 0; plane_index < frame.plane_count(); ++plane_index)
+            {
+                const ConstPlaneView source = frame.plane(plane_index);
+                const PlaneView target = cropped.plane(plane_index);
+                const int left = plane_samples(frame, plane_index, x, true);
+                const int top = plane_samples(frame, plane_index, y, false);
+                const std::ptrdiff_t bytes_per_pixel =
+                    static_cast<std::ptrdiff_t>(source.bytes_per_sample) * source.components_per_pixel;
+                for (int row = 0; row < target.height; ++row)
+                {
+                    std::memcpy(target.row(row), source.row(top + row) + left * bytes_per_pixel,
+                                static_cast<std::size_t>(target.row_bytes()));
+                }
+            }
+            return cropped;
+        }
+
+        std::optional<Subsampling> known_subsampling(const CompressionHistory& history)
+        {
+            if (history.jpeg.has_value() && history.jpeg->detected && history.jpeg->chroma_subsampling.has_value())
+            {
+                return history.jpeg->chroma_subsampling;
+            }
+            if (history.chroma.has_value())
+            {
+                return history.chroma->subsampling;
+            }
+            return std::nullopt;
+        }
+
+        /// The format MJPEG re-encodes in: the chroma layout found, which
+        /// the default for an RGB frame would only guess at.
+        std::optional<PixelFormat> mjpeg_format_for(const std::optional<Subsampling> subsampling)
+        {
+            if (!subsampling.has_value())
+            {
+                return std::nullopt;
+            }
+            switch (*subsampling)
+            {
+            case Subsampling::Yuv444: return PixelFormat::from_name("yuvj444p");
+            case Subsampling::Yuv422: return PixelFormat::from_name("yuvj422p");
+            case Subsampling::Yuv420: return PixelFormat::from_name("yuvj420p");
+            default: return std::nullopt;
+            }
+        }
+
+        void add_recompression(const Frame& frame, const CompressionHistoryOptions& options,
+                               CompressionHistory& history, json::Value& params)
+        {
+            json::Value skipped = json::Value::array();
+            json::Value errors = json::Value::object();
+            json::Value crop;
+
+            Frame analyzed = frame;
+            if (options.recompression_crop > 0 &&
+                (frame.width() > options.recompression_crop || frame.height() > options.recompression_crop))
+            {
+                const int side = std::max(16, options.recompression_crop / 16 * 16);
+                const int width = std::min(frame.width(), side);
+                const int height = std::min(frame.height(), side);
+                const int x = (frame.width() - width) / 2 / 16 * 16;
+                const int y = (frame.height() - height) / 2 / 16 * 16;
+                analyzed = crop_frame(frame, x, y, width, height);
+                crop = Rect{static_cast<double>(x), static_cast<double>(y), static_cast<double>(width),
+                            static_cast<double>(height)}
+                           .to_json();
+            }
+
+            for (const ImageCodec codec : options.recompression_codecs)
+            {
+                if (!capabilities().supports(codec))
+                {
+                    skipped.push_back(to_string(codec));
+                    continue;
+                }
+                try
+                {
+                    const SweepPlan plan = sweep_plan(codec);
+                    RecompressionOptions sweep;
+                    sweep.codec = codec;
+                    sweep.parameter_range = plan.coarse;
+                    sweep.encoder_options = plan.encoder_options;
+                    if (codec == ImageCodec::Mjpeg)
+                    {
+                        sweep.pixel_format = mjpeg_format_for(known_subsampling(history));
+                    }
+                    const bool rgb_target = codec == ImageCodec::Jxl &&
+                                            analyzed.pixel_format().subsampling() != Subsampling::Gray;
+                    sweep.planes = rgb_target ? RecompressionPlanes::All : RecompressionPlanes::Luma;
+
+                    RecompressionCurve coarse = recompression_curve(analyzed, sweep);
+                    std::optional<double> quality = deepest_notch(coarse);
+                    const double confidence = coarse.confidence;
+                    const PixelFormat encoded_as = coarse.record.output.pixel_format;
+                    const std::string quality_scale = coarse.record.params.at("quality_scale").is_string()
+                                                          ? coarse.record.params.at("quality_scale").get<std::string>()
+                                                          : std::string();
+                    history.recompression_curves.push_back(std::move(coarse));
+
+                    if (quality.has_value() && plan.fine_step > 0.0 && confidence >= min_refine_confidence)
+                    {
+                        const int reach = static_cast<int>(std::lround(plan.coarse_step / plan.fine_step)) - 1;
+                        sweep.parameter_range.clear();
+                        for (int i = -reach; i <= reach; ++i)
+                        {
+                            const double parameter = *quality + i * plan.fine_step;
+                            if (parameter >= plan.lowest - 1e-9 && parameter <= plan.highest + 1e-9)
+                            {
+                                sweep.parameter_range.push_back(parameter);
+                            }
+                        }
+                        if (sweep.parameter_range.size() >= 3)
+                        {
+                            RecompressionCurve fine = recompression_curve(analyzed, sweep);
+                            if (const std::optional<double> refined = deepest_notch(fine))
+                            {
+                                quality = refined;
+                            }
+                            history.recompression_curves.push_back(std::move(fine));
+                        }
+                    }
+
+                    const long analyzed_pixels = static_cast<long>(analyzed.width()) * analyzed.height();
+                    if (quality.has_value() && confidence >= options.min_confidence &&
+                        analyzed_pixels >= min_recompression_trace_pixels)
+                    {
+                        CompressionTrace trace;
+                        trace.evidence = TraceEvidence::Recompression;
+                        trace.codec = codec;
+                        trace.quality = quality;
+                        trace.quality_scale = quality_scale;
+                        trace.subsampling = encoded_as.subsampling();
+                        trace.confidence = confidence;
+                        history.traces.push_back(std::move(trace));
+                    }
+                }
+                catch (const Error& error)
+                {
+                    errors[to_string(codec)] = error.what();
+                }
+            }
+
+            params["recompression"] = json::object({
+                {"codecs", json::to_array(options.recompression_codecs,
+                                          [](const ImageCodec codec) { return to_string(codec); })},
+                {"crop", crop},
+                {"planes", "luma, or all for JPEG XL in RGB"},
+                {"min_refine_confidence", min_refine_confidence},
+                {"min_trace_pixels", min_recompression_trace_pixels},
+                {"skipped", skipped},
+                {"errors", errors},
+            });
+        }
+    }
+
+    std::string to_string(const ChromaUpsampling upsampling)
+    {
+        return upsampling == ChromaUpsampling::Replicate ? "replicate" : "triangle";
+    }
+
+    ChromaUpsampling chroma_upsampling_from_string(const std::string_view name)
+    {
+        if (name == "replicate") { return ChromaUpsampling::Replicate; }
+        if (name == "triangle") { return ChromaUpsampling::Triangle; }
+        throw ConfigError("unknown chroma upsampling '" + std::string(name) + "'");
+    }
+
+    std::string to_string(const TraceEvidence evidence)
+    {
+        switch (evidence)
+        {
+        case TraceEvidence::JpegQuantization: return "jpeg_quantization";
+        case TraceEvidence::ChromaSubsampling: return "chroma_subsampling";
+        case TraceEvidence::Recompression: return "recompression";
+        }
+        return "unknown";
+    }
+
+    TraceEvidence trace_evidence_from_string(const std::string_view name)
+    {
+        if (name == "jpeg_quantization") { return TraceEvidence::JpegQuantization; }
+        if (name == "chroma_subsampling") { return TraceEvidence::ChromaSubsampling; }
+        if (name == "recompression") { return TraceEvidence::Recompression; }
+        throw ConfigError("unknown trace evidence '" + std::string(name) + "'");
+    }
+
+    json::Value QuantizationEstimate::to_json() const
+    {
+        return json::object({
+            {"values", json::Value(values)},
+            {"determined", determined},
+            {"ijg_quality", json::optional_or_null(ijg_quality)},
+            {"ijg_match", ijg_match},
+            {"lattice_score", lattice_score},
+        });
+    }
+
+    json::Value JpegQuantizationEvidence::to_json() const
+    {
+        return json::object({
+            {"detected", detected},
+            {"grid_x", grid_x},
+            {"grid_y", grid_y},
+            {"grid_score", grid_score},
+            {"runner_up_grid_score", runner_up_grid_score},
+            {"blocks", blocks},
+            {"luma", luma.to_json()},
+            {"chroma", json::optional_or_null(chroma)},
+            {"chroma_subsampling", enum_or_null(chroma_subsampling)},
+            {"ijg_quality", json::optional_or_null(ijg_quality)},
+            {"ijg_quality_lowest", json::optional_or_null(ijg_quality_lowest)},
+            {"ijg_quality_highest", json::optional_or_null(ijg_quality_highest)},
+            {"ijg_match", ijg_match},
+        });
+    }
+
+    json::Value ChromaSubsamplingEvidence::to_json() const
+    {
+        return json::object({
+            {"subsampling", enum_or_null(subsampling)},
+            {"upsampling", enum_or_null(upsampling)},
+            {"horizontal_residual", horizontal_residual},
+            {"horizontal_phase_ratio", horizontal_phase_ratio},
+            {"horizontal_upsampling_ratio", horizontal_upsampling_ratio},
+            {"vertical_residual", vertical_residual},
+            {"vertical_phase_ratio", vertical_phase_ratio},
+            {"vertical_upsampling_ratio", vertical_upsampling_ratio},
+            {"confidence", confidence},
+        });
+    }
+
+    json::Value CompressionTrace::to_json() const
+    {
+        return json::object({
+            {"evidence", to_string(evidence)},
+            {"codec", enum_or_null(codec)},
+            {"quality", json::optional_or_null(quality)},
+            {"quality_scale", quality_scale},
+            {"subsampling", enum_or_null(subsampling)},
+            {"confidence", confidence},
+        });
+    }
+
+    json::Value CompressionHistory::to_json() const
+    {
+        return json::object({
+            {"schema_version", schema_version},
+            {"traces", json::to_array(traces)},
+            {"jpeg", json::optional_or_null(jpeg)},
+            {"chroma", json::optional_or_null(chroma)},
+            {"recompression_curves", json::to_array(recompression_curves)},
+            {"record", record.to_json()},
+        });
+    }
+
+    CompressionHistory compression_history(const Frame& frame, const CompressionHistoryOptions& options)
+    {
+        const auto started = std::chrono::steady_clock::now();
+        if (frame.empty())
+        {
+            throw ConfigError("compression_history() received an empty frame");
+        }
+        if (options.recompression_crop < 0)
+        {
+            throw ConfigError("compression_history() recompression_crop must not be negative");
+        }
+
+        CompressionHistory history;
+        StageRecord& record = history.record;
+        record.kind = StageKind::CompressionHistory;
+        record.implementation = "lossylab";
+        record.input = frame.describe();
+        record.output = record.input;
+        record.transform = CoordinateTransform::identity();
+
+        const WorkingPlanes planes = working_planes(frame, record.conversions);
+        const bool has_chroma = !planes.cb.empty() && !planes.achromatic;
+
+        // A frame still in subsampled YUV says its layout itself; converting it
+        // to RGB for analysis upsamples its chroma, which is not a trace.
+        const Subsampling frame_layout = frame.pixel_format().subsampling();
+        const bool full_resolution_chroma = frame_layout == Subsampling::Rgb || frame_layout == Subsampling::Yuv444;
+        std::optional<ChromaPairing> pairing;
+        if (has_chroma && planes.chroma_layout == Subsampling::Yuv444 && full_resolution_chroma)
+        {
+            pairing = ChromaPairing{pair_axis(planes.cb, planes.cr, true), pair_axis(planes.cb, planes.cr, false)};
+            history.chroma = subsampling_evidence(*pairing);
+            if (!history.chroma->subsampling.has_value())
+            {
+                pairing.reset();
+            }
+        }
+
+        json::Value luma_grid_scores;
+        if (planes.luma.width >= 16 && planes.luma.height >= 16)
+        {
+            const GridEstimate luma = estimate_quantization({&planes.luma}, detail::standard_luminance_table);
+            luma_grid_scores = luma.grid_scores;
+            JpegQuantizationEvidence evidence;
+            evidence.grid_x = luma.grid_x;
+            evidence.grid_y = luma.grid_y;
+            evidence.grid_score = luma.grid_score;
+            evidence.runner_up_grid_score = luma.runner_up_grid_score;
+            evidence.blocks = luma.blocks;
+            evidence.luma = luma.table;
+            evidence.detected = luma.grid_score >= min_grid_score &&
+                                luma.grid_score - luma.runner_up_grid_score >= min_grid_margin &&
+                                luma.table.determined >= min_determined_steps;
+            if (evidence.detected)
+            {
+                if (planes.cb.empty())
+                {
+                    evidence.chroma_subsampling = Subsampling::Gray;
+                }
+                else if (!planes.achromatic)
+                {
+                    add_chroma_quantization(planes, pairing, history.chroma, evidence);
+                    if (!evidence.chroma_subsampling.has_value() && history.chroma.has_value())
+                    {
+                        evidence.chroma_subsampling = history.chroma->subsampling;
+                    }
+                }
+
+                std::vector<std::pair<const QuantizationEstimate*, const std::array<int, 64>*>> tables = {
+                    {&evidence.luma, &detail::standard_luminance_table}};
+                if (evidence.chroma.has_value() && evidence.chroma->ijg_match >= min_tie_breaking_match)
+                {
+                    tables.emplace_back(&*evidence.chroma, &detail::standard_chrominance_table);
+                }
+                const IjgMatch joint = match_ijg_quality(tables);
+                evidence.ijg_quality = joint.quality;
+                evidence.ijg_quality_lowest = joint.lowest;
+                evidence.ijg_quality_highest = joint.highest;
+                evidence.ijg_match = joint.match;
+
+                CompressionTrace trace;
+                trace.evidence = TraceEvidence::JpegQuantization;
+                trace.codec = ImageCodec::Mjpeg;
+                if (evidence.ijg_quality.has_value() && evidence.ijg_match >= min_quality_match)
+                {
+                    trace.quality = *evidence.ijg_quality;
+                }
+                trace.quality_scale = "libjpeg quality, an integer from 1 to 100, higher is better";
+                trace.subsampling = evidence.chroma_subsampling;
+                trace.confidence = std::min(1.0, evidence.grid_score);
+                if (trace.confidence >= options.min_confidence)
+                {
+                    history.traces.push_back(std::move(trace));
+                }
+            }
+            history.jpeg = std::move(evidence);
+        }
+
+        if (history.chroma.has_value() && history.chroma->subsampling.has_value() &&
+            *history.chroma->subsampling != Subsampling::Yuv444 &&
+            history.chroma->confidence >= options.min_confidence)
+        {
+            CompressionTrace trace;
+            trace.evidence = TraceEvidence::ChromaSubsampling;
+            trace.subsampling = history.chroma->subsampling;
+            trace.confidence = history.chroma->confidence;
+            history.traces.push_back(std::move(trace));
+        }
+
+        json::Value params = json::object({
+            {"analyzed_as", planes.analyzed_as},
+            {"chroma", planes.cb.empty()   ? "none"
+                       : planes.achromatic ? "achromatic"
+                                           : to_string(planes.chroma_layout)},
+            {"jpeg_quantization", json::object({
+                                      {"dct", "8x8 orthonormal DCT-II of YCbCr - 128, as JPEG's"},
+                                      {"grid_score", "mean of the 5 best AC lattice fits, each less two "
+                                                     "standard deviations of its noise"},
+                                      {"max_grid_blocks", max_grid_blocks},
+                                      {"max_table_blocks", max_table_blocks},
+                                      {"min_lattice_samples", min_lattice_samples},
+                                      {"min_unit_share", min_unit_share},
+                                      {"min_step_score", min_step_score},
+                                      {"min_grid_score", min_grid_score},
+                                      {"min_grid_margin", min_grid_margin},
+                                      {"min_determined_steps", min_determined_steps},
+                                      {"min_tie_breaking_match", min_tie_breaking_match},
+                                      {"min_quality_match", min_quality_match},
+                                      {"luma_grid_scores", luma_grid_scores},
+                                  })},
+            {"chroma_subsampling", json::object({
+                                       {"upsamplings", json::array({"triangle", "replicate"})},
+                                       {"max_residual", max_upsampled_residual},
+                                       {"max_phase_ratio", max_phase_ratio},
+                                       {"max_phase_ratio_alone", max_phase_ratio_alone},
+                                       {"max_upsampling_ratio", max_upsampling_ratio},
+                                       {"max_lines", max_pairing_lines},
+                                       {"achromatic_limit", achromatic_limit},
+                                   })},
+            {"min_confidence", options.min_confidence},
+        });
+        add_recompression(frame, options, history, params);
+        record.params = std::move(params);
+
+        std::stable_sort(history.traces.begin(), history.traces.end(),
+                         [](const CompressionTrace& left, const CompressionTrace& right)
+                         { return left.confidence > right.confidence; });
+        record.duration_ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        return history;
+    }
+}

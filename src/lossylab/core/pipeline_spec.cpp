@@ -200,6 +200,7 @@ namespace lossylab
             case StageKind::Reinterpret:
             case StageKind::AnimateStill:
             case StageKind::Measure:
+            case StageKind::CompressionHistory:
                 // Nothing build-dependent to check ahead of time.
                 break;
             }

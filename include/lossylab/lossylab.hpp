@@ -59,5 +59,6 @@
 #include "lossylab/codec/encode.hpp"
 
 // Chains and measurement.
+#include "lossylab/measure/compression_history.hpp"
 #include "lossylab/measure/measure.hpp"
 #include "lossylab/pipeline/pipeline.hpp"

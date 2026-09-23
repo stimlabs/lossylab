@@ -43,9 +43,11 @@ namespace lossylab
         /// Color to assume for whatever the file leaves unspecified. Files
         /// without color tags are common, and every decoder guesses
         /// differently; stating the assumption here keeps that guess out of
-        /// the library. An embedded ICC profile that matches a known
-        /// primaries and transfer pair (Display P3, sRGB, BT.709, ...) is used
-        /// before this, and recorded as the source of those fields.
+        /// the library. Before this, what the codec itself fixes but FFmpeg's
+        /// decoder leaves unset is filled in (lossy WebP's centered chroma),
+        /// and an embedded ICC profile that matches a known primaries and
+        /// transfer pair (Display P3, sRGB, BT.709, ...) is used; each is
+        /// recorded as the source of the fields it filled.
         ColorSpec assumed_color = ColorSpec::srgb();
 
         /// Leaves the pixels as stored by default, like PIL's Image.open; a

@@ -33,7 +33,8 @@ namespace lossylab
         AnimateStill,
         Measure,
         Compare,
-        RecompressionCurve
+        RecompressionCurve,
+        CompressionHistory
     };
 
     std::string to_string(StageKind kind);

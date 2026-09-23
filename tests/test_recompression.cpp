@@ -6,6 +6,7 @@
 #include "lossylab/measure/measure.hpp"
 
 #include <cassert>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -153,6 +154,64 @@ namespace
         assert(ghost.estimated_prior_parameter == 60.0);
         assert(!recompression_curve(source, options).estimated_prior_parameter.has_value());
     }
+
+    void test_an_avif_ghost_under_the_same_encoder_and_settings()
+    {
+        // Checked with libaom only.
+        if (!capabilities().supports(ImageCodec::Avif) ||
+            capabilities().require_encoder(ImageCodec::Avif).name != "libaom-av1")
+        {
+            return;
+        }
+        const std::map<std::string, std::string> encoder_options = {{"cpu-used", "6"}};
+        const Frame source =
+            convert(pristine(), PixelFormat::from_name("yuv420p"), bt601_yuv(ColorRange::Limited)).frame;
+        RecompressionOptions options;
+        options.codec = ImageCodec::Avif;
+        options.encoder_options = encoder_options;
+        for (int crf = 3; crf <= 63; crf += 4)
+        {
+            options.parameter_range.push_back(crf);
+        }
+        for (const int prior : {11, 19, 31, 43})
+        {
+            EncodeImageOptions encode;
+            encode.codec = ImageCodec::Avif;
+            encode.pixel_format = PixelFormat::from_name("yuv420p");
+            encode.rate_control = RateControl::quality(prior);
+            encode.encoder_options = encoder_options;
+            const RecompressionCurve ghost = recompression_curve(roundtrip(source, encode).frame, options);
+            assert(ghost.estimated_prior_parameter == static_cast<double>(prior));
+        }
+
+        // A never-compressed frame can show a notch too (here at crf 59, with
+        // confidence 0.55), so an AVIF notch alone does not prove a prior.
+    }
+
+    void test_a_jpeg_xl_ghost_under_the_same_encoder_and_settings()
+    {
+        if (!capabilities().supports(ImageCodec::Jxl))
+        {
+            return;
+        }
+        const Frame source = decode_image(Source::from_path(data_path("testsrc_64x48.png"))).frame;
+        RecompressionOptions options;
+        options.codec = ImageCodec::Jxl;
+        for (int step = 1; step <= 12; ++step)
+        {
+            options.parameter_range.push_back(step * 0.5);
+        }
+        for (const double prior : {1.0, 2.0, 4.5})
+        {
+            EncodeImageOptions encode;
+            encode.codec = ImageCodec::Jxl;
+            encode.pixel_format = PixelFormat::from_name("rgb24");
+            encode.rate_control = RateControl::quality(prior);
+            const RecompressionCurve ghost = recompression_curve(roundtrip(source, encode).frame, options);
+            assert(ghost.estimated_prior_parameter == prior);
+        }
+        assert(!recompression_curve(source, options).estimated_prior_parameter.has_value());
+    }
 }
 
 int main()
@@ -163,5 +222,7 @@ int main()
     test_the_sweep_is_sorted_and_recorded();
     test_a_frame_is_converted_once_to_the_requested_format();
     test_a_webp_ghost();
+    test_an_avif_ghost_under_the_same_encoder_and_settings();
+    test_a_jpeg_xl_ghost_under_the_same_encoder_and_settings();
     return 0;
 }

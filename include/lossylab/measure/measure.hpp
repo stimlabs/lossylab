@@ -203,6 +203,8 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
     };
 
+    LOSSYLAB_REFLECT(RecompressionPoint, quality_parameter, error, bits_per_pixel);
+
     struct RecompressionCurve
     {
         /// One per swept parameter, in ascending parameter order.
@@ -232,11 +234,30 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
     };
 
+    LOSSYLAB_REFLECT(RecompressionCurve, points, estimated_prior_parameter, confidence, record);
+
+    /// Which planes a recompression point's error covers.
+    enum class RecompressionPlanes
+    {
+        /// Every plane, weighted by its sample count.
+        All,
+
+        /// The luma plane alone. Most of a prior compression's trace is in
+        /// luma, while the chroma error also carries whatever the chroma
+        /// conversion into the codec's format failed to undo (a decoder's
+        /// chroma upsampling, or the encoder's own RGB-to-YUV conversion).
+        /// Needs a YUV or gray format to re-encode in.
+        Luma
+    };
+
+    std::string to_string(RecompressionPlanes planes);
+    RecompressionPlanes recompression_planes_from_string(std::string_view name);
+
     struct RecompressionOptions
     {
-        /// The codec to re-encode with. Its encode_image() rules apply at
-        /// every point, with the quality parameter in RateControl::quality()
-        /// units.
+        /// The codec to re-encode with: MJPEG, WebP (lossy), AVIF or JPEG XL.
+        /// Its encode_image() rules apply at every point, with the quality
+        /// parameter in RateControl::quality() units.
         ImageCodec codec = ImageCodec::Mjpeg;
 
         /// Quality parameters to sweep, in the codec's own units. At least
@@ -244,14 +265,34 @@ namespace lossylab
         std::vector<double> parameter_range;
 
         /// Metric used to measure the difference at each point. A point's
-        /// error is the MSE for Psnr, and 1 - SSIM for Ssim.
+        /// error is the MSE for Psnr, and 1 - SSIM for Ssim, over `planes`.
         Metric metric = Metric::Psnr;
 
-        /// The format and color to re-encode in. Unset, the frame's own. A
-        /// frame in anything else is converted once, up front, and the
-        /// conversion recorded; each point's error is measured against the
-        /// converted frame, so the conversion's own loss does not count.
+        // TODO: one or two lines of documentation
+        RecompressionPlanes planes = RecompressionPlanes::All;
+
+        /// The format to re-encode in. Unset, the codec's own format nearest
+        /// the frame's: for MJPEG yuvj444p, yuvj422p or yuvj420p by the
+        /// frame's chroma subsampling (yuvj420p for RGB, yuvj444p with
+        /// neutral chroma for gray), for WebP yuv420p, for AVIF 8-bit
+        /// yuv444p, yuv422p or yuv420p (yuv420p for RGB, gray for gray), and
+        /// for JPEG XL rgb24, or gray for gray. None of these has alpha:
+        /// alpha is dropped and only the color planes are measured.
         std::optional<PixelFormat> pixel_format;
+
+        /// The color to re-encode in. Unset, the frame's own, with whatever
+        /// the codec fixes put in place: BT.601 full range with centered
+        /// chroma for JPEG, BT.601 limited range with centered chroma for
+        /// lossy WebP, and for an RGB frame encoded as AVIF BT.601 full range
+        /// with left chroma, libavif's defaults.
+        ///
+        /// Either way, a frame whose own color leaves fields unspecified has
+        /// them filled first from the codec's implied color (centered chroma
+        /// for a decoded WebP, say), on sRGB primaries and transfer, and the
+        /// fill is recorded. A frame in another format or color is converted
+        /// once, up front, and the conversion recorded; each point's error is
+        /// measured against the converted frame, so the conversion's own loss
+        /// does not count.
         std::optional<ColorSpec> color;
 
         /// Passed to the encoder at every point, e.g. {"cpu-used", "6"} for
@@ -259,15 +300,28 @@ namespace lossylab
         std::map<std::string, std::string> encoder_options;
     };
 
-    LOSSYLAB_REFLECT(RecompressionOptions, codec, parameter_range, metric, pixel_format, color, encoder_options);
+    LOSSYLAB_REFLECT(RecompressionOptions, codec, parameter_range, metric, planes, pixel_format, color,
+                      encoder_options);
 
     /// Sweeps a codec's quality parameter, measuring how much re-encoding
     /// changes the input at each setting.
     ///
-    /// Experimental. The signal is strong for single-generation JPEG and WebP
-    /// and weakens quickly with further processing; a resize after the original
-    /// compression usually destroys it entirely. The record's params hold each
-    /// point's notch depth.
+    /// Takes a frame in any pixel format; see RecompressionOptions for what
+    /// it is re-encoded in. Checked on photos: a WebP ghost shows up at the
+    /// original quality with confidence of about 0.5 to 0.9 under Luma
+    /// planes, and less for flat, low-detail content. An MJPEG sweep finds
+    /// FFmpeg's own MJPEG output exactly, but responds only weakly to a
+    /// libjpeg-written JPEG, whose tables no qscale reproduces: on photos
+    /// saved at libjpeg quality 50 or 75, qscale 2 to 14 gave notches of
+    /// confidence 0.4 to 0.75 at a qscale unrelated to the quality, and at
+    /// quality 90 none. compression_history() reads a JPEG's tables
+    /// directly instead. AVIF and JPEG XL leave a notch at the original
+    /// setting when re-encoded with the same encoder and settings (libaom crf
+    /// 11 to 43 and libjxl distance 1 to 4.5 on the test pattern), but for
+    /// AVIF a never-compressed frame can show one of similar confidence too,
+    /// and neither has been checked against other encoders. A resize after the original
+    /// compression usually destroys the signal entirely. The record's params
+    /// hold each point's notch depth.
     [[nodiscard]] RecompressionCurve recompression_curve(const Frame& frame,
                                                          const RecompressionOptions& options);
 }

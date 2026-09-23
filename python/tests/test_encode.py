@@ -95,30 +95,3 @@ def test_rate_control_round_trips_through_a_dict():
     assert lossylab.RateControl.from_dict(control.to_dict()).describe() == control.describe()
     assert control.mode == lossylab.RateControl.Mode.Constrained
     assert control.quality_parameter() is None
-
-
-def test_a_recompression_curve_finds_a_jpeg_ghost():
-    once = lossylab.roundtrip(jpeg_ready_frame(), mjpeg_options(6)).frame
-    options = lossylab.RecompressionOptions()
-    options.codec = lossylab.ImageCodec.Mjpeg
-    options.parameter_range = list(range(2, 15))
-
-    curve = lossylab.recompression_curve(once, options)
-    assert curve.estimated_prior_parameter == 6
-    assert curve.confidence >= 0.5
-    assert [point.quality_parameter for point in curve.points] == list(range(2, 15))
-    assert curve.to_dict()["record"]["kind"] == "recompression_curve"
-
-
-def test_capture_recompression_curve_returns_errors_as_file_errors():
-    source = lossylab.Source.from_path(str(DATA_DIR / "testsrc_64x48.png"))
-    rgb = lossylab.decode_image(source).frame
-    options = lossylab.RecompressionOptions()
-    options.codec = lossylab.ImageCodec.Mjpeg
-    options.parameter_range = [2, 4, 6]
-
-    # The PNG decodes to RGB, which the MJPEG encoder does not take.
-    failed = lossylab.capture_recompression_curve(source, rgb, options)
-    assert not failed
-    assert failed.error().kind == lossylab.FileErrorKind.Config
-    assert failed.error().operation == "recompression_curve"

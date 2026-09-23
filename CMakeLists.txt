@@ -84,6 +84,7 @@ add_library(lossylab STATIC
         src/lossylab/codec/encoder_session.cpp
         src/lossylab/motion/animate_still.cpp
         src/lossylab/measure/measure.cpp
+        src/lossylab/measure/compression_history.cpp
         src/lossylab/pipeline/pipeline.cpp
 )
 add_library(lossylab::lossylab ALIAS lossylab)

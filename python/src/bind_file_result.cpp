@@ -7,6 +7,7 @@
 #include "lossylab/io/probe.hpp"
 #include "lossylab/io/read_headers.hpp"
 #include "lossylab/io/video_reader.hpp"
+#include "lossylab/measure/compression_history.hpp"
 #include "lossylab/measure/measure.hpp"
 
 #include <nanobind/stl/string.h>
@@ -133,17 +134,18 @@ namespace lossylab::pybind
             "compare(reference, distorted, metrics, options), with any exception it raises returned as a FileError "
             "instead. `source` names the file the distorted frames came from.");
 
-        bind_file_result<RecompressionCurve>(m, "RecompressionCurveFileResult")
-            .def("to_dict", [](const FileResult<RecompressionCurve>& self) { return to_python(self.to_json()); });
+        bind_file_result<CompressionHistory>(m, "CompressionHistoryFileResult")
+            .def("to_dict", [](const FileResult<CompressionHistory>& self) { return to_python(self.to_json()); });
         m.def(
-            "capture_recompression_curve",
-            [](const Source& source, const Frame& frame, const RecompressionOptions& options)
+            "capture_compression_history",
+            [](const Source& source, const Frame& frame, const CompressionHistoryOptions& options)
             {
-                return capture("recompression_curve", source,
-                               [&] { return recompression_curve(frame, options); });
+                return capture("compression_history", source,
+                               [&] { return compression_history(frame, options); });
             },
-            "source"_a, "frame"_a, "options"_a, nb::call_guard<nb::gil_scoped_release>(),
-            "recompression_curve(frame, options), with any exception it raises returned as a FileError instead. "
+            "source"_a, "frame"_a, "options"_a = CompressionHistoryOptions{},
+            nb::call_guard<nb::gil_scoped_release>(),
+            "compression_history(frame, options), with any exception it raises returned as a FileError instead. "
             "`source` names the file the frame came from.");
     }
 }

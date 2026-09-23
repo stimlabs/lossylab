@@ -1161,6 +1161,96 @@ namespace lossylab
             const std::size_t middle = values.size() / 2;
             return values.size() % 2 == 1 ? values[middle] : (values[middle - 1] + values[middle]) / 2.0;
         }
+
+        /// The format a codec re-encodes a frame in when the caller names
+        /// none, as RecompressionOptions::pixel_format lists them.
+        PixelFormat default_recompression_format(const ImageCodec codec, const PixelFormat& format)
+        {
+            const Subsampling subsampling = format.subsampling();
+            switch (codec)
+            {
+            case ImageCodec::Mjpeg:
+                switch (subsampling)
+                {
+                case Subsampling::Gray:
+                case Subsampling::Yuv444: return PixelFormat::from_name("yuvj444p");
+                case Subsampling::Yuv422: return PixelFormat::from_name("yuvj422p");
+                default: return PixelFormat::from_name("yuvj420p");
+                }
+            case ImageCodec::WebP: return PixelFormat::from_name("yuv420p");
+            case ImageCodec::Avif:
+                switch (subsampling)
+                {
+                case Subsampling::Gray: return PixelFormat::from_name("gray");
+                case Subsampling::Yuv444: return PixelFormat::from_name("yuv444p");
+                case Subsampling::Yuv422: return PixelFormat::from_name("yuv422p");
+                default: return PixelFormat::from_name("yuv420p");
+                }
+            case ImageCodec::Jxl:
+                return PixelFormat::from_name(subsampling == Subsampling::Gray ? "gray" : "rgb24");
+            case ImageCodec::Png:
+            case ImageCodec::Heif: break;
+            }
+            throw ConfigError("recompression_curve() needs a lossy codec to sweep: MJPEG, WebP, AVIF or JPEG XL, "
+                              "not " + to_string(codec));
+        }
+
+        /// The color a codec's bitstream implies for what a frame leaves
+        /// unspecified, on sRGB primaries and transfer.
+        ColorSpec codec_implied_color(const ImageCodec codec, const PixelFormat& format)
+        {
+            ColorSpec color = ColorSpec::srgb();
+            if (format.is_rgb())
+            {
+                return color;
+            }
+            color.matrix = ColorMatrix::Bt470bg;
+            color.range = codec == ImageCodec::WebP ? ColorRange::Limited : ColorRange::Full;
+            color.chroma_location = codec == ImageCodec::Avif ? ChromaLocation::Left : ChromaLocation::Center;
+            return color;
+        }
+
+        /// The color to re-encode in when the caller names none: the frame's
+        /// own, with the fields the codec's bitstream fixes put in place.
+        ColorSpec default_recompression_color(const ImageCodec codec, const PixelFormat& target_format,
+                                              const ColorSpec& frame_color)
+        {
+            ColorSpec color = frame_color;
+            if (target_format.is_rgb())
+            {
+                color.matrix = ColorMatrix::Rgb;
+                color.range = ColorRange::Full;
+                return color;
+            }
+            const bool fixed_by_codec = codec == ImageCodec::Mjpeg || codec == ImageCodec::WebP;
+            if (fixed_by_codec || frame_color.is_rgb())
+            {
+                const ColorSpec implied = codec_implied_color(codec, target_format);
+                color.matrix = implied.matrix;
+                color.range = implied.range;
+                color.chroma_location = implied.chroma_location;
+            }
+            return color;
+        }
+
+        /// The metric value a point's error is taken from.
+        std::string error_key(const Metric metric, const RecompressionPlanes planes)
+        {
+            const std::string base = metric == Metric::Psnr ? "mse" : "ssim";
+            return planes == RecompressionPlanes::Luma ? base + "_y" : base;
+        }
+    }
+
+    std::string to_string(const RecompressionPlanes planes)
+    {
+        return planes == RecompressionPlanes::Luma ? "luma" : "all";
+    }
+
+    RecompressionPlanes recompression_planes_from_string(const std::string_view name)
+    {
+        if (name == "all") { return RecompressionPlanes::All; }
+        if (name == "luma") { return RecompressionPlanes::Luma; }
+        throw ConfigError("unknown recompression planes '" + std::string(name) + "'");
     }
 
     RecompressionCurve recompression_curve(const Frame& frame,
@@ -1195,13 +1285,35 @@ namespace lossylab
         record.input = frame.describe();
         record.transform = CoordinateTransform::identity();
 
-        const PixelFormat pixel_format = options.pixel_format.value_or(frame.pixel_format());
-        const ColorSpec color = options.color.value_or(frame.color());
-        Frame reference = frame;
-        if (pixel_format != frame.pixel_format() || color != frame.color())
+        // Unspecified fields are filled before anything reads the color, since
+        // neither a conversion nor an encode can proceed without them.
+        Frame source = frame;
+        const ColorSpec tagged = frame.color();
+        if (!tagged.is_fully_specified())
         {
-            FrameResult converted = convert(frame, pixel_format, color, Strict::AllowRecorded);
-            record.conversions = std::move(converted.record.conversions);
+            const ColorSpec filled =
+                tagged.with_defaults_from(codec_implied_color(options.codec, frame.pixel_format()));
+            source.set_color(filled);
+            source.sync_color_to_av_frame();
+            record.conversions.push_back(ConversionEvent{"color_tags", tagged.describe(), filled.describe(),
+                                                         ConversionCause::Requested, "codec_implied_color"});
+        }
+
+        const PixelFormat pixel_format =
+            options.pixel_format.value_or(default_recompression_format(options.codec, frame.pixel_format()));
+        const ColorSpec color =
+            options.color.value_or(default_recompression_color(options.codec, pixel_format, source.color()));
+        if (options.planes == RecompressionPlanes::Luma && pixel_format.is_rgb())
+        {
+            throw ConfigError("recompression_curve() measures luma error in a YUV or gray format, not " +
+                              pixel_format.name());
+        }
+        Frame reference = source;
+        if (pixel_format != source.pixel_format() || color != source.color())
+        {
+            FrameResult converted = convert(source, pixel_format, color, Strict::AllowRecorded);
+            record.conversions.insert(record.conversions.end(), converted.record.conversions.begin(),
+                                      converted.record.conversions.end());
             reference = std::move(converted.frame);
         }
         record.output = reference.describe();
@@ -1226,8 +1338,8 @@ namespace lossylab
             const FrameResult decoded = roundtrip(reference, encode_options, decode_spec);
             const CompareResult compared = compare(reference, decoded.frame, {options.metric}, compare_options);
             const std::map<std::string, double>& values = compared.frames.front();
-            const double error =
-                options.metric == Metric::Psnr ? values.at("mse") : 1.0 - values.at("ssim");
+            const double measured = values.at(error_key(options.metric, options.planes));
+            const double error = options.metric == Metric::Psnr ? measured : 1.0 - measured;
             curve.points.push_back(RecompressionPoint{parameter, error, decoded.record.achieved_bpp.value_or(0.0)});
 
             // Every point converts the same way, so the first one speaks for all.
@@ -1268,7 +1380,10 @@ namespace lossylab
         record.params = json::object({
             {"codec", to_string(options.codec)},
             {"metric", to_string(options.metric)},
-            {"error", options.metric == Metric::Psnr ? "mse" : "1 - ssim"},
+            {"error", options.metric == Metric::Psnr ? error_key(options.metric, options.planes)
+                                                     : "1 - " + error_key(options.metric, options.planes)},
+            {"planes", to_string(options.planes)},
+            {"alpha", frame.pixel_format().has_alpha() && !pixel_format.has_alpha() ? "dropped" : "kept"},
             {"parameters", parameters},
             {"quality_scale", quality_scale},
             {"notch_depths", depths},

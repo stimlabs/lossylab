@@ -407,6 +407,25 @@ namespace lossylab
             return decoded;
         }
 
+        /// Fills the chroma siting a codec fixes but FFmpeg's decoder leaves
+        /// unspecified: lossy WebP's centered chroma (VP8, and libwebp's own
+        /// RGB conversions). Returns the color and records the change.
+        ColorSpec color_implied_by_codec(const ColorSpec& tagged, const std::string& decoder_name,
+                                         const PixelFormat& pixel_format, ConversionList& conversions)
+        {
+            ColorSpec color = tagged;
+            const bool subsampled = !pixel_format.is_rgb() && !pixel_format.is_gray() &&
+                                    pixel_format.subsampling() != Subsampling::Yuv444;
+            if ((decoder_name == "webp" || decoder_name == "libwebp") && subsampled &&
+                color.chroma_location == ChromaLocation::Unspecified)
+            {
+                color.chroma_location = ChromaLocation::Center;
+                conversions.push_back(ConversionEvent{"color_tags", tagged.describe(), color.describe(),
+                                                      ConversionCause::Requested, "codec_implied_color"});
+            }
+            return color;
+        }
+
         /// Fills the primaries and transfer a file left unspecified from its
         /// ICC profile, when the profile matches a pair the tags can name.
         /// Returns the color and records the change.
@@ -495,7 +514,9 @@ namespace lossylab
         // applied: first the embedded ICC profile, when it names a pair the
         // tags can express, then the caller's assumption.
         const ColorSpec tagged = frame.color();
-        const ColorSpec with_profile = color_with_icc_profile(tagged, icc_profile, record.conversions);
+        const ColorSpec with_codec = color_implied_by_codec(tagged, decoded.decoder_name, frame.pixel_format(),
+                                                            record.conversions);
+        const ColorSpec with_profile = color_with_icc_profile(with_codec, icc_profile, record.conversions);
         ColorSpec resolved = with_profile;
         if (!with_profile.is_fully_specified())
         {

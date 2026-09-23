@@ -30,7 +30,8 @@ namespace lossylab::pybind
             .value("AnimateStill", StageKind::AnimateStill)
             .value("Measure", StageKind::Measure)
             .value("Compare", StageKind::Compare)
-            .value("RecompressionCurve", StageKind::RecompressionCurve);
+            .value("RecompressionCurve", StageKind::RecompressionCurve)
+            .value("CompressionHistory", StageKind::CompressionHistory);
 
         nb::enum_<PictureType>(m, "PictureType")
             .value("Unknown", PictureType::Unknown)

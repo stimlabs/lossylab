@@ -2,8 +2,10 @@
 #include "bindings.hpp"
 #include "json_convert.hpp"
 
+#include "lossylab/measure/compression_history.hpp"
 #include "lossylab/measure/measure.hpp"
 
+#include <nanobind/stl/array.h>
 #include <nanobind/stl/map.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
@@ -69,21 +71,27 @@ namespace lossylab::pybind
               "reference"_a, "distorted"_a, "metrics"_a, "options"_a = CompareOptions{},
               nb::call_guard<nb::gil_scoped_release>());
 
-        bind_reflected_rw<RecompressionOptions>(m, "RecompressionOptions");
+        bind_reflected<RecompressionPoint>(m, "RecompressionPoint");
+        bind_reflected<RecompressionCurve>(m, "RecompressionCurve");
 
-        nb::class_<RecompressionPoint>(m, "RecompressionPoint")
-            .def_ro("quality_parameter", &RecompressionPoint::quality_parameter)
-            .def_ro("error", &RecompressionPoint::error)
-            .def_ro("bits_per_pixel", &RecompressionPoint::bits_per_pixel);
+        nb::enum_<ChromaUpsampling>(m, "ChromaUpsampling")
+            .value("Replicate", ChromaUpsampling::Replicate)
+            .value("Triangle", ChromaUpsampling::Triangle);
 
-        nb::class_<RecompressionCurve>(m, "RecompressionCurve")
-            .def_ro("points", &RecompressionCurve::points)
-            .def_ro("estimated_prior_parameter", &RecompressionCurve::estimated_prior_parameter)
-            .def_ro("confidence", &RecompressionCurve::confidence)
-            .def_ro("record", &RecompressionCurve::record)
-            .def("to_dict", [](const RecompressionCurve& self) { return to_python(self.to_json()); });
+        nb::enum_<TraceEvidence>(m, "TraceEvidence")
+            .value("JpegQuantization", TraceEvidence::JpegQuantization)
+            .value("ChromaSubsampling", TraceEvidence::ChromaSubsampling)
+            .value("Recompression", TraceEvidence::Recompression);
 
-        m.def("recompression_curve", &recompression_curve, "frame"_a, "options"_a,
+        bind_reflected<QuantizationEstimate>(m, "QuantizationEstimate");
+        bind_reflected<JpegQuantizationEvidence>(m, "JpegQuantizationEvidence");
+        bind_reflected<ChromaSubsamplingEvidence>(m, "ChromaSubsamplingEvidence");
+        bind_reflected<CompressionTrace>(m, "CompressionTrace");
+        bind_reflected_rw<CompressionHistoryOptions>(m, "CompressionHistoryOptions");
+
+        bind_reflected<CompressionHistory>(m, "CompressionHistory");
+
+        m.def("compression_history", &compression_history, "frame"_a, "options"_a = CompressionHistoryOptions{},
               nb::call_guard<nb::gil_scoped_release>());
     }
 }
