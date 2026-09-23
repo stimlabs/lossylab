@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lossylab/core/json.hpp"
+#include "lossylab/core/reflect.hpp"
 
 #include <string>
 
@@ -39,4 +40,6 @@ namespace lossylab
     {
         return !(left == right);
     }
+
+    LOSSYLAB_REFLECT(Rational, num, den);
 }

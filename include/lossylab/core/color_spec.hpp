@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lossylab/core/json.hpp"
+#include "lossylab/core/reflect.hpp"
 
 #include <string>
 #include <string_view>
@@ -159,4 +160,6 @@ namespace lossylab
     {
         return !(left == right);
     }
+
+    LOSSYLAB_REFLECT(ColorSpec, matrix, range, primaries, transfer, chroma_location);
 }

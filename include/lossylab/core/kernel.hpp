@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lossylab/core/json.hpp"
+#include "lossylab/core/reflect.hpp"
 
 #include <optional>
 #include <string>
@@ -55,6 +56,8 @@ namespace lossylab
         return !(left == right);
     }
 
+    LOSSYLAB_REFLECT(KernelParams, param_a, param_b);
+
     /// A kernel together with its parameters.
     struct KernelSpec
     {
@@ -65,4 +68,6 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
         static KernelSpec from_json(const json::Value& value);
     };
+
+    LOSSYLAB_REFLECT(KernelSpec, kernel, params);
 }

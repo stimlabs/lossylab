@@ -1,3 +1,4 @@
+#include "bind_reflected.hpp"
 #include "bindings.hpp"
 #include "json_convert.hpp"
 
@@ -99,13 +100,7 @@ namespace lossylab::pybind
             .value("BottomLeft", ChromaLocation::BottomLeft)
             .value("Bottom", ChromaLocation::Bottom);
 
-        auto color_spec = nb::class_<ColorSpec>(m, "ColorSpec")
-            .def(nb::init<>())
-            .def_rw("matrix", &ColorSpec::matrix)
-            .def_rw("range", &ColorSpec::range)
-            .def_rw("primaries", &ColorSpec::primaries)
-            .def_rw("transfer", &ColorSpec::transfer)
-            .def_rw("chroma_location", &ColorSpec::chroma_location)
+        bind_reflected_rw<ColorSpec>(m, "ColorSpec")
             .def_static("bt709_limited", &ColorSpec::bt709_limited)
             .def_static("bt709_full", &ColorSpec::bt709_full)
             .def_static("bt601_limited", &ColorSpec::bt601_limited)
@@ -122,8 +117,8 @@ namespace lossylab::pybind
             .def("is_rgb", &ColorSpec::is_rgb)
             .def("describe", &ColorSpec::describe)
             .def(nb::self == nb::self)
-            .def(nb::self != nb::self);
-        bind_json_methods(color_spec);
+            .def(nb::self != nb::self)
+            .def_static("from_dict", [](nb::dict value) { return ColorSpec::from_json(to_json(value)); });
 
         // ---- pixel_format.hpp ------------------------------------------------
         nb::enum_<Subsampling>(m, "Subsampling")
@@ -192,28 +187,19 @@ namespace lossylab::pybind
             .value("Spline", Kernel::Spline)
             .value("Bicublin", Kernel::Bicublin);
 
-        auto kernel_params = nb::class_<KernelParams>(m, "KernelParams")
-            .def(nb::init<>())
-            .def_rw("param_a", &KernelParams::param_a)
-            .def_rw("param_b", &KernelParams::param_b)
+        bind_reflected_rw<KernelParams>(m, "KernelParams")
             .def(nb::self == nb::self)
-            .def(nb::self != nb::self);
-        bind_json_methods(kernel_params);
+            .def(nb::self != nb::self)
+            .def_static("from_dict", [](nb::dict value) { return KernelParams::from_json(to_json(value)); });
 
-        auto kernel_spec = nb::class_<KernelSpec>(m, "KernelSpec")
-            .def(nb::init<>())
+        bind_reflected_rw<KernelSpec>(m, "KernelSpec")
             .def(nb::init<Kernel, KernelParams>(), "kernel"_a, "params"_a = KernelParams{})
-            .def_rw("kernel", &KernelSpec::kernel)
-            .def_rw("params", &KernelSpec::params)
-            .def("describe", &KernelSpec::describe);
-        bind_json_methods(kernel_spec);
+            .def("describe", &KernelSpec::describe)
+            .def_static("from_dict", [](nb::dict value) { return KernelSpec::from_json(to_json(value)); });
 
         // ---- rational.hpp --------------------------------------------------
-        auto rational = nb::class_<Rational>(m, "Rational")
-            .def(nb::init<>())
+        bind_reflected_rw<Rational>(m, "Rational")
             .def(nb::init<int, int>(), "num"_a, "den"_a)
-            .def_rw("num", &Rational::num)
-            .def_rw("den", &Rational::den)
             .def("to_double", &Rational::to_double)
             .def("is_valid", &Rational::is_valid)
             .def("reduced", &Rational::reduced)
@@ -221,24 +207,15 @@ namespace lossylab::pybind
             .def("to_string", &Rational::to_string)
             .def_static("parse", &Rational::parse, "text"_a)
             .def(nb::self == nb::self)
-            .def(nb::self != nb::self);
-        bind_json_methods(rational);
+            .def(nb::self != nb::self)
+            .def_static("from_dict", [](nb::dict value) { return Rational::from_json(to_json(value)); });
 
         // ---- geometry.hpp --------------------------------------------------
-        nb::class_<Point>(m, "Point")
-            .def(nb::init<>())
-            .def(nb::init<double, double>(), "x"_a, "y"_a)
-            .def_rw("x", &Point::x)
-            .def_rw("y", &Point::y);
+        bind_reflected_rw<Point>(m, "Point").def(nb::init<double, double>(), "x"_a, "y"_a);
 
-        auto rect = nb::class_<Rect>(m, "Rect")
-            .def(nb::init<>())
+        bind_reflected_rw<Rect>(m, "Rect")
             .def(nb::init<double, double, double, double>(), "x"_a, "y"_a, "width"_a, "height"_a)
-            .def_rw("x", &Rect::x)
-            .def_rw("y", &Rect::y)
-            .def_rw("width", &Rect::width)
-            .def_rw("height", &Rect::height);
-        bind_json_methods(rect);
+            .def_static("from_dict", [](nb::dict value) { return Rect::from_json(to_json(value)); });
 
         auto coordinate_transform = nb::class_<CoordinateTransform>(m, "CoordinateTransform")
             .def(nb::init<>())
@@ -278,20 +255,13 @@ namespace lossylab::pybind
             .value("Ctu32", BlockGridKind::Ctu32)
             .value("Ctu64", BlockGridKind::Ctu64);
 
-        auto block_grid = nb::class_<BlockGrid>(m, "BlockGrid")
-            .def(nb::init<>())
-            .def_rw("kind", &BlockGrid::kind)
-            .def_rw("block_width", &BlockGrid::block_width)
-            .def_rw("block_height", &BlockGrid::block_height)
-            .def_rw("phase_x", &BlockGrid::phase_x)
-            .def_rw("phase_y", &BlockGrid::phase_y)
-            .def_rw("valid", &BlockGrid::valid)
+        bind_reflected_rw<BlockGrid>(m, "BlockGrid")
             .def_static("for_kind", &BlockGrid::for_kind, "kind"_a)
             .def("apply_transform", &BlockGrid::apply_transform, "transform"_a)
             .def("is_block_origin", &BlockGrid::is_block_origin, "x"_a, "y"_a)
             .def(nb::self == nb::self)
-            .def(nb::self != nb::self);
-        bind_json_methods(block_grid);
+            .def(nb::self != nb::self)
+            .def_static("from_dict", [](nb::dict value) { return BlockGrid::from_json(to_json(value)); });
 
         // ---- codec_id.hpp --------------------------------------------------
         // Bound because capabilities()'s select_encoder/select_decoder/require_*
