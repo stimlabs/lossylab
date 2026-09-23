@@ -1,3 +1,4 @@
+#include "bind_reflected.hpp"
 #include "bindings.hpp"
 #include "json_convert.hpp"
 
@@ -37,52 +38,16 @@ namespace lossylab::pybind
             .value("P", PictureType::P)
             .value("B", PictureType::B);
 
-        nb::class_<FormatDescription>(m, "FormatDescription")
-            .def(nb::init<>())
-            .def_rw("width", &FormatDescription::width)
-            .def_rw("height", &FormatDescription::height)
-            .def_rw("pixel_format", &FormatDescription::pixel_format)
-            .def_rw("color", &FormatDescription::color)
+        bind_reflected_rw<FormatDescription>(m, "FormatDescription")
             .def(nb::self == nb::self)
             .def(nb::self != nb::self)
-            .def("to_dict", [](const FormatDescription& self) { return to_python(self.to_json()); })
             .def_static("from_dict",
                         [](nb::dict value) { return FormatDescription::from_json(to_json(value)); });
 
-        nb::class_<FrameStats>(m, "FrameStats")
-            .def(nb::init<>())
-            .def_rw("index", &FrameStats::index)
-            .def_rw("pts", &FrameStats::pts)
-            .def_rw("picture_type", &FrameStats::picture_type)
-            .def_rw("key_frame", &FrameStats::key_frame)
-            .def_rw("size_bytes", &FrameStats::size_bytes)
-            .def_rw("qp_min", &FrameStats::qp_min)
-            .def_rw("qp_max", &FrameStats::qp_max)
-            .def_rw("qp_mean", &FrameStats::qp_mean)
-            .def("to_dict", [](const FrameStats& self) { return to_python(self.to_json()); })
+        bind_reflected_rw<FrameStats>(m, "FrameStats")
             .def_static("from_dict", [](nb::dict value) { return FrameStats::from_json(to_json(value)); });
 
-        nb::class_<StageRecord>(m, "StageRecord")
-            .def(nb::init<>())
-            .def_rw("kind", &StageRecord::kind)
-            .def_rw("implementation", &StageRecord::implementation)
-            .def_prop_rw(
-                "params", [](const StageRecord& self) { return to_python(self.params); },
-                [](StageRecord& self, nb::object value) { self.params = to_json(value); })
-            .def_rw("input", &StageRecord::input)
-            .def_rw("output", &StageRecord::output)
-            .def_rw("conversions", &StageRecord::conversions)
-            .def_rw("transform", &StageRecord::transform)
-            .def_rw("block_grid", &StageRecord::block_grid)
-            .def_rw("frames", &StageRecord::frames)
-            .def_prop_rw(
-                "encoder_settings", [](const StageRecord& self) { return to_python(self.encoder_settings); },
-                [](StageRecord& self, nb::object value) { self.encoder_settings = to_json(value); })
-            .def_rw("achieved_bpp", &StageRecord::achieved_bpp)
-            .def_rw("seed", &StageRecord::seed)
-            .def_rw("reproducible", &StageRecord::reproducible)
-            .def_rw("duration_ms", &StageRecord::duration_ms)
-            .def("to_dict", [](const StageRecord& self) { return to_python(self.to_json()); })
+        bind_reflected_rw<StageRecord>(m, "StageRecord")
             .def_static("from_dict", [](nb::dict value) { return StageRecord::from_json(to_json(value)); });
 
         nb::class_<ProcessingRecord>(m, "ProcessingRecord")

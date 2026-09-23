@@ -51,10 +51,15 @@ namespace lossylab::pybind
     /// T has a to_json(), to_dict() is added automatically; a caller whose
     /// to_json() adds extra keys (e.g. schema_version) can still bind its own
     /// to_dict afterward, overriding this one.
+    ///
+    /// `scope` is a module for a top-level type, or an outer nb::class_ for a
+    /// type nested inside another bound class (e.g. IccProfileInfo::Colorants
+    /// under IccProfileInfo), since nanobind's own class_ constructor accepts
+    /// either as its scope.
     template <typename T>
-    nb::class_<T> bind_reflected(nb::module_& m, const char* name)
+    nb::class_<T> bind_reflected(nb::handle scope, const char* name)
     {
-        nb::class_<T> cls(m, name);
+        nb::class_<T> cls(scope, name);
         std::apply([&](const auto&... fields) { (detail::bind_reflected_field(cls, fields), ...); },
                    reflect::Fields<T>::members);
         if constexpr (json::Writable<T>)

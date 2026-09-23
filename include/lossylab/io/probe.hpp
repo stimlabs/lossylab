@@ -162,6 +162,10 @@ namespace lossylab
                       ijg_quality_exact, huffman_tables, restart_interval, scan_count, segments, comment,
                       adobe_transform, has_end_of_image, trailing_bytes);
 
+    LOSSYLAB_REFLECT(JpegInfo::Component, id, horizontal_sampling, vertical_sampling, quantization_table);
+    LOSSYLAB_REFLECT(JpegInfo::QuantizationTable, id, precision, values);
+    LOSSYLAB_REFLECT(JpegInfo::Segment, marker, identifier, size_bytes);
+
     /// One stream's properties, as the container and codec parameters describe
     /// them. Nothing here required decoding a single frame.
     struct StreamInfo
@@ -364,6 +368,8 @@ namespace lossylab
     LOSSYLAB_REFLECT(TileGrid, id, is_primary, title, width, height, coded_width, coded_height, orientation,
                       icc_profile, tiles);
 
+    LOSSYLAB_REFLECT(TileGrid::Tile, stream_index, x, y);
+
     /// What `probe` found.
     ///
     /// The first thing an audit looks at, and the thing that says what decoding
@@ -438,6 +444,8 @@ namespace lossylab
 
     LOSSYLAB_REFLECT(ProbeResult, format_name, format_long_name, duration_us, bit_rate, size_bytes, streams,
                       tile_grids, metadata, major_brand, compatible_brands, claimed_extension, format_mismatch);
+
+    LOSSYLAB_REFLECT(ProbeResult::AdditionalImages, stream_indices, tile_grid_ids);
 
     /// Reads container and stream properties without decoding.
     ///

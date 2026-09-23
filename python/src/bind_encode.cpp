@@ -48,41 +48,23 @@ namespace lossylab::pybind
             .def("to_dict", [](const RateControl& self) { return to_python(self.to_json()); })
             .def_static("from_dict", [](nb::dict value) { return RateControl::from_json(to_json(value)); });
 
-        nb::class_<GopStructure>(m, "GopStructure")
-            .def(nb::init<>())
-            .def_rw("keyframe_interval", &GopStructure::keyframe_interval)
-            .def_rw("b_frames", &GopStructure::b_frames)
-            .def_rw("scene_change_detection", &GopStructure::scene_change_detection)
-            .def_rw("b_pyramid", &GopStructure::b_pyramid)
-            .def_rw("closed_gop", &GopStructure::closed_gop)
+        bind_reflected_rw<GopStructure>(m, "GopStructure")
             .def_static("intra_only", &GopStructure::intra_only)
-            .def("to_dict", [](const GopStructure& self) { return to_python(self.to_json()); })
             .def_static("from_dict", [](nb::dict value) { return GopStructure::from_json(to_json(value)); });
 
         bind_reflected_rw<EncodeVideoOptions>(m, "EncodeVideoOptions");
 
         bind_reflected_rw<EncodeImageOptions>(m, "EncodeImageOptions");
 
-        nb::class_<DecodeSpec>(m, "DecodeSpec")
-            .def(nb::init<>())
-            .def_rw("pixel_format", &DecodeSpec::pixel_format)
-            .def_rw("color", &DecodeSpec::color)
-            .def_rw("thread_count", &DecodeSpec::thread_count)
-            .def_rw("strict", &DecodeSpec::strict);
+        bind_reflected_rw<DecodeSpec>(m, "DecodeSpec");
 
-        auto target = nb::class_<EncodeTarget>(m, "EncodeTarget");
+        auto target = bind_reflected_rw<EncodeTarget>(m, "EncodeTarget");
         nb::enum_<EncodeTarget::Kind>(target, "Kind")
             .value("BitsPerPixel", EncodeTarget::Kind::BitsPerPixel)
             .value("Psnr", EncodeTarget::Kind::Psnr)
             .value("Ssim", EncodeTarget::Kind::Ssim)
             .value("Vmaf", EncodeTarget::Kind::Vmaf);
-        target.def(nb::init<>())
-            .def_rw("kind", &EncodeTarget::kind)
-            .def_rw("value", &EncodeTarget::value)
-            .def_rw("tolerance", &EncodeTarget::tolerance)
-            .def_rw("max_iterations", &EncodeTarget::max_iterations)
-            .def("describe", &EncodeTarget::describe)
-            .def("to_dict", [](const EncodeTarget& self) { return to_python(self.to_json()); })
+        target.def("describe", &EncodeTarget::describe)
             .def_static("from_dict", [](nb::dict value) { return EncodeTarget::from_json(to_json(value)); });
 
         nb::class_<EncodedResult>(m, "EncodedResult")

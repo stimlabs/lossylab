@@ -127,6 +127,8 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
     };
 
+    LOSSYLAB_REFLECT(IccProfileInfo::Colorants, red, green, blue, white);
+
     LOSSYLAB_REFLECT(IccProfileInfo, size_bytes, version, device_class, data_color_space, connection_space,
                       preferred_cmm, creator, profile_id, profile_id_embedded, description, copyright,
                       is_matrix_shaper, has_lookup_table, colorants, transfer_curve, gamma, primaries, transfer,

@@ -4,6 +4,7 @@
 #include "lossylab/core/geometry.hpp"
 #include "lossylab/core/json.hpp"
 #include "lossylab/core/pixel_format.hpp"
+#include "lossylab/core/reflect.hpp"
 #include "lossylab/core/strict.hpp"
 
 #include <cstdint>
@@ -71,6 +72,8 @@ namespace lossylab
         return !(left == right);
     }
 
+    LOSSYLAB_REFLECT(FormatDescription, width, height, pixel_format, color);
+
     /// Per-frame statistics from an encode or a decode.
     struct FrameStats
     {
@@ -92,6 +95,8 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
         static FrameStats from_json(const json::Value& value);
     };
+
+    LOSSYLAB_REFLECT(FrameStats, index, pts, picture_type, key_frame, size_bytes, qp_min, qp_max, qp_mean);
 
     /// What one operation did.
     ///
@@ -147,6 +152,9 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
         static StageRecord from_json(const json::Value& value);
     };
+
+    LOSSYLAB_REFLECT(StageRecord, kind, implementation, params, input, output, conversions, transform, block_grid,
+                      frames, encoder_settings, achieved_bpp, seed, reproducible, duration_ms);
 
     /// The processing history of a frame or clip: every stage, in order.
     ///

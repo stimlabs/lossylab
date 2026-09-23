@@ -122,6 +122,8 @@ namespace lossylab
         static GopStructure intra_only() noexcept;
     };
 
+    LOSSYLAB_REFLECT(GopStructure, keyframe_interval, b_frames, scene_change_detection, b_pyramid, closed_gop);
+
     struct EncodeVideoOptions
     {
         VideoCodec codec = VideoCodec::H264;
@@ -234,6 +236,8 @@ namespace lossylab
         Strict strict = Strict::Refuse;
     };
 
+    LOSSYLAB_REFLECT(DecodeSpec, pixel_format, color, thread_count, strict);
+
     /// Encode then decode, entirely in memory.
     ///
     /// The common augmentation case: no files, and no trip out to NumPy between
@@ -276,6 +280,8 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
         static EncodeTarget from_json(const json::Value& value);
     };
+
+    LOSSYLAB_REFLECT(EncodeTarget, kind, value, tolerance, max_iterations);
 
     /// The outcome of a search, including whether it converged.
     struct EncodeToTargetResult

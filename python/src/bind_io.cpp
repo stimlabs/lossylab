@@ -53,15 +53,11 @@ namespace lossylab::pybind
         // ---- icc_profile.hpp --------------------------------------------------
         bind_reflected<Chromaticity>(m, "Chromaticity");
 
-        // Colorants is a nested Python class (scoped under IccProfileInfo, not the
-        // module), so it stays hand-written: bind_reflected only binds at module scope.
+        // Colorants is a nested Python class, scoped under IccProfileInfo rather than
+        // the module; bind_reflected takes any nb::handle scope, so this works the
+        // same as a top-level type.
         auto icc_profile_info = bind_reflected<IccProfileInfo>(m, "IccProfileInfo");
-        nb::class_<IccProfileInfo::Colorants>(icc_profile_info, "Colorants")
-            .def_ro("red", &IccProfileInfo::Colorants::red)
-            .def_ro("green", &IccProfileInfo::Colorants::green)
-            .def_ro("blue", &IccProfileInfo::Colorants::blue)
-            .def_ro("white", &IccProfileInfo::Colorants::white)
-            .def("to_dict", [](const IccProfileInfo::Colorants& self) { return to_python(self.to_json()); });
+        bind_reflected<IccProfileInfo::Colorants>(icc_profile_info, "Colorants");
         icc_profile_info.def("is_expressible_as_tags", &IccProfileInfo::is_expressible_as_tags)
             .def("agrees_with", &IccProfileInfo::agrees_with, "tagged"_a);
 
@@ -77,39 +73,22 @@ namespace lossylab::pybind
         // ---- probe.hpp --------------------------------------------------
         bind_reflected<ImageContainerInfo>(m, "ImageContainerInfo");
 
-        // Component/QuantizationTable/Segment are nested Python classes (scoped under
-        // JpegInfo, not the module), so they stay hand-written.
+        // Component/QuantizationTable/Segment are nested Python classes, scoped under
+        // JpegInfo rather than the module; bind_reflected takes any nb::handle scope.
         auto jpeg_info = bind_reflected<JpegInfo>(m, "JpegInfo");
-        nb::class_<JpegInfo::Component>(jpeg_info, "Component")
-            .def_ro("id", &JpegInfo::Component::id)
-            .def_ro("horizontal_sampling", &JpegInfo::Component::horizontal_sampling)
-            .def_ro("vertical_sampling", &JpegInfo::Component::vertical_sampling)
-            .def_ro("quantization_table", &JpegInfo::Component::quantization_table);
-        nb::class_<JpegInfo::QuantizationTable>(jpeg_info, "QuantizationTable")
-            .def_ro("id", &JpegInfo::QuantizationTable::id)
-            .def_ro("precision", &JpegInfo::QuantizationTable::precision)
-            .def_ro("values", &JpegInfo::QuantizationTable::values);
-        nb::class_<JpegInfo::Segment>(jpeg_info, "Segment")
-            .def_ro("marker", &JpegInfo::Segment::marker)
-            .def_ro("identifier", &JpegInfo::Segment::identifier)
-            .def_ro("size_bytes", &JpegInfo::Segment::size_bytes);
+        bind_reflected<JpegInfo::Component>(jpeg_info, "Component");
+        bind_reflected<JpegInfo::QuantizationTable>(jpeg_info, "QuantizationTable");
+        bind_reflected<JpegInfo::Segment>(jpeg_info, "Segment");
 
         bind_reflected<StreamInfo>(m, "StreamInfo");
 
-        // Tile is a nested Python class (scoped under TileGrid, not the module), so it
-        // stays hand-written.
+        // Tile is a nested Python class, scoped under TileGrid.
         auto tile_grid = bind_reflected<TileGrid>(m, "TileGrid");
-        nb::class_<TileGrid::Tile>(tile_grid, "Tile")
-            .def_ro("stream_index", &TileGrid::Tile::stream_index)
-            .def_ro("x", &TileGrid::Tile::x)
-            .def_ro("y", &TileGrid::Tile::y);
+        bind_reflected<TileGrid::Tile>(tile_grid, "Tile");
 
-        // AdditionalImages is a nested Python class (scoped under ProbeResult, not the
-        // module), so it stays hand-written.
+        // AdditionalImages is a nested Python class, scoped under ProbeResult.
         auto probe_result = bind_reflected<ProbeResult>(m, "ProbeResult");
-        nb::class_<ProbeResult::AdditionalImages>(probe_result, "AdditionalImages")
-            .def_ro("stream_indices", &ProbeResult::AdditionalImages::stream_indices)
-            .def_ro("tile_grid_ids", &ProbeResult::AdditionalImages::tile_grid_ids);
+        bind_reflected<ProbeResult::AdditionalImages>(probe_result, "AdditionalImages");
         probe_result.def("encoder_string", &ProbeResult::encoder_string)
             .def("primary_video_stream", &ProbeResult::primary_video_stream, nb::rv_policy::reference_internal)
             .def("primary_tile_grid", &ProbeResult::primary_tile_grid, nb::rv_policy::reference_internal)
