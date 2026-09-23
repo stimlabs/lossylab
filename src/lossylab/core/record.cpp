@@ -25,6 +25,7 @@ namespace lossylab
         case StageKind::AnimateStill: return "animate_still";
         case StageKind::Measure: return "measure";
         case StageKind::Compare: return "compare";
+        case StageKind::RecompressionCurve: return "recompression_curve";
         }
         return "unknown";
     }
@@ -44,6 +45,7 @@ namespace lossylab
         if (name == "animate_still") { return StageKind::AnimateStill; }
         if (name == "measure") { return StageKind::Measure; }
         if (name == "compare") { return StageKind::Compare; }
+        if (name == "recompression_curve") { return StageKind::RecompressionCurve; }
         throw ConfigError("unknown stage kind '" + std::string(name) + "'");
     }
 

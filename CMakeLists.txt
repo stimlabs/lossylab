@@ -80,6 +80,8 @@ add_library(lossylab STATIC
         src/lossylab/resample/resize.cpp
         src/lossylab/filter/filter_graph.cpp
         src/lossylab/codec/encode.cpp
+        src/lossylab/codec/encoder_plans.cpp
+        src/lossylab/codec/encoder_session.cpp
         src/lossylab/motion/animate_still.cpp
         src/lossylab/measure/measure.cpp
         src/lossylab/pipeline/pipeline.cpp
@@ -116,6 +118,7 @@ if(BUILD_PYTHON_BINDINGS)
             python/src/bind_io.cpp
             python/src/bind_video_reader.cpp
             python/src/bind_measure.cpp
+            python/src/bind_encode.cpp
             python/src/bind_file_result.cpp
             python/src/bind_convert.cpp
     )

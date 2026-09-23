@@ -61,7 +61,8 @@ namespace
         }
         for (const ImageCodec codec : all_image_codecs())
         {
-            assert(!encoder_candidates(codec).empty());
+            // FFmpeg has no HEIF muxer, so no encoder can write a HEIF file.
+            assert(encoder_candidates(codec).empty() == (codec == ImageCodec::Heif));
             assert(!decoder_candidates(codec).empty());
         }
     }

@@ -248,7 +248,7 @@ namespace
             StageKind::Decode, StageKind::Probe, StageKind::Convert, StageKind::ChromaRoundtrip,
             StageKind::Reinterpret, StageKind::Resize, StageKind::Filter, StageKind::EncodeImage,
             StageKind::EncodeVideo, StageKind::Roundtrip, StageKind::AnimateStill,
-            StageKind::Measure, StageKind::Compare,
+            StageKind::Measure, StageKind::Compare, StageKind::RecompressionCurve,
         };
         for (const StageKind kind : kinds)
         {

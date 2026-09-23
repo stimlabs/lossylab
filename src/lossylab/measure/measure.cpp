@@ -1,5 +1,6 @@
 #include "lossylab/measure/measure.hpp"
 
+#include "lossylab/codec/encode.hpp"
 #include "lossylab/convert/convert.hpp"
 #include "lossylab/core/error.hpp"
 #include "lossylab/core/json_io.hpp"
@@ -20,6 +21,7 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -206,9 +208,8 @@ namespace lossylab
             return cost;
         }
 
-        PixelFormat nearest_measurable_format(const Analyzer analyzer, const PixelFormat& from)
+        PixelFormat nearest_format(const std::vector<PixelFormat>& formats, const PixelFormat& from)
         {
-            const std::vector<PixelFormat>& formats = measurable_formats(analyzer);
             return *std::min_element(formats.begin(), formats.end(),
                                      [&from](const PixelFormat& left, const PixelFormat& right)
                                      { return conversion_cost(from, left) < conversion_cost(from, right); });
@@ -227,14 +228,15 @@ namespace lossylab
             return target;
         }
 
-        /// The frames each analyzer measures: the originals when it accepts
-        /// their format, and otherwise the originals converted to the nearest
-        /// format it does accept, converted once per target format.
+        /// The frames each analyzer or metric measures: the originals when it
+        /// accepts their format, and otherwise the originals converted to the
+        /// nearest format it does accept, converted once per target format.
         class MeasuredFrames
         {
         public:
-            MeasuredFrames(const std::vector<Frame>& frames, const Strict strict, ConversionList& conversions)
-                : m_frames(frames), m_strict(strict), m_conversions(conversions)
+            MeasuredFrames(const std::vector<Frame>& frames, const Strict strict, ConversionList& conversions,
+                           std::string operation)
+                : m_frames(frames), m_strict(strict), m_conversions(conversions), m_operation(std::move(operation))
             {
             }
 
@@ -245,15 +247,33 @@ namespace lossylab
                 {
                     return m_frames;
                 }
+                const std::string measured_by =
+                    analyzer == Analyzer::Noise ? std::string("the noise estimator") : filter_for(analyzer);
+                return in_format(nearest_format(measurable_formats(analyzer), source_format),
+                                 measured_by + " for " + to_string(analyzer));
+            }
 
-                const PixelFormat target_format = nearest_measurable_format(analyzer, source_format);
+            /// The frames in one of `formats`, which `measured_by` accepts.
+            const std::vector<Frame>& in_one_of(const std::vector<PixelFormat>& formats,
+                                                const std::string& measured_by)
+            {
+                const PixelFormat source_format = m_frames.front().pixel_format();
+                if (std::find(formats.begin(), formats.end(), source_format) != formats.end())
+                {
+                    return m_frames;
+                }
+                return in_format(nearest_format(formats, source_format), measured_by);
+            }
+
+        private:
+            const std::vector<Frame>& in_format(const PixelFormat& target_format, const std::string& measured_by)
+            {
+                const PixelFormat source_format = m_frames.front().pixel_format();
                 if (m_strict == Strict::Refuse)
                 {
-                    const std::string measured_by =
-                        analyzer == Analyzer::Noise ? std::string("the noise estimator") : filter_for(analyzer);
                     throw ConversionRefused("pix_fmt " + source_format.name(), "pix_fmt " + target_format.name(),
-                                            "measure(): " + measured_by + " for " + to_string(analyzer) +
-                                                " does not accept " + source_format.name());
+                                            m_operation + ": " + measured_by + " does not accept " +
+                                                source_format.name());
                 }
 
                 const auto [converted, inserted] = m_converted.try_emplace(target_format.name());
@@ -278,14 +298,48 @@ namespace lossylab
                 return converted->second;
             }
 
-        private:
             const std::vector<Frame>& m_frames;
             Strict m_strict;
             ConversionList& m_conversions;
+            std::string m_operation;
             std::map<std::string, std::vector<Frame>> m_converted;
         };
 
         using FrameMetadata = std::map<std::string, std::string>;
+
+        /// A buffer source taking frames shaped like `first_frame`.
+        AVFilterContext* make_buffer_source(AVFilterGraph& graph, const Frame& first_frame, const char* name)
+        {
+            const AVFrame& raw = *first_frame.raw();
+            AVFilterContext* source =
+                LL_FF_ALLOC(avfilter_graph_alloc_filter(&graph, avfilter_get_by_name("buffer"), name));
+            const detail::AvBufferPtr parameters_owner(LL_FF_ALLOC(av_buffersrc_parameters_alloc()));
+            auto* parameters = static_cast<AVBufferSrcParameters*>(parameters_owner.get());
+            parameters->format = raw.format;
+            parameters->width = raw.width;
+            parameters->height = raw.height;
+            parameters->time_base = AVRational{1, 25};
+            parameters->sample_aspect_ratio =
+                raw.sample_aspect_ratio.num > 0 ? raw.sample_aspect_ratio : AVRational{1, 1};
+            parameters->color_space = raw.colorspace;
+            parameters->color_range = raw.color_range;
+            parameters->alpha_mode = raw.alpha_mode;
+            LL_FF_CHECK(av_buffersrc_parameters_set(source, parameters));
+            LL_FF_CHECK(avfilter_init_str(source, nullptr));
+            return source;
+        }
+
+        /// Copies the metadata a filter attached to a frame.
+        FrameMetadata metadata_of(const AVFrame& frame)
+        {
+            FrameMetadata entries;
+            const AVDictionaryEntry* entry = nullptr;
+            while ((entry = av_dict_iterate(frame.metadata, entry)) != nullptr)
+            {
+                entries.emplace(entry->key, entry->value);
+            }
+            return entries;
+        }
 
         /// One analyzer filter between a buffer source and a buffer sink, with
         /// automatic format conversion off, one thread, and the filter's own
@@ -299,23 +353,7 @@ namespace lossylab
             {
                 m_graph->nb_threads = 1;
                 avfilter_graph_set_auto_convert(m_graph.get(), AVFILTER_AUTO_CONVERT_NONE);
-
-                const AVFrame& raw = *first_frame.raw();
-                m_source =
-                    LL_FF_ALLOC(avfilter_graph_alloc_filter(m_graph.get(), avfilter_get_by_name("buffer"), "in"));
-                const detail::AvBufferPtr parameters_owner(LL_FF_ALLOC(av_buffersrc_parameters_alloc()));
-                auto* parameters = static_cast<AVBufferSrcParameters*>(parameters_owner.get());
-                parameters->format = raw.format;
-                parameters->width = raw.width;
-                parameters->height = raw.height;
-                parameters->time_base = AVRational{1, 25};
-                parameters->sample_aspect_ratio =
-                    raw.sample_aspect_ratio.num > 0 ? raw.sample_aspect_ratio : AVRational{1, 1};
-                parameters->color_space = raw.colorspace;
-                parameters->color_range = raw.color_range;
-                parameters->alpha_mode = raw.alpha_mode;
-                LL_FF_CHECK(av_buffersrc_parameters_set(m_source, parameters));
-                LL_FF_CHECK(avfilter_init_str(m_source, nullptr));
+                m_source = make_buffer_source(*m_graph, first_frame, "in");
 
                 AVFilterContext* analyzer = LL_FF_ALLOC(avfilter_graph_alloc_filter(
                     m_graph.get(), avfilter_get_by_name(filter_name.c_str()), "analyzer"));
@@ -349,12 +387,7 @@ namespace lossylab
                             return;
                         }
                         LL_FF_CHECK(status);
-                        FrameMetadata& entries = metadata.emplace_back();
-                        const AVDictionaryEntry* entry = nullptr;
-                        while ((entry = av_dict_iterate(filtered->metadata, entry)) != nullptr)
-                        {
-                            entries.emplace(entry->key, entry->value);
-                        }
+                        metadata.push_back(metadata_of(*filtered));
                         av_frame_unref(filtered.get());
                     }
                 };
@@ -386,6 +419,136 @@ namespace lossylab
             AVFilterContext* m_sink = nullptr;
         };
 
+        /// A full-reference metric filter fed the distorted frames on its main
+        /// input and the reference frames on its second, between buffer
+        /// sources and a buffer sink, set up as AnalyzerGraph is.
+        class MetricGraph
+        {
+        public:
+            MetricGraph(const Frame& first_reference, const Frame& first_distorted, const std::string& filter_name)
+                : m_graph(detail::make_filter_graph())
+            {
+                m_graph->nb_threads = 1;
+                avfilter_graph_set_auto_convert(m_graph.get(), AVFILTER_AUTO_CONVERT_NONE);
+                m_distorted_source = make_buffer_source(*m_graph, first_distorted, "distorted");
+                m_reference_source = make_buffer_source(*m_graph, first_reference, "reference");
+
+                AVFilterContext* metric = LL_FF_ALLOC(avfilter_graph_alloc_filter(
+                    m_graph.get(), avfilter_get_by_name(filter_name.c_str()), "metric"));
+                m_log_capture.emplace(metric, [](const int level, const char*, va_list)
+                                      { return level >= AV_LOG_INFO; });
+                LL_FF_CHECK(avfilter_init_str(metric, nullptr));
+
+                m_sink = LL_FF_ALLOC(avfilter_graph_alloc_filter(m_graph.get(), avfilter_get_by_name("buffersink"),
+                                                                 "out"));
+                LL_FF_CHECK(avfilter_init_str(m_sink, nullptr));
+
+                LL_FF_CHECK(avfilter_link(m_distorted_source, 0, metric, 0));
+                LL_FF_CHECK(avfilter_link(m_reference_source, 0, metric, 1));
+                LL_FF_CHECK(avfilter_link(metric, 0, m_sink, 0));
+                LL_FF_CHECK(avfilter_graph_config(m_graph.get(), nullptr));
+            }
+
+            /// The metadata the filter attached to each distorted frame, in
+            /// order.
+            std::vector<FrameMetadata> run(const std::vector<Frame>& reference, const std::vector<Frame>& distorted)
+            {
+                std::vector<FrameMetadata> metadata;
+                metadata.reserve(distorted.size());
+                const detail::FramePtr filtered = detail::make_frame();
+
+                const auto drain = [&]
+                {
+                    while (true)
+                    {
+                        const int status = av_buffersink_get_frame(m_sink, filtered.get());
+                        if (status == AVERROR(EAGAIN) || status == AVERROR_EOF)
+                        {
+                            return;
+                        }
+                        LL_FF_CHECK(status);
+                        metadata.push_back(metadata_of(*filtered));
+                        av_frame_unref(filtered.get());
+                    }
+                };
+
+                for (std::size_t index = 0; index < distorted.size(); ++index)
+                {
+                    const detail::FramePtr reference_input = detail::ref_frame(reference[index].raw());
+                    const detail::FramePtr distorted_input = detail::ref_frame(distorted[index].raw());
+                    reference_input->pts = static_cast<std::int64_t>(index);
+                    distorted_input->pts = static_cast<std::int64_t>(index);
+                    LL_FF_CHECK(av_buffersrc_add_frame_flags(m_reference_source, reference_input.get(), 0));
+                    LL_FF_CHECK(av_buffersrc_add_frame_flags(m_distorted_source, distorted_input.get(), 0));
+                    drain();
+                }
+                LL_FF_CHECK(av_buffersrc_add_frame_flags(m_reference_source, nullptr, 0));
+                LL_FF_CHECK(av_buffersrc_add_frame_flags(m_distorted_source, nullptr, 0));
+                drain();
+
+                if (metadata.size() != distorted.size())
+                {
+                    throw Error("compare(): the filter graph returned " + std::to_string(metadata.size()) +
+                                " frames for " + std::to_string(distorted.size()));
+                }
+                return metadata;
+            }
+
+        private:
+            std::optional<detail::ContextLogCapture> m_log_capture;
+            detail::FilterGraphPtr m_graph;
+            AVFilterContext* m_reference_source = nullptr;
+            AVFilterContext* m_distorted_source = nullptr;
+            AVFilterContext* m_sink = nullptr;
+        };
+
+        std::string filter_for(const Metric metric)
+        {
+            return metric == Metric::Psnr ? "psnr" : metric == Metric::Ssim ? "ssim" : "libvmaf";
+        }
+
+        /// The formats each metric's filter takes, as listed in FFmpeg
+        /// n8.1.3's vf_psnr.c and vf_ssim.c.
+        const std::vector<PixelFormat>& comparable_formats(const Metric metric)
+        {
+            static const std::vector<PixelFormat> psnr = formats_named({
+                "gray",       "gray9",       "gray10",      "gray12",      "gray14",      "gray16",
+                "yuv420p",    "yuv422p",     "yuv444p",     "yuva420p",    "yuva422p",    "yuva444p",
+                "yuv420p9",   "yuv422p9",    "yuv444p9",    "yuva420p9",   "yuva422p9",   "yuva444p9",
+                "yuv420p10",  "yuv422p10",   "yuv444p10",   "yuva420p10",  "yuva422p10",  "yuva444p10",
+                "yuv420p12",  "yuv422p12",   "yuv444p12",   "yuv420p14",   "yuv422p14",   "yuv444p14",
+                "yuv420p16",  "yuv422p16",   "yuv444p16",   "yuva420p16",  "yuva422p16",  "yuva444p16",
+                "yuv440p",    "yuv411p",     "yuv410p",     "yuvj411p",    "yuvj420p",    "yuvj422p",
+                "yuvj440p",   "yuvj444p",    "gbrp",        "gbrp9",       "gbrp10",      "gbrp12",
+                "gbrp14",     "gbrp16",      "gbrap",       "gbrap10",     "gbrap12",     "gbrap16",
+            });
+            static const std::vector<PixelFormat> ssim = formats_named({
+                "gray",      "gray9",     "gray10",    "gray12",    "gray14",    "gray16",    "yuv420p",
+                "yuv422p",   "yuv444p",   "yuv440p",   "yuv411p",   "yuv410p",   "yuvj411p",  "yuvj420p",
+                "yuvj422p",  "yuvj440p",  "yuvj444p",  "gbrp",      "yuv420p9",  "yuv422p9",  "yuv444p9",
+                "gbrp9",     "yuv420p10", "yuv422p10", "yuv444p10", "gbrp10",    "yuv420p12", "yuv422p12",
+                "yuv444p12", "gbrp12",    "yuv420p14", "yuv422p14", "yuv444p14", "gbrp14",    "yuv420p16",
+                "yuv422p16", "yuv444p16", "gbrp16",
+            });
+            return metric == Metric::Ssim ? ssim : psnr;
+        }
+
+        /// Reads the values under `prefix` + a component letter into
+        /// `name` + "_" + the letter in lowercase.
+        void read_components(const FrameMetadata& metadata, const std::string& prefix, const std::string& name,
+                             std::map<std::string, double>& values)
+        {
+            for (const auto& [key, text] : metadata)
+            {
+                if (key.size() != prefix.size() + 1 || !key.starts_with(prefix))
+                {
+                    continue;
+                }
+                const char component = static_cast<char>(std::tolower(static_cast<unsigned char>(key.back())));
+                values[name + "_" + component] = std::strtod(text.c_str(), nullptr);
+            }
+        }
+
         /// A value the filter attaches to every frame. Throws when it is
         /// missing or not a number, which means FFmpeg changed its output. The
         /// value can be NaN or infinite; callers decide what that means.
@@ -396,9 +559,25 @@ namespace lossylab
             const double value = it == metadata.end() ? 0.0 : std::strtod(it->second.c_str(), &end);
             if (it == metadata.end() || end == it->second.c_str())
             {
-                throw Error("measure(): the filter attached no numeric '" + key + "' to a frame");
+                throw Error("the filter attached no numeric '" + key + "' to a frame");
             }
             return value;
+        }
+
+        void read_metric_values(const Metric metric, const FrameMetadata& metadata,
+                                std::map<std::string, double>& values)
+        {
+            if (metric == Metric::Psnr)
+            {
+                values["psnr"] = attached_number(metadata, "lavfi.psnr.psnr_avg");
+                values["mse"] = attached_number(metadata, "lavfi.psnr.mse_avg");
+                read_components(metadata, "lavfi.psnr.psnr.", "psnr", values);
+                read_components(metadata, "lavfi.psnr.mse.", "mse", values);
+                return;
+            }
+            values["ssim"] = attached_number(metadata, "lavfi.ssim.All");
+            values["ssim_db"] = attached_number(metadata, "lavfi.ssim.dB");
+            read_components(metadata, "lavfi.ssim.", "ssim", values);
         }
 
         void read_signal_levels(const FrameMetadata& metadata, FrameMeasurement& measurement)
@@ -568,15 +747,18 @@ namespace lossylab
                    static_cast<double>(1 << (bit_depth - 8));
         }
 
-        void pool_into(std::map<std::string, double>& pooled,
-                       const std::vector<FrameMeasurement>& frames)
+        const std::map<std::string, double>& values_of(const FrameMeasurement& frame) { return frame.values; }
+        const std::map<std::string, double>& values_of(const std::map<std::string, double>& frame) { return frame; }
+
+        template <typename FrameValues>
+        void pool_into(std::map<std::string, double>& pooled, const std::vector<FrameValues>& frames)
         {
             std::map<std::string, double> totals;
             std::map<std::string, int> counts;
 
-            for (const FrameMeasurement& frame : frames)
+            for (const FrameValues& frame : frames)
             {
-                for (const auto& [name, value] : frame.values)
+                for (const auto& [name, value] : values_of(frame))
                 {
                     totals[name] += value;
                     counts[name] += 1;
@@ -672,6 +854,7 @@ namespace lossylab
                  return json::to_object(metrics);
              })},
             {"pooled", json::to_object(pooled)},
+            {"record", record.to_json()},
         });
     }
 
@@ -691,6 +874,7 @@ namespace lossylab
             {"points", json::to_array(points)},
             {"estimated_prior_parameter", json::optional_or_null(estimated_prior_parameter)},
             {"confidence", confidence},
+            {"record", record.to_json()},
         });
     }
 
@@ -763,7 +947,7 @@ namespace lossylab
         json::Value analyzer_names = json::Value::array();
         json::Value measured_as = json::Value::object();
         json::Value methods = json::Value::object();
-        MeasuredFrames measured_frames(frames, options.strict, record.conversions);
+        MeasuredFrames measured_frames(frames, options.strict, record.conversions, "measure()");
 
         for (const Analyzer analyzer : distinct_analyzers)
         {
@@ -818,8 +1002,11 @@ namespace lossylab
 
     CompareResult compare(const std::vector<Frame>& reference,
                           const std::vector<Frame>& distorted,
-                          const std::vector<Metric>& metrics)
+                          const std::vector<Metric>& metrics,
+                          const CompareOptions& options)
     {
+        const auto started = std::chrono::steady_clock::now();
+
         if (reference.empty() || distorted.empty())
         {
             throw ConfigError("compare() received no frames");
@@ -837,6 +1024,10 @@ namespace lossylab
 
         for (std::size_t i = 0; i < reference.size(); ++i)
         {
+            if (reference[i].empty() || distorted[i].empty())
+            {
+                throw ConfigError("compare() frame " + std::to_string(i) + " is empty");
+            }
             if (reference[i].width() != distorted[i].width() ||
                 reference[i].height() != distorted[i].height())
             {
@@ -846,37 +1037,248 @@ namespace lossylab
             }
         }
 
+        const FormatDescription format = reference.front().describe();
+        for (std::size_t i = 0; i < reference.size(); ++i)
+        {
+            if (reference[i].describe() != format || distorted[i].describe() != format)
+            {
+                throw ConfigError("compare() frame " + std::to_string(i) +
+                                  " differs from reference frame 0 in size, pixel format or color; "
+                                  "convert explicitly first");
+            }
+        }
+
+        std::vector<Metric> distinct_metrics;
         for (const Metric metric : metrics)
         {
             capabilities().require_metric(metric);
+            if (std::find(distinct_metrics.begin(), distinct_metrics.end(), metric) == distinct_metrics.end())
+            {
+                distinct_metrics.push_back(metric);
+            }
+        }
+        for (const Metric metric : distinct_metrics)
+        {
+            if (metric == Metric::Vmaf)
+            {
+                throw NotImplemented("compare() for vmaf");
+            }
+            if (metric == Metric::Ssim && (format.width < 8 || format.height < 8))
+            {
+                throw ConfigError("compare() needs frames of at least 8x8 for SSIM, not " +
+                                  std::to_string(format.width) + "x" + std::to_string(format.height));
+            }
         }
 
-        LL_NOT_IMPLEMENTED();
+        CompareResult result;
+        result.frames.resize(reference.size());
+
+        StageRecord& record = result.record;
+        record.kind = StageKind::Compare;
+        record.implementation = "libavfilter";
+        record.input = format;
+        record.output = format;
+        record.transform = CoordinateTransform::identity();
+
+        // Both sides go through the same conversion, so it is recorded once.
+        ConversionList distorted_conversions;
+        MeasuredFrames reference_frames(reference, options.strict, record.conversions, "compare()");
+        MeasuredFrames distorted_frames(distorted, options.strict, distorted_conversions, "compare()");
+
+        json::Value metric_names = json::Value::array();
+        json::Value measured_as = json::Value::object();
+        for (const Metric metric : distinct_metrics)
+        {
+            const std::string filter = filter_for(metric);
+            const std::vector<PixelFormat>& formats = comparable_formats(metric);
+            const std::vector<Frame>& measured_reference = reference_frames.in_one_of(formats, filter);
+            const std::vector<Frame>& measured_distorted = distorted_frames.in_one_of(formats, filter);
+            metric_names.push_back(to_string(metric));
+            measured_as[to_string(metric)] = measured_reference.front().pixel_format().name();
+
+            MetricGraph graph(measured_reference.front(), measured_distorted.front(), filter);
+            const std::vector<FrameMetadata> metadata = graph.run(measured_reference, measured_distorted);
+            for (std::size_t index = 0; index < metadata.size(); ++index)
+            {
+                read_metric_values(metric, metadata[index], result.frames[index]);
+            }
+        }
+
+        pool_into(result.pooled, result.frames);
+
+        record.params = json::object({
+            {"metrics", metric_names},
+            {"frame_count", reference.size()},
+            {"measured_as", measured_as},
+            {"strict", to_string(options.strict)},
+        });
+        record.duration_ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        return result;
     }
 
-    CompareResult compare(const Frame& reference, const Frame& distorted,
-                          const std::vector<Metric>& metrics)
+    CompareResult compare(const Frame& reference, const Frame& distorted, const std::vector<Metric>& metrics,
+                          const CompareOptions& options)
     {
-        return compare(std::vector<Frame>{reference}, std::vector<Frame>{distorted}, metrics);
+        return compare(std::vector<Frame>{reference}, std::vector<Frame>{distorted}, metrics, options);
+    }
+
+    namespace
+    {
+        /// How far each point's log error falls below the straight line
+        /// between its two neighbors' log errors, over the parameter axis.
+        /// Zero for the first and last points, which have no two neighbors.
+        std::vector<double> notch_depths(const std::vector<RecompressionPoint>& points)
+        {
+            // An exact re-encode has zero error; the floor keeps its logarithm
+            // finite while still making it the deepest point by far.
+            constexpr double error_floor = 1e-9;
+            std::vector<double> log_errors;
+            for (const RecompressionPoint& point : points)
+            {
+                log_errors.push_back(std::log(std::max(point.error, error_floor)));
+            }
+
+            std::vector<double> depths(points.size(), 0.0);
+            for (std::size_t i = 1; i + 1 < points.size(); ++i)
+            {
+                const double previous = points[i - 1].quality_parameter;
+                const double next = points[i + 1].quality_parameter;
+                const double position = (points[i].quality_parameter - previous) / (next - previous);
+                const double line = log_errors[i - 1] + position * (log_errors[i + 1] - log_errors[i - 1]);
+                depths[i] = line - log_errors[i];
+            }
+            return depths;
+        }
+
+        double median(std::vector<double> values)
+        {
+            if (values.empty())
+            {
+                return 0.0;
+            }
+            std::sort(values.begin(), values.end());
+            const std::size_t middle = values.size() / 2;
+            return values.size() % 2 == 1 ? values[middle] : (values[middle - 1] + values[middle]) / 2.0;
+        }
     }
 
     RecompressionCurve recompression_curve(const Frame& frame,
                                            const RecompressionOptions& options)
     {
+        const auto started = std::chrono::steady_clock::now();
+
         if (frame.empty())
         {
             throw ConfigError("recompression_curve() received an empty frame");
         }
-        if (options.parameter_range.size() < 3)
+        std::vector<double> parameters = options.parameter_range;
+        std::sort(parameters.begin(), parameters.end());
+        parameters.erase(std::unique(parameters.begin(), parameters.end()), parameters.end());
+        if (parameters.size() < 3)
         {
-            throw ConfigError("recompression_curve() needs at least three parameters to find "
+            throw ConfigError("recompression_curve() needs at least three distinct parameters to find "
                               "a minimum");
         }
 
         static_cast<void>(capabilities().require_encoder(options.codec));
         static_cast<void>(capabilities().require_decoder(options.codec));
         capabilities().require_metric(options.metric);
+        if (options.metric == Metric::Vmaf)
+        {
+            throw NotImplemented("recompression_curve() with vmaf");
+        }
 
-        LL_NOT_IMPLEMENTED();
+        RecompressionCurve curve;
+        StageRecord& record = curve.record;
+        record.kind = StageKind::RecompressionCurve;
+        record.input = frame.describe();
+        record.transform = CoordinateTransform::identity();
+
+        const PixelFormat pixel_format = options.pixel_format.value_or(frame.pixel_format());
+        const ColorSpec color = options.color.value_or(frame.color());
+        Frame reference = frame;
+        if (pixel_format != frame.pixel_format() || color != frame.color())
+        {
+            FrameResult converted = convert(frame, pixel_format, color, Strict::AllowRecorded);
+            record.conversions = std::move(converted.record.conversions);
+            reference = std::move(converted.frame);
+        }
+        record.output = reference.describe();
+
+        EncodeImageOptions encode_options;
+        encode_options.codec = options.codec;
+        encode_options.pixel_format = pixel_format;
+        encode_options.encoder_options = options.encoder_options;
+
+        DecodeSpec decode_spec;
+        decode_spec.pixel_format = pixel_format;
+        decode_spec.color = color;
+        decode_spec.strict = Strict::AllowRecorded;
+
+        CompareOptions compare_options;
+        compare_options.strict = Strict::AllowRecorded;
+
+        json::Value quality_scale;
+        for (const double parameter : parameters)
+        {
+            encode_options.rate_control = RateControl::quality(parameter);
+            const FrameResult decoded = roundtrip(reference, encode_options, decode_spec);
+            const CompareResult compared = compare(reference, decoded.frame, {options.metric}, compare_options);
+            const std::map<std::string, double>& values = compared.frames.front();
+            const double error =
+                options.metric == Metric::Psnr ? values.at("mse") : 1.0 - values.at("ssim");
+            curve.points.push_back(RecompressionPoint{parameter, error, decoded.record.achieved_bpp.value_or(0.0)});
+
+            // Every point converts the same way, so the first one speaks for all.
+            if (curve.points.size() == 1)
+            {
+                record.implementation = decoded.record.implementation;
+                quality_scale = decoded.record.encoder_settings.at("quality_scale");
+                for (const ConversionList* conversions : {&decoded.record.conversions, &compared.record.conversions})
+                {
+                    record.conversions.insert(record.conversions.end(), conversions->begin(), conversions->end());
+                }
+            }
+        }
+
+        const std::vector<double> depths = notch_depths(curve.points);
+        const auto deepest = std::max_element(depths.begin() + 1, depths.end() - 1);
+        constexpr double minimum_noise_scale = 0.05;
+        double noise_scale = minimum_noise_scale;
+        if (*deepest > 0.0)
+        {
+            std::vector<double> other_depths;
+            for (auto it = depths.begin() + 1; it != depths.end() - 1; ++it)
+            {
+                if (it != deepest)
+                {
+                    other_depths.push_back(std::abs(*it));
+                }
+            }
+            noise_scale = std::max(median(other_depths), minimum_noise_scale);
+            curve.confidence = *deepest / (*deepest + 3.0 * noise_scale);
+            if (curve.confidence >= 0.5)
+            {
+                curve.estimated_prior_parameter =
+                    curve.points[static_cast<std::size_t>(deepest - depths.begin())].quality_parameter;
+            }
+        }
+
+        record.params = json::object({
+            {"codec", to_string(options.codec)},
+            {"metric", to_string(options.metric)},
+            {"error", options.metric == Metric::Psnr ? "mse" : "1 - ssim"},
+            {"parameters", parameters},
+            {"quality_scale", quality_scale},
+            {"notch_depths", depths},
+            {"noise_scale", noise_scale},
+            {"pixel_format", pixel_format.name()},
+            {"color", color.to_json()},
+            {"encoder_options", json::to_object(options.encoder_options)},
+        });
+        record.duration_ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        return curve;
     }
 }

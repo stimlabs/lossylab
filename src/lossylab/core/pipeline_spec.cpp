@@ -178,6 +178,7 @@ namespace lossylab
             }
 
             case StageKind::Compare:
+            case StageKind::RecompressionCurve:
             {
                 if (stage.params.contains("metric"))
                 {

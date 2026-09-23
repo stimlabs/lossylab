@@ -16,4 +16,5 @@ namespace lossylab::pybind
     void bind_measure(nb::module_& m);
     void bind_file_result(nb::module_& m);
     void bind_convert(nb::module_& m);
+    void bind_encode(nb::module_& m);
 }

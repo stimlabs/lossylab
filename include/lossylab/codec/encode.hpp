@@ -39,7 +39,13 @@ namespace lossylab
                                        std::int64_t max_rate,
                                        std::int64_t buffer_size);
 
-        /// Image codecs' quality scale, whose meaning is codec-specific.
+        /// Image codecs' quality scale, in each encoder's own units: MJPEG's
+        /// qscale (an integer from 1 to 31, lower is better), WebP's quality
+        /// (0 to 100, higher is better; for lossless WebP an effort), JPEG
+        /// XL's Butteraugli distance (0.01 to 15, lower is better), and for
+        /// AVIF the crf of libaom-av1 (0 to 63) or libsvtav1 (1 to 63) or
+        /// the quantizer of librav1e (0 to 255), lower is better. The record's
+        /// encoder settings state the scale under "quality_scale".
         static RateControl quality(double value);
 
         enum class Mode
@@ -88,10 +94,16 @@ namespace lossylab
         /// Maximum frames between keyframes.
         int keyframe_interval = 250;
 
-        /// Consecutive B-frames between references. Zero disables them.
+        /// Consecutive B-frames between references. Zero disables them. Only
+        /// x264 and x265 take more: VP9 and AV1 encoders have no B-frames to
+        /// configure, and SVT-AV1 is run with low-delay prediction.
         int b_frames = 0;
 
-        /// Whether the encoder may insert keyframes at scene changes.
+        /// Whether the encoder may insert keyframes at scene changes. Off,
+        /// keyframes fall at exactly every `keyframe_interval` frames. On,
+        /// x264 and x265 use their scene-cut detection, and libvpx, libaom
+        /// and rav1e place keyframes as they see fit within the interval.
+        /// SVT-AV1 never inserts them, so it refuses this.
         bool scene_change_detection = true;
 
         /// Whether B-frames may themselves be references.
@@ -117,16 +129,22 @@ namespace lossylab
         RateControl rate_control = RateControl::crf(23.0);
         GopStructure gop;
 
-        /// Container to mux into. Empty means a raw elementary stream, which
-        /// is what a roundtrip wants since nothing needs to seek it.
+        /// Container to mux into, by FFmpeg muxer name ("mp4", "matroska",
+        /// "webm", ...). Empty means the codec's elementary stream format,
+        /// which is what a roundtrip wants since nothing needs to seek it:
+        /// Annex B for H.264 and HEVC, IVF for VP9 (which has no bare
+        /// format), and low-overhead OBUs for AV1.
         std::string container;
 
-        /// Pixel format handed to the encoder. Must be one the encoder accepts;
-        /// no conversion is inserted to make it fit.
+        /// Pixel format handed to the encoder. Must be one the encoder
+        /// accepts. Frames in another format are converted to it under
+        /// Strict::AllowRecorded and refused under Strict::Refuse.
         PixelFormat pixel_format;
 
-        /// Color written into the bitstream. Must match the frames' color, or
-        /// the encode is relabeling data without converting it.
+        /// Color to encode in, written into the bitstream. Unset means the
+        /// frames' own; frames in another color are converted, subject to
+        /// `strict`, never relabeled. Needed when RGB frames are encoded as
+        /// YUV, since the matrix is then a choice.
         std::optional<ColorSpec> color;
 
         Rational frame_rate{25, 1};
@@ -149,7 +167,14 @@ namespace lossylab
     ///
     /// The record carries per-frame type, size and quantizer, the achieved bits
     /// per pixel, the fully resolved encoder settings, and the block grid the
-    /// codec imposed. Hardware backends are marked non-reproducible.
+    /// codec imposed. Frame i is given timestamp i at `frame_rate`, and the
+    /// per-frame statistics are indexed by it. The quantizer is reported for
+    /// x264, x265, libvpx-vp9 and SVT-AV1, in the scale the settings name
+    /// under "qp_scale"; libaom and rav1e do not report one. The block grid
+    /// is set where its edges are fixed: H.264 macroblocks, and every 64
+    /// pixels for HEVC and VP9. FFmpeg's version strings are kept out of the
+    /// output (AV_CODEC_FLAG_BITEXACT). Hardware backends are not implemented
+    /// yet and throw NotImplemented.
     [[nodiscard]] EncodedResult encode_video(const std::vector<Frame>& frames,
                                              const EncodeVideoOptions& options);
 
@@ -159,10 +184,19 @@ namespace lossylab
 
         RateControl rate_control = RateControl::quality(75.0);
 
+        /// As for EncodeVideoOptions. Lossy WebP takes yuv420p or yuva420p
+        /// and lossless WebP bgra, the formats libwebp encodes without a
+        /// conversion of its own.
         PixelFormat pixel_format;
+
+        /// As for EncodeVideoOptions. A format that cannot signal color
+        /// restricts it: JPEG must be full-range BT.601 with centered chroma,
+        /// lossy WebP limited-range BT.601 with centered chroma.
         std::optional<ColorSpec> color;
 
-        /// Encode losslessly where the codec supports it.
+        /// Encode losslessly. PNG requires it; WebP and JPEG XL support it;
+        /// MJPEG and AVIF refuse it. PNG and lossless JPEG XL have no quality
+        /// parameter, and ignore the rate control.
         bool lossless = false;
 
         std::map<std::string, std::string> encoder_options;
@@ -175,7 +209,10 @@ namespace lossylab
     ///
     /// Covers the platform delivery formats. FFmpeg's MJPEG is available as a
     /// second JPEG implementation when encoder diversity is the point; PIL
-    /// remains the primary JPEG path by design.
+    /// remains the primary JPEG path by design. The bytes are a complete
+    /// file: JPEG, PNG, WebP, a JPEG XL codestream, or AVIF muxed by FFmpeg.
+    /// HEIF cannot be encoded, since FFmpeg has no HEIF muxer. The block grid
+    /// is set for JPEG and JPEG XL (8x8) and lossy WebP (16x16 macroblocks).
     [[nodiscard]] EncodedResult encode_image(const Frame& frame,
                                              const EncodeImageOptions& options);
 
@@ -194,7 +231,11 @@ namespace lossylab
     ///
     /// The common augmentation case: no files, and no trip out to NumPy between
     /// the two halves. The record covers both, so a frame's compression history
-    /// is one entry rather than two that have to be correlated afterwards.
+    /// is one entry rather than two that have to be correlated afterwards: the
+    /// encode's statistics, settings and block grid, both halves'
+    /// conversions, and each half's params under "encode" and "decode". The
+    /// decoder assumes the encoded color for whatever the bitstream leaves
+    /// untagged. Images decode single-threaded whatever `thread_count` says.
     [[nodiscard]] FramesResult roundtrip(const std::vector<Frame>& frames,
                                          const EncodeVideoOptions& encode_spec,
                                          const DecodeSpec& decode_spec = {});

@@ -121,5 +121,30 @@ namespace lossylab::pybind
             nb::call_guard<nb::gil_scoped_release>(),
             "measure(frames, analyzers, options), with any exception it raises returned as a FileError instead. "
             "`source` names the file the frames came from.");
+
+        bind_file_result<CompareResult>(m, "CompareFileResult")
+            .def("to_dict", [](const FileResult<CompareResult>& self) { return to_python(self.to_json()); });
+        m.def(
+            "capture_compare",
+            [](const Source& source, const std::vector<Frame>& reference, const std::vector<Frame>& distorted,
+               const std::vector<Metric>& metrics, const CompareOptions& options)
+            { return capture("compare", source, [&] { return compare(reference, distorted, metrics, options); }); },
+            "source"_a, "reference"_a, "distorted"_a, "metrics"_a, "options"_a = CompareOptions{},
+            nb::call_guard<nb::gil_scoped_release>(),
+            "compare(reference, distorted, metrics, options), with any exception it raises returned as a FileError "
+            "instead. `source` names the file the distorted frames came from.");
+
+        bind_file_result<RecompressionCurve>(m, "RecompressionCurveFileResult")
+            .def("to_dict", [](const FileResult<RecompressionCurve>& self) { return to_python(self.to_json()); });
+        m.def(
+            "capture_recompression_curve",
+            [](const Source& source, const Frame& frame, const RecompressionOptions& options)
+            {
+                return capture("recompression_curve", source,
+                               [&] { return recompression_curve(frame, options); });
+            },
+            "source"_a, "frame"_a, "options"_a, nb::call_guard<nb::gil_scoped_release>(),
+            "recompression_curve(frame, options), with any exception it raises returned as a FileError instead. "
+            "`source` names the file the frame came from.");
     }
 }

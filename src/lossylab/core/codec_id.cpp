@@ -122,9 +122,13 @@ namespace lossylab
         case ImageCodec::Png: return {"png"};
         case ImageCodec::Mjpeg: return {"mjpeg"};
         case ImageCodec::WebP: return {"libwebp", "libwebp_anim"};
-        case ImageCodec::Avif: return {"libsvtav1", "libaom-av1", "librav1e"};
+        // libaom first: it is the encoder libavif uses, and the only one that
+        // takes every chroma subsampling.
+        case ImageCodec::Avif: return {"libaom-av1", "libsvtav1", "librav1e"};
         case ImageCodec::Jxl: return {"libjxl"};
-        case ImageCodec::Heif: return {"libx265"};
+
+        // FFmpeg has no HEIF muxer, so no encoder can produce a HEIF file.
+        case ImageCodec::Heif: return {};
         }
         return {};
     }

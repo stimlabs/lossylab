@@ -137,12 +137,19 @@ namespace lossylab
     /// Full-reference comparison between a reference and a distorted version.
     struct CompareResult
     {
-        /// Per frame, keyed by metric name.
+        /// Per frame, keyed by metric name. PSNR sets "psnr" (over all planes,
+        /// weighted by their sample counts), "mse" (in the code values of the
+        /// format it measured), and "psnr_<c>" and "mse_<c>" for each component
+        /// c of y, u, v or r, g, b, plus a for alpha. PSNR is infinite for
+        /// identical frames, and serializes as null. SSIM sets "ssim" (the
+        /// planes weighted as FFmpeg's ssim filter weights them), "ssim_db",
+        /// and "ssim_<c>" for each component.
         std::vector<std::map<std::string, double>> frames;
 
-        /// Pooled across frames. PSNR pools as a mean of per-frame values,
-        /// which is the convention; note that this is not the same as PSNR of
-        /// the pooled MSE, and the two disagree on clips with varying quality.
+        /// Pooled across frames: the mean, min and max of each value, as
+        /// "<name>_mean", "<name>_min" and "<name>_max". "psnr_mean" is the
+        /// mean of per-frame PSNR, which is the convention; it is not the PSNR
+        /// of the mean MSE, and the two disagree on clips with varying quality.
         std::map<std::string, double> pooled;
 
         StageRecord record;
@@ -150,17 +157,32 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
     };
 
+    struct CompareOptions
+    {
+        /// What happens when a metric's filter does not accept the frames'
+        /// pixel format (neither takes packed RGB). Under Refuse, compare()
+        /// throws ConversionRefused naming the filter. Under AllowRecorded,
+        /// both sides are converted to the nearest format it accepts, and the
+        /// conversion is recorded.
+        Strict strict = Strict::Refuse;
+    };
+
     /// Compares distorted frames against a reference.
     ///
     /// Used to calibrate severity for `encode_to_target` and to record how
     /// strong a degradation actually was, rather than how strong its parameters
-    /// suggested it would be.
+    /// suggested it would be. Reference and distorted frames must share one
+    /// size, pixel format and color, since a difference in any of them would
+    /// be measured as distortion; SSIM needs frames of at least 8x8. The
+    /// record's params list what each metric measured under `measured_as`.
     [[nodiscard]] CompareResult compare(const std::vector<Frame>& reference,
                                         const std::vector<Frame>& distorted,
-                                        const std::vector<Metric>& metrics);
+                                        const std::vector<Metric>& metrics,
+                                        const CompareOptions& options = {});
 
     [[nodiscard]] CompareResult compare(const Frame& reference, const Frame& distorted,
-                                        const std::vector<Metric>& metrics);
+                                        const std::vector<Metric>& metrics,
+                                        const CompareOptions& options = {});
 
     /// One point on a recompression sweep.
     struct RecompressionPoint
@@ -178,19 +200,26 @@ namespace lossylab
 
     struct RecompressionCurve
     {
+        /// One per swept parameter, in ascending parameter order.
         std::vector<RecompressionPoint> points;
 
-        /// The parameter at the curve's minimum or knee, when one is clear.
+        /// The parameter at the curve's notch, when one is clear.
         ///
         /// A prior compression with the same codec at similar settings shows up
         /// here: re-encoding at the original quality changes the image least,
         /// because it is already sitting on that codec's quantization lattice.
         /// This is the JPEG "ghost" principle, extended to WebP, AVIF and
-        /// intra-coded video.
+        /// JPEG XL. Set when `confidence` is at least 0.5.
         std::optional<double> estimated_prior_parameter;
 
-        /// How pronounced the minimum is. A flat curve means no prior
-        /// compression was detected, not that there was none.
+        /// How pronounced the notch is, from 0 to 1. The notch depth d of a
+        /// point is how far its log error falls below the straight line
+        /// between its two neighbors; confidence is d / (d + 3 s) for the
+        /// deepest notch, where s is the median notch depth of the other
+        /// interior points, or 0.05 if that is larger. The first and last
+        /// parameters have no two neighbors, so a prior at either end of the
+        /// sweep cannot be found. A flat curve means no prior compression was
+        /// detected, not that there was none.
         double confidence = 0.0;
 
         StageRecord record;
@@ -200,16 +229,29 @@ namespace lossylab
 
     struct RecompressionOptions
     {
+        /// The codec to re-encode with. Its encode_image() rules apply at
+        /// every point, with the quality parameter in RateControl::quality()
+        /// units.
         ImageCodec codec = ImageCodec::Mjpeg;
 
-        /// Quality parameters to sweep, in the codec's own units.
+        /// Quality parameters to sweep, in the codec's own units. At least
+        /// three distinct values, in any order.
         std::vector<double> parameter_range;
 
-        /// Metric used to measure the difference at each point.
+        /// Metric used to measure the difference at each point. A point's
+        /// error is the MSE for Psnr, and 1 - SSIM for Ssim.
         Metric metric = Metric::Psnr;
 
-        PixelFormat pixel_format;
+        /// The format and color to re-encode in. Unset, the frame's own. A
+        /// frame in anything else is converted once, up front, and the
+        /// conversion recorded; each point's error is measured against the
+        /// converted frame, so the conversion's own loss does not count.
+        std::optional<PixelFormat> pixel_format;
         std::optional<ColorSpec> color;
+
+        /// Passed to the encoder at every point, e.g. {"cpu-used", "6"} for
+        /// a faster AVIF sweep.
+        std::map<std::string, std::string> encoder_options;
     };
 
     /// Sweeps a codec's quality parameter, measuring how much re-encoding
@@ -217,7 +259,8 @@ namespace lossylab
     ///
     /// Experimental. The signal is strong for single-generation JPEG and WebP
     /// and weakens quickly with further processing; a resize after the original
-    /// compression usually destroys it entirely.
+    /// compression usually destroys it entirely. The record's params hold each
+    /// point's notch depth.
     [[nodiscard]] RecompressionCurve recompression_curve(const Frame& frame,
                                                          const RecompressionOptions& options);
 }

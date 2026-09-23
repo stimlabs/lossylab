@@ -364,14 +364,6 @@ namespace
         }
     }
 
-    void test_a_valid_encode_video_request_reaches_the_unwritten_body()
-    {
-        // TODO: expects encode_video() to be a stub; turn into a real encode test once it is implemented.
-        const EncodeVideoOptions options = h264_encode_options();
-        assert(throws_not_implemented(
-            [&] { static_cast<void>(encode_video({test_frame()}, options)); }));
-    }
-
     void test_encoding_refuses_a_codec_this_build_lacks_before_anything_else()
     {
         const AbsentEncoder absent = absent_video_encoder();
@@ -428,9 +420,6 @@ namespace
         catch (const ConfigError&)
         {
         }
-
-        assert(throws_not_implemented(
-            [&] { static_cast<void>(encode_to_target({test_frame()}, options, target)); }));
     }
 
     // -----------------------------------------------------------------------
@@ -824,7 +813,7 @@ namespace
         const Frame frame = test_frame();
         if (capabilities().supports(Metric::Vmaf))
         {
-            // TODO: expects compare() to be a stub; assert on the VMAF result once it is implemented.
+            // TODO: compare() has no VMAF implementation yet; assert on its result once it has.
             assert(throws_not_implemented([&] { static_cast<void>(compare({frame}, {frame}, {Metric::Vmaf})); }));
             return;
         }
@@ -1097,7 +1086,6 @@ int main()
     test_encode_video_rejects_a_mixed_size_sequence();
     test_encode_video_rejects_a_pixel_format_the_encoder_does_not_accept();
     test_encode_video_rejects_an_option_the_encoder_does_not_have();
-    test_a_valid_encode_video_request_reaches_the_unwritten_body();
     test_encoding_refuses_a_codec_this_build_lacks_before_anything_else();
     test_encode_to_target_needs_a_parameter_it_can_search();
     test_a_filter_graph_validates_its_inputs();

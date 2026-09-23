@@ -50,5 +50,50 @@ namespace lossylab::pybind
         m.def("measure",
               nb::overload_cast<const Frame&, const std::vector<Analyzer>&, const MeasureOptions&>(&measure),
               "frame"_a, "analyzers"_a, "options"_a = MeasureOptions{}, nb::call_guard<nb::gil_scoped_release>());
+
+        nb::class_<CompareOptions>(m, "CompareOptions")
+            .def(nb::init<>())
+            .def_rw("strict", &CompareOptions::strict);
+
+        nb::class_<CompareResult>(m, "CompareResult")
+            .def_ro("frames", &CompareResult::frames)
+            .def_ro("pooled", &CompareResult::pooled)
+            .def_ro("record", &CompareResult::record)
+            .def("to_dict", [](const CompareResult& self) { return to_python(self.to_json()); });
+
+        m.def("compare",
+              nb::overload_cast<const std::vector<Frame>&, const std::vector<Frame>&, const std::vector<Metric>&,
+                                const CompareOptions&>(&compare),
+              "reference"_a, "distorted"_a, "metrics"_a, "options"_a = CompareOptions{},
+              nb::call_guard<nb::gil_scoped_release>());
+        m.def("compare",
+              nb::overload_cast<const Frame&, const Frame&, const std::vector<Metric>&, const CompareOptions&>(
+                  &compare),
+              "reference"_a, "distorted"_a, "metrics"_a, "options"_a = CompareOptions{},
+              nb::call_guard<nb::gil_scoped_release>());
+
+        nb::class_<RecompressionOptions>(m, "RecompressionOptions")
+            .def(nb::init<>())
+            .def_rw("codec", &RecompressionOptions::codec)
+            .def_rw("parameter_range", &RecompressionOptions::parameter_range)
+            .def_rw("metric", &RecompressionOptions::metric)
+            .def_rw("pixel_format", &RecompressionOptions::pixel_format)
+            .def_rw("color", &RecompressionOptions::color)
+            .def_rw("encoder_options", &RecompressionOptions::encoder_options);
+
+        nb::class_<RecompressionPoint>(m, "RecompressionPoint")
+            .def_ro("quality_parameter", &RecompressionPoint::quality_parameter)
+            .def_ro("error", &RecompressionPoint::error)
+            .def_ro("bits_per_pixel", &RecompressionPoint::bits_per_pixel);
+
+        nb::class_<RecompressionCurve>(m, "RecompressionCurve")
+            .def_ro("points", &RecompressionCurve::points)
+            .def_ro("estimated_prior_parameter", &RecompressionCurve::estimated_prior_parameter)
+            .def_ro("confidence", &RecompressionCurve::confidence)
+            .def_ro("record", &RecompressionCurve::record)
+            .def("to_dict", [](const RecompressionCurve& self) { return to_python(self.to_json()); });
+
+        m.def("recompression_curve", &recompression_curve, "frame"_a, "options"_a,
+              nb::call_guard<nb::gil_scoped_release>());
     }
 }

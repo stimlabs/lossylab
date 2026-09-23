@@ -1,0 +1,140 @@
+#include "bindings.hpp"
+#include "json_convert.hpp"
+
+#include "lossylab/codec/encode.hpp"
+
+#include <nanobind/stl/map.h>
+#include <nanobind/stl/optional.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
+
+namespace lossylab::pybind
+{
+    using namespace nb::literals;
+
+    namespace
+    {
+        nb::bytes to_bytes(const std::vector<std::uint8_t>& bytes)
+        {
+            return nb::bytes(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        }
+    }
+
+    void bind_encode(nb::module_& m)
+    {
+        auto rate_control = nb::class_<RateControl>(m, "RateControl");
+        nb::enum_<RateControl::Mode>(rate_control, "Mode")
+            .value("Crf", RateControl::Mode::Crf)
+            .value("ConstantQp", RateControl::Mode::ConstantQp)
+            .value("Bitrate", RateControl::Mode::Bitrate)
+            .value("Constrained", RateControl::Mode::Constrained)
+            .value("Quality", RateControl::Mode::Quality);
+        rate_control.def_static("crf", &RateControl::crf, "value"_a)
+            .def_static("constant_qp", &RateControl::constant_qp, "qp"_a)
+            .def_static("bitrate", &RateControl::bitrate, "bits_per_second"_a)
+            .def_static("constrained", &RateControl::constrained, "bits_per_second"_a, "max_rate"_a,
+                        "buffer_size"_a)
+            .def_static("quality", &RateControl::quality, "value"_a)
+            .def_prop_ro("mode", &RateControl::mode)
+            .def_prop_ro("value", &RateControl::value)
+            .def_prop_ro("rate", &RateControl::rate)
+            .def_prop_ro("max_rate", &RateControl::max_rate)
+            .def_prop_ro("buffer_size", &RateControl::buffer_size)
+            .def("quality_parameter", &RateControl::quality_parameter)
+            .def("with_quality_parameter", &RateControl::with_quality_parameter, "value"_a)
+            .def("describe", &RateControl::describe)
+            .def("__repr__", [](const RateControl& self) { return "RateControl(" + self.describe() + ")"; })
+            .def("to_dict", [](const RateControl& self) { return to_python(self.to_json()); })
+            .def_static("from_dict", [](nb::dict value) { return RateControl::from_json(to_json(value)); });
+
+        nb::class_<GopStructure>(m, "GopStructure")
+            .def(nb::init<>())
+            .def_rw("keyframe_interval", &GopStructure::keyframe_interval)
+            .def_rw("b_frames", &GopStructure::b_frames)
+            .def_rw("scene_change_detection", &GopStructure::scene_change_detection)
+            .def_rw("b_pyramid", &GopStructure::b_pyramid)
+            .def_rw("closed_gop", &GopStructure::closed_gop)
+            .def_static("intra_only", &GopStructure::intra_only)
+            .def("to_dict", [](const GopStructure& self) { return to_python(self.to_json()); })
+            .def_static("from_dict", [](nb::dict value) { return GopStructure::from_json(to_json(value)); });
+
+        nb::class_<EncodeVideoOptions>(m, "EncodeVideoOptions")
+            .def(nb::init<>())
+            .def_rw("codec", &EncodeVideoOptions::codec)
+            .def_rw("backend", &EncodeVideoOptions::backend)
+            .def_rw("rate_control", &EncodeVideoOptions::rate_control)
+            .def_rw("gop", &EncodeVideoOptions::gop)
+            .def_rw("container", &EncodeVideoOptions::container)
+            .def_rw("pixel_format", &EncodeVideoOptions::pixel_format)
+            .def_rw("color", &EncodeVideoOptions::color)
+            .def_rw("frame_rate", &EncodeVideoOptions::frame_rate)
+            .def_rw("encoder_options", &EncodeVideoOptions::encoder_options)
+            .def_rw("thread_count", &EncodeVideoOptions::thread_count)
+            .def_rw("strict", &EncodeVideoOptions::strict);
+
+        nb::class_<EncodeImageOptions>(m, "EncodeImageOptions")
+            .def(nb::init<>())
+            .def_rw("codec", &EncodeImageOptions::codec)
+            .def_rw("rate_control", &EncodeImageOptions::rate_control)
+            .def_rw("pixel_format", &EncodeImageOptions::pixel_format)
+            .def_rw("color", &EncodeImageOptions::color)
+            .def_rw("lossless", &EncodeImageOptions::lossless)
+            .def_rw("encoder_options", &EncodeImageOptions::encoder_options)
+            .def_rw("thread_count", &EncodeImageOptions::thread_count)
+            .def_rw("strict", &EncodeImageOptions::strict);
+
+        nb::class_<DecodeSpec>(m, "DecodeSpec")
+            .def(nb::init<>())
+            .def_rw("pixel_format", &DecodeSpec::pixel_format)
+            .def_rw("color", &DecodeSpec::color)
+            .def_rw("thread_count", &DecodeSpec::thread_count)
+            .def_rw("strict", &DecodeSpec::strict);
+
+        auto target = nb::class_<EncodeTarget>(m, "EncodeTarget");
+        nb::enum_<EncodeTarget::Kind>(target, "Kind")
+            .value("BitsPerPixel", EncodeTarget::Kind::BitsPerPixel)
+            .value("Psnr", EncodeTarget::Kind::Psnr)
+            .value("Ssim", EncodeTarget::Kind::Ssim)
+            .value("Vmaf", EncodeTarget::Kind::Vmaf);
+        target.def(nb::init<>())
+            .def_rw("kind", &EncodeTarget::kind)
+            .def_rw("value", &EncodeTarget::value)
+            .def_rw("tolerance", &EncodeTarget::tolerance)
+            .def_rw("max_iterations", &EncodeTarget::max_iterations)
+            .def("describe", &EncodeTarget::describe)
+            .def("to_dict", [](const EncodeTarget& self) { return to_python(self.to_json()); })
+            .def_static("from_dict", [](nb::dict value) { return EncodeTarget::from_json(to_json(value)); });
+
+        nb::class_<EncodedResult>(m, "EncodedResult")
+            .def_prop_ro("bytes", [](const EncodedResult& self) { return to_bytes(self.bytes); })
+            .def_ro("record", &EncodedResult::record)
+            .def("bits_per_pixel", &EncodedResult::bits_per_pixel);
+
+        nb::class_<FramesResult>(m, "FramesResult")
+            .def_ro("frames", &FramesResult::frames)
+            .def_ro("record", &FramesResult::record);
+
+        nb::class_<EncodeToTargetResult>(m, "EncodeToTargetResult")
+            .def_prop_ro("bytes", [](const EncodeToTargetResult& self) { return to_bytes(self.bytes); })
+            .def_ro("record", &EncodeToTargetResult::record)
+            .def_ro("quality_parameter", &EncodeToTargetResult::quality_parameter)
+            .def_ro("achieved", &EncodeToTargetResult::achieved)
+            .def_ro("iterations", &EncodeToTargetResult::iterations)
+            .def_ro("converged", &EncodeToTargetResult::converged);
+
+        m.def("encode_video", &encode_video, "frames"_a, "options"_a, nb::call_guard<nb::gil_scoped_release>());
+        m.def("encode_image", &encode_image, "frame"_a, "options"_a, nb::call_guard<nb::gil_scoped_release>());
+        m.def("roundtrip",
+              nb::overload_cast<const std::vector<Frame>&, const EncodeVideoOptions&, const DecodeSpec&>(&roundtrip),
+              "frames"_a, "encode_spec"_a, "decode_spec"_a = DecodeSpec{}, nb::call_guard<nb::gil_scoped_release>());
+        m.def("roundtrip", nb::overload_cast<const Frame&, const EncodeImageOptions&, const DecodeSpec&>(&roundtrip),
+              "frame"_a, "encode_spec"_a, "decode_spec"_a = DecodeSpec{}, nb::call_guard<nb::gil_scoped_release>());
+        m.def("encode_to_target",
+              nb::overload_cast<const std::vector<Frame>&, const EncodeVideoOptions&, const EncodeTarget&>(
+                  &encode_to_target),
+              "frames"_a, "options"_a, "target"_a, nb::call_guard<nb::gil_scoped_release>());
+        m.def("encode_to_target",
+              nb::overload_cast<const Frame&, const EncodeImageOptions&, const EncodeTarget&>(&encode_to_target),
+              "frame"_a, "options"_a, "target"_a, nb::call_guard<nb::gil_scoped_release>());
+    }
+}

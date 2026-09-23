@@ -1,7 +1,22 @@
 #include "lossylab/codec/encode.hpp"
 
+#include "encoder_plans.hpp"
+#include "encoder_session.hpp"
+
+#include "lossylab/convert/convert.hpp"
 #include "lossylab/core/error.hpp"
+#include "lossylab/core/json_io.hpp"
 #include "lossylab/env/capabilities.hpp"
+#include "lossylab/io/decode_image.hpp"
+#include "lossylab/io/video_reader.hpp"
+#include "lossylab/measure/measure.hpp"
+
+#include <chrono>
+#include <cmath>
+#include <functional>
+#include <limits>
+#include <map>
+#include <set>
 
 namespace lossylab
 {
@@ -290,77 +305,442 @@ namespace lossylab
     // Encoding
     // -----------------------------------------------------------------------
 
+    namespace
+    {
+        double elapsed_ms(const std::chrono::steady_clock::time_point started)
+        {
+            return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        }
+
+        void require_known_options(const CodecInfo& encoder, const std::map<std::string, std::string>& options)
+        {
+            for (const auto& [name, value] : options)
+            {
+                static_cast<void>(value);
+                if (encoder.find_option(name) == nullptr)
+                {
+                    throw ConfigError("encoder '" + encoder.name + "' has no option '" + name + "'");
+                }
+            }
+        }
+
+        void require_accepted_format(const CodecInfo& encoder, const PixelFormat& pixel_format)
+        {
+            if (!encoder.accepts(pixel_format))
+            {
+                throw ConfigError("encoder '" + encoder.name + "' does not accept " + pixel_format.name() +
+                                  "; convert explicitly before encoding");
+            }
+        }
+
+        /// The frames in the pixel format and color the encoder is to receive.
+        /// Frames already in them pass through; any other conversion is
+        /// refused under Strict::Refuse and recorded otherwise.
+        std::vector<Frame> fit_to_encoder(const std::vector<Frame>& frames, const PixelFormat& pixel_format,
+                                          const std::optional<ColorSpec>& color, const Strict strict,
+                                          ConversionList& conversions, const std::string& what)
+        {
+            const Frame& first = frames.front();
+            const ColorSpec target_color = color.value_or(first.color());
+            if (first.pixel_format() == pixel_format && first.color() == target_color)
+            {
+                return frames;
+            }
+            if (!color.has_value() && first.pixel_format().is_rgb() != pixel_format.is_rgb())
+            {
+                throw ConfigError(what + " converts " + first.pixel_format().name() + " to " + pixel_format.name() +
+                                  ", which needs the color to encode in; set color");
+            }
+            if (strict == Strict::Refuse)
+            {
+                throw ConversionRefused(first.describe().pixel_format.name() + " " + first.color().describe(),
+                                        pixel_format.name() + " " + target_color.describe(),
+                                        what + ": the frames are not in the format and color to encode; convert "
+                                               "them explicitly or allow a recorded conversion");
+            }
+
+            std::vector<Frame> converted;
+            converted.reserve(frames.size());
+            for (const Frame& frame : frames)
+            {
+                FrameResult result = convert(frame, pixel_format, target_color, Strict::AllowRecorded);
+                if (converted.empty())
+                {
+                    for (ConversionEvent& event : result.record.conversions)
+                    {
+                        event.cause = ConversionCause::CodecConstraint;
+                        conversions.push_back(std::move(event));
+                    }
+                }
+                converted.push_back(std::move(result.frame));
+            }
+            return converted;
+        }
+
+        /// One FrameStats per input frame, from the packets that coded it,
+        /// matched by timestamp.
+        std::vector<FrameStats> frame_stats(const std::vector<detail::PacketPtr>& packets, const bool reports_qp)
+        {
+            std::map<std::int64_t, FrameStats> by_pts;
+            for (const detail::PacketPtr& packet : packets)
+            {
+                const FrameStats stats = detail::packet_stats(*packet, reports_qp);
+                const auto [it, inserted] = by_pts.try_emplace(stats.pts, stats);
+                if (!inserted)
+                {
+                    it->second.size_bytes = it->second.size_bytes.value_or(0) + stats.size_bytes.value_or(0);
+                }
+            }
+            std::vector<FrameStats> frames;
+            for (auto& [pts, stats] : by_pts)
+            {
+                stats.index = static_cast<int>(pts);
+                frames.push_back(stats);
+            }
+            return frames;
+        }
+
+        json::Value encoder_settings(const detail::EncoderPlan& plan, const detail::EncoderSession& session,
+                                     const json::Value& rate_control)
+        {
+            return json::object({
+                {"rate_control", rate_control},
+                {"quality_scale", plan.quality_scale.empty() ? json::Value() : json::Value(plan.quality_scale)},
+                {"qp_scale", plan.reports_qp ? json::Value(plan.qp_scale) : json::Value()},
+                {"resolved", session.resolved_settings()},
+            });
+        }
+
+        double bits_per_pixel(const std::size_t bytes, const FormatDescription& format, const std::size_t frames)
+        {
+            return static_cast<double>(bytes) * 8.0 /
+                   (static_cast<double>(format.width) * format.height * static_cast<double>(frames));
+        }
+
+        /// One record for an encode followed by a decode of its output.
+        StageRecord roundtrip_record(const StageRecord& encoded, const StageRecord& decoded)
+        {
+            StageRecord record;
+            record.kind = StageKind::Roundtrip;
+            record.implementation = encoded.implementation + "+" + decoded.implementation;
+            record.input = encoded.input;
+            record.output = decoded.output;
+            record.conversions = encoded.conversions;
+            record.conversions.insert(record.conversions.end(), decoded.conversions.begin(),
+                                      decoded.conversions.end());
+            record.transform = CoordinateTransform::identity();
+            record.block_grid = encoded.block_grid;
+            record.frames = encoded.frames;
+            record.encoder_settings = encoded.encoder_settings;
+            record.achieved_bpp = encoded.achieved_bpp;
+            record.reproducible = encoded.reproducible && decoded.reproducible;
+            record.params = json::object({
+                {"encode", encoded.params},
+                {"decode", decoded.params},
+            });
+            record.duration_ms = encoded.duration_ms + decoded.duration_ms;
+            return record;
+        }
+
+        /// Decodes an encoded image, assuming the encoded color for whatever
+        /// the file leaves untagged.
+        FrameResult decode_encoded(const EncodedResult& encoded, const DecodeSpec& decode_spec)
+        {
+            DecodeImageOptions options;
+            options.pixel_format = decode_spec.pixel_format;
+            options.color = decode_spec.color;
+            options.assumed_color = encoded.record.output.color;
+            options.strict = decode_spec.strict;
+            const std::string extension = encoded.record.params.at("extension").get<std::string>();
+            return decode_image(Source::from_memory(encoded.bytes, extension), options);
+        }
+
+        /// Decodes an encoded clip, which must give back `frame_count` frames.
+        FramesResult decode_encoded(const EncodedResult& encoded, const DecodeSpec& decode_spec,
+                                    const std::size_t frame_count)
+        {
+            if (decode_spec.thread_count < 1)
+            {
+                throw ConfigError("roundtrip() decode thread_count must be at least 1");
+            }
+            VideoReaderOptions options;
+            options.pixel_format = decode_spec.pixel_format;
+            options.color = decode_spec.color;
+            options.assumed_color = encoded.record.output.color;
+            options.thread_count = decode_spec.thread_count;
+            options.strict = decode_spec.strict;
+            const std::string extension = encoded.record.params.at("extension").get<std::string>();
+
+            VideoReader reader(Source::from_memory(encoded.bytes, extension), options);
+            std::vector<VideoFrame> decoded = reader.frames(FrameSelector::all());
+            if (decoded.size() != frame_count)
+            {
+                throw Error("roundtrip(): " + std::to_string(frame_count) + " frames encoded, but " +
+                            std::to_string(decoded.size()) + " decoded");
+            }
+
+            FramesResult result;
+            result.frames.reserve(decoded.size());
+            for (VideoFrame& frame : decoded)
+            {
+                result.frames.push_back(std::move(frame.frame));
+            }
+            result.record = reader.record();
+            return result;
+        }
+    }
+
     EncodedResult encode_video(const std::vector<Frame>& frames,
                                const EncodeVideoOptions& options)
     {
+        const auto started = std::chrono::steady_clock::now();
         validate_common(frames, options.pixel_format, options.thread_count, "encode_video()");
 
         // Resolved before anything else, so a codec this build cannot provide
         // is reported by name rather than as a failure deep inside FFmpeg.
         const CodecInfo& encoder =
             capabilities().require_encoder(options.codec, options.backend);
-
-        if (!encoder.accepts(options.pixel_format))
+        if (options.backend != EncoderBackend::Software)
         {
-            throw ConfigError("encoder '" + encoder.name + "' does not accept " +
-                              options.pixel_format.name() +
-                              "; convert explicitly before encoding");
+            throw NotImplemented("encode_video() with a hardware backend");
         }
+        require_accepted_format(encoder, options.pixel_format);
+        require_known_options(encoder, options.encoder_options);
 
-        for (const auto& [name, value] : options.encoder_options)
+        StageRecord record;
+        record.kind = StageKind::EncodeVideo;
+        record.implementation = encoder.name;
+        record.input = frames.front().describe();
+        record.transform = CoordinateTransform::identity();
+
+        const std::vector<Frame> encoded_frames = fit_to_encoder(
+            frames, options.pixel_format, options.color, options.strict, record.conversions, "encode_video()");
+        const Frame& first = encoded_frames.front();
+        detail::EncoderPlan plan = detail::plan_video_encode(encoder.name, options, first.pixel_format());
+        plan.setup.width = first.width();
+        plan.setup.height = first.height();
+        plan.setup.pixel_format = first.pixel_format();
+        plan.setup.color = first.color();
+        plan.setup.frame_rate = options.frame_rate;
+        plan.setup.thread_count = options.thread_count;
+        plan.setup.global_header = detail::muxer_wants_global_header(plan.muxer);
+
+        detail::EncoderSession session(plan.setup);
+        for (std::size_t index = 0; index < encoded_frames.size(); ++index)
         {
-            static_cast<void>(value);
-            if (encoder.find_option(name) == nullptr)
-            {
-                throw ConfigError("encoder '" + encoder.name + "' has no option '" + name + "'");
-            }
+            session.send(encoded_frames[index], static_cast<std::int64_t>(index));
         }
+        session.finish();
 
-        LL_NOT_IMPLEMENTED();
+        record.frames = frame_stats(session.packets(), plan.reports_qp);
+        std::vector<std::uint8_t> bytes = detail::mux_packets(plan.muxer, session.context(), session.packets());
+
+        record.output = first.describe();
+        record.block_grid = plan.block_grid;
+        record.encoder_settings = encoder_settings(plan, session, options.rate_control.to_json());
+        record.encoder_settings["gop"] = options.gop.to_json();
+        record.achieved_bpp = bits_per_pixel(bytes.size(), record.output, encoded_frames.size());
+        record.params = json::object({
+            {"codec", to_string(options.codec)},
+            {"backend", to_string(options.backend)},
+            {"container", plan.muxer},
+            {"extension", plan.extension},
+            {"frame_count", encoded_frames.size()},
+            {"frame_rate", options.frame_rate.to_json()},
+            {"pixel_format", options.pixel_format.name()},
+            {"color", first.color().to_json()},
+            {"rate_control", options.rate_control.to_json()},
+            {"gop", options.gop.to_json()},
+            {"encoder_options", json::to_object(options.encoder_options)},
+            {"thread_count", options.thread_count},
+            {"strict", to_string(options.strict)},
+        });
+        record.duration_ms = elapsed_ms(started);
+        return EncodedResult{std::move(bytes), std::move(record)};
     }
 
     EncodedResult encode_image(const Frame& frame, const EncodeImageOptions& options)
     {
+        const auto started = std::chrono::steady_clock::now();
         validate_common({frame}, options.pixel_format, options.thread_count, "encode_image()");
 
         const CodecInfo& encoder = capabilities().require_encoder(options.codec);
-        if (!encoder.accepts(options.pixel_format))
+        require_accepted_format(encoder, options.pixel_format);
+        require_known_options(encoder, options.encoder_options);
+
+        StageRecord record;
+        record.kind = StageKind::EncodeImage;
+        record.implementation = encoder.name;
+        record.input = frame.describe();
+        record.transform = CoordinateTransform::identity();
+
+        const Frame encoded_frame = fit_to_encoder({frame}, options.pixel_format, options.color, options.strict,
+                                                   record.conversions, "encode_image()")
+                                        .front();
+        detail::EncoderPlan plan = detail::plan_image_encode(encoder.name, options, encoded_frame.pixel_format(),
+                                                             encoded_frame.color());
+        plan.setup.width = encoded_frame.width();
+        plan.setup.height = encoded_frame.height();
+        plan.setup.pixel_format = encoded_frame.pixel_format();
+        plan.setup.color = encoded_frame.color();
+        plan.setup.thread_count = options.thread_count;
+        plan.setup.global_header = !plan.muxer.empty() && detail::muxer_wants_global_header(plan.muxer);
+
+        detail::EncoderSession session(plan.setup);
+        session.send(encoded_frame, 0);
+        session.finish();
+        if (session.packets().size() != 1)
         {
-            throw ConfigError("encoder '" + encoder.name + "' does not accept " +
-                              options.pixel_format.name() +
-                              "; convert explicitly before encoding");
+            throw Error("encode_image(): encoder '" + encoder.name + "' produced " +
+                        std::to_string(session.packets().size()) + " packets for one image");
         }
 
-        LL_NOT_IMPLEMENTED();
+        record.frames = frame_stats(session.packets(), plan.reports_qp);
+        std::vector<std::uint8_t> bytes = plan.muxer.empty()
+                                              ? detail::concatenate_packets(session.packets())
+                                              : detail::mux_packets(plan.muxer, session.context(), session.packets());
+
+        // PNG, and JPEG XL without loss, have no quality parameter to state.
+        const bool uses_rate_control = !plan.quality_scale.empty();
+        const json::Value rate_control = uses_rate_control ? options.rate_control.to_json() : json::Value();
+
+        record.output = encoded_frame.describe();
+        record.block_grid = plan.block_grid;
+        record.encoder_settings = encoder_settings(plan, session, rate_control);
+        record.encoder_settings["lossless"] = options.lossless;
+        record.achieved_bpp = bits_per_pixel(bytes.size(), record.output, 1);
+        record.params = json::object({
+            {"codec", to_string(options.codec)},
+            {"container", plan.muxer.empty() ? json::Value() : json::Value(plan.muxer)},
+            {"extension", plan.extension},
+            {"pixel_format", options.pixel_format.name()},
+            {"color", encoded_frame.color().to_json()},
+            {"lossless", options.lossless},
+            {"rate_control", rate_control},
+            {"encoder_options", json::to_object(options.encoder_options)},
+            {"thread_count", options.thread_count},
+            {"strict", to_string(options.strict)},
+        });
+        record.duration_ms = elapsed_ms(started);
+        return EncodedResult{std::move(bytes), std::move(record)};
     }
 
     FramesResult roundtrip(const std::vector<Frame>& frames,
                            const EncodeVideoOptions& encode_spec,
                            const DecodeSpec& decode_spec)
     {
-        static_cast<void>(decode_spec);
         validate_common(frames, encode_spec.pixel_format, encode_spec.thread_count,
                         "roundtrip()");
         static_cast<void>(capabilities().require_encoder(encode_spec.codec, encode_spec.backend));
         static_cast<void>(capabilities().require_decoder(encode_spec.codec));
 
-        LL_NOT_IMPLEMENTED();
+        const EncodedResult encoded = encode_video(frames, encode_spec);
+        FramesResult decoded = decode_encoded(encoded, decode_spec, frames.size());
+        decoded.record = roundtrip_record(encoded.record, decoded.record);
+        return decoded;
     }
 
     FrameResult roundtrip(const Frame& frame, const EncodeImageOptions& encode_spec,
                           const DecodeSpec& decode_spec)
     {
-        static_cast<void>(decode_spec);
         validate_common({frame}, encode_spec.pixel_format, encode_spec.thread_count,
                         "roundtrip()");
         static_cast<void>(capabilities().require_encoder(encode_spec.codec));
         static_cast<void>(capabilities().require_decoder(encode_spec.codec));
 
-        LL_NOT_IMPLEMENTED();
+        const EncodedResult encoded = encode_image(frame, encode_spec);
+        FrameResult decoded = decode_encoded(encoded, decode_spec);
+        decoded.record = roundtrip_record(encoded.record, decoded.record);
+        return decoded;
     }
 
     namespace
     {
+        /// The frames' own format and color, for decoding an encode of them
+        /// back into something comparable with them.
+        DecodeSpec decode_spec_like(const Frame& frame)
+        {
+            DecodeSpec decode_spec;
+            decode_spec.pixel_format = frame.pixel_format();
+            decode_spec.color = frame.color();
+            decode_spec.strict = Strict::AllowRecorded;
+            return decode_spec;
+        }
+
+        double pooled_metric(const std::vector<Frame>& reference, const std::vector<Frame>& distorted,
+                             const EncodeTarget::Kind kind)
+        {
+            CompareOptions options;
+            options.strict = Strict::AllowRecorded;
+            if (kind == EncodeTarget::Kind::Psnr)
+            {
+                return compare(reference, distorted, {Metric::Psnr}, options).pooled.at("psnr_mean");
+            }
+            return compare(reference, distorted, {Metric::Ssim}, options).pooled.at("ssim_mean");
+        }
+
+        /// Bisects the encoder's quality range, ordered from its worst
+        /// quality to its best so that bits per pixel, PSNR and SSIM all grow
+        /// along it. Keeps the attempt closest to the target.
+        EncodeToTargetResult search_quality(const EncodeTarget& target, const detail::QualityRange& range,
+                                            const std::function<EncodedResult(double)>& encode,
+                                            const std::function<double(const EncodedResult&)>& achieved_by)
+        {
+            const double worst = range.higher_is_better ? range.minimum : range.maximum;
+            const double best = range.higher_is_better ? range.maximum : range.minimum;
+            const auto parameter_at = [&](const double position)
+            {
+                const double parameter = worst + position * (best - worst);
+                return range.integral ? std::round(parameter) : parameter;
+            };
+
+            EncodeToTargetResult result;
+            double closest_distance = std::numeric_limits<double>::infinity();
+            json::Value attempts = json::Value::array();
+            std::set<double> tried;
+            double low = 0.0;
+            double high = 1.0;
+            for (int iteration = 0; iteration < target.max_iterations; ++iteration)
+            {
+                const double position = (low + high) / 2.0;
+                const double parameter = parameter_at(position);
+                if (!tried.insert(parameter).second)
+                {
+                    // An integer scale has run out of values between the bounds.
+                    break;
+                }
+
+                EncodedResult encoded = encode(parameter);
+                const double achieved = achieved_by(encoded);
+                ++result.iterations;
+                attempts.push_back(json::object({{"quality_parameter", parameter}, {"achieved", achieved}}));
+
+                const double distance = std::abs(achieved - target.value);
+                if (distance < closest_distance || result.bytes.empty())
+                {
+                    closest_distance = distance;
+                    result.bytes = std::move(encoded.bytes);
+                    result.record = std::move(encoded.record);
+                    result.quality_parameter = parameter;
+                    result.achieved = achieved;
+                }
+                if (distance <= target.tolerance)
+                {
+                    result.converged = true;
+                    break;
+                }
+                (achieved < target.value ? low : high) = position;
+            }
+
+            result.record.params["target"] = target.to_json();
+            result.record.params["search"] = json::object({
+                {"method", "bisection over the encoder's quality range, from its worst quality to its best"},
+                {"attempts", attempts},
+                {"converged", result.converged},
+            });
+            return result;
+        }
+
         void validate_target(const EncodeTarget& target, const RateControl& rate_control)
         {
             if (target.tolerance <= 0.0)
@@ -402,10 +782,38 @@ namespace lossylab
     {
         validate_common(frames, options.pixel_format, options.thread_count,
                         "encode_to_target()");
-        static_cast<void>(capabilities().require_encoder(options.codec, options.backend));
+        const CodecInfo& encoder = capabilities().require_encoder(options.codec, options.backend);
         validate_target(target, options.rate_control);
+        if (target.kind == EncodeTarget::Kind::Vmaf)
+        {
+            throw NotImplemented("encode_to_target() for vmaf");
+        }
 
-        LL_NOT_IMPLEMENTED();
+        const std::optional<detail::QualityRange> range =
+            detail::plan_video_encode(encoder.name, options, options.pixel_format).quality_range;
+        if (!range.has_value())
+        {
+            throw ConfigError("encode_to_target(): '" + options.rate_control.describe() +
+                              "' has no quality range for " + encoder.name + " to search");
+        }
+
+        const DecodeSpec decode_spec = decode_spec_like(frames.front());
+        return search_quality(
+            target, *range,
+            [&](const double parameter)
+            {
+                EncodeVideoOptions attempt = options;
+                attempt.rate_control = options.rate_control.with_quality_parameter(parameter);
+                return encode_video(frames, attempt);
+            },
+            [&](const EncodedResult& encoded)
+            {
+                if (target.kind == EncodeTarget::Kind::BitsPerPixel)
+                {
+                    return *encoded.record.achieved_bpp;
+                }
+                return pooled_metric(frames, decode_encoded(encoded, decode_spec, frames.size()).frames, target.kind);
+            });
     }
 
     EncodeToTargetResult encode_to_target(const Frame& frame,
@@ -414,9 +822,41 @@ namespace lossylab
     {
         validate_common({frame}, options.pixel_format, options.thread_count,
                         "encode_to_target()");
-        static_cast<void>(capabilities().require_encoder(options.codec));
+        const CodecInfo& encoder = capabilities().require_encoder(options.codec);
         validate_target(target, options.rate_control);
+        if (target.kind == EncodeTarget::Kind::Vmaf)
+        {
+            throw NotImplemented("encode_to_target() for vmaf");
+        }
+        if (options.lossless)
+        {
+            throw ConfigError("encode_to_target(): a lossless encode has no quality to search");
+        }
 
-        LL_NOT_IMPLEMENTED();
+        const ColorSpec color = options.color.value_or(frame.color());
+        const std::optional<detail::QualityRange> range =
+            detail::plan_image_encode(encoder.name, options, options.pixel_format, color).quality_range;
+        if (!range.has_value())
+        {
+            throw ConfigError("encode_to_target(): " + encoder.name + " has no quality parameter to search");
+        }
+
+        const DecodeSpec decode_spec = decode_spec_like(frame);
+        return search_quality(
+            target, *range,
+            [&](const double parameter)
+            {
+                EncodeImageOptions attempt = options;
+                attempt.rate_control = options.rate_control.with_quality_parameter(parameter);
+                return encode_image(frame, attempt);
+            },
+            [&](const EncodedResult& encoded)
+            {
+                if (target.kind == EncodeTarget::Kind::BitsPerPixel)
+                {
+                    return *encoded.record.achieved_bpp;
+                }
+                return pooled_metric({frame}, {decode_encoded(encoded, decode_spec).frame}, target.kind);
+            });
     }
 }

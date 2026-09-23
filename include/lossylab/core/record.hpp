@@ -31,7 +31,8 @@ namespace lossylab
         Roundtrip,
         AnimateStill,
         Measure,
-        Compare
+        Compare,
+        RecompressionCurve
     };
 
     std::string to_string(StageKind kind);
