@@ -4,11 +4,11 @@
 #include "lossylab/core/error.hpp"
 #include "lossylab/core/json_io.hpp"
 #include "lossylab/core/schema_version.hpp"
+#include "lossylab/detail/ff_error.hpp"
 #include "lossylab/env/capabilities.hpp"
 #include "lossylab/io/jpeg_markers.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -1415,7 +1415,7 @@ namespace lossylab
 
     CompressionHistory compression_history(const Frame& frame, const CompressionHistoryOptions& options)
     {
-        const auto started = std::chrono::steady_clock::now();
+        const detail::StageClock clock;
         if (frame.empty())
         {
             throw ConfigError("compression_history() received an empty frame");
@@ -1560,8 +1560,8 @@ namespace lossylab
         std::stable_sort(history.traces.begin(), history.traces.end(),
                          [](const CompressionTrace& left, const CompressionTrace& right)
                          { return left.confidence > right.confidence; });
-        record.duration_ms =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        record.duration_ms = clock.duration_ms();
+        record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
         return history;
     }
 }

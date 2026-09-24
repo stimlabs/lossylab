@@ -150,12 +150,17 @@ namespace lossylab
         /// Wall-clock cost, for profiling a pipeline.
         double duration_ms = 0.0;
 
+        /// The part of `duration_ms` spent inside FFmpeg calls (opening,
+        /// reading, decoding, encoding, muxing, scaling, filtering);
+        /// `duration_ms - ffmpeg_duration_ms` is this library's own overhead.
+        double ffmpeg_duration_ms = 0.0;
+
         [[nodiscard]] json::Value to_json() const;
         static StageRecord from_json(const json::Value& value);
     };
 
     LOSSYLAB_REFLECT(StageRecord, kind, implementation, params, input, output, conversions, transform, block_grid,
-                      frames, encoder_settings, achieved_bpp, seed, reproducible, duration_ms);
+                      frames, encoder_settings, achieved_bpp, seed, reproducible, duration_ms, ffmpeg_duration_ms);
 
     /// The processing history of a frame or clip: every stage, in order.
     ///

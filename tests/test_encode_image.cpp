@@ -98,6 +98,10 @@ namespace
         assert(record.achieved_bpp.has_value() && std::abs(*record.achieved_bpp - encoded.bits_per_pixel()) < 1e-9);
         assert(record.conversions.empty());
 
+        // FFmpeg accounts for part of the stage's time, never more than all of it.
+        assert(record.ffmpeg_duration_ms > 0.0);
+        assert(record.ffmpeg_duration_ms <= record.duration_ms);
+
         // The file decodes back with the size and chroma layout it went in with.
         const Frame decoded = decode_image(Source::from_memory(encoded.bytes)).frame;
         assert(decoded.width() == 64 && decoded.height() == 48);

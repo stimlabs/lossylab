@@ -156,6 +156,7 @@ namespace lossylab
             {"seed", json::optional_or_null(seed)},
             {"reproducible", reproducible},
             {"duration_ms", duration_ms},
+            {"ffmpeg_duration_ms", ffmpeg_duration_ms},
         });
     }
 
@@ -184,6 +185,7 @@ namespace lossylab
 
         record.reproducible = json::bool_or(value, "reproducible", true);
         record.duration_ms = json::double_or(value, "duration_ms", 0.0);
+        record.ffmpeg_duration_ms = json::double_or(value, "ffmpeg_duration_ms", 0.0);
         return record;
     }
 

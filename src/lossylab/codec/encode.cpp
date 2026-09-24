@@ -6,12 +6,12 @@
 #include "lossylab/convert/convert.hpp"
 #include "lossylab/core/error.hpp"
 #include "lossylab/core/json_io.hpp"
+#include "lossylab/detail/ff_error.hpp"
 #include "lossylab/env/capabilities.hpp"
 #include "lossylab/io/decode_image.hpp"
 #include "lossylab/io/video_reader.hpp"
 #include "lossylab/measure/measure.hpp"
 
-#include <chrono>
 #include <cmath>
 #include <functional>
 #include <limits>
@@ -307,11 +307,6 @@ namespace lossylab
 
     namespace
     {
-        double elapsed_ms(const std::chrono::steady_clock::time_point started)
-        {
-            return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
-        }
-
         void require_known_options(const CodecInfo& encoder, const std::map<std::string, std::string>& options)
         {
             for (const auto& [name, value] : options)
@@ -439,6 +434,7 @@ namespace lossylab
                 {"decode", decoded.params},
             });
             record.duration_ms = encoded.duration_ms + decoded.duration_ms;
+            record.ffmpeg_duration_ms = encoded.ffmpeg_duration_ms + decoded.ffmpeg_duration_ms;
             return record;
         }
 
@@ -493,7 +489,7 @@ namespace lossylab
     EncodedResult encode_video(const std::vector<Frame>& frames,
                                const EncodeVideoOptions& options)
     {
-        const auto started = std::chrono::steady_clock::now();
+        const detail::StageClock clock;
         validate_common(frames, options.pixel_format, options.thread_count, "encode_video()");
 
         // Resolved before anything else, so a codec this build cannot provide
@@ -555,13 +551,14 @@ namespace lossylab
             {"thread_count", options.thread_count},
             {"strict", to_string(options.strict)},
         });
-        record.duration_ms = elapsed_ms(started);
+        record.duration_ms = clock.duration_ms();
+        record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
         return EncodedResult{std::move(bytes), std::move(record)};
     }
 
     EncodedResult encode_image(const Frame& frame, const EncodeImageOptions& options)
     {
-        const auto started = std::chrono::steady_clock::now();
+        const detail::StageClock clock;
         validate_common({frame}, options.pixel_format, options.thread_count, "encode_image()");
 
         const CodecInfo& encoder = capabilities().require_encoder(options.codec);
@@ -621,7 +618,8 @@ namespace lossylab
             {"thread_count", options.thread_count},
             {"strict", to_string(options.strict)},
         });
-        record.duration_ms = elapsed_ms(started);
+        record.duration_ms = clock.duration_ms();
+        record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
         return EncodedResult{std::move(bytes), std::move(record)};
     }
 

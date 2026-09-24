@@ -13,7 +13,6 @@ extern "C" {
 }
 
 #include <algorithm>
-#include <chrono>
 #include <string_view>
 #include <utility>
 
@@ -456,7 +455,7 @@ namespace lossylab
             std::int64_t count = 0;
             while (true)
             {
-                const int status = av_read_frame(&format, packet.get());
+                const int status = LL_FF_TIMED(av_read_frame(&format, packet.get()));
                 if (status == AVERROR_EOF)
                 {
                     break;
@@ -671,7 +670,7 @@ namespace lossylab
 
     void VideoReader::read(const FrameSelector& select, const std::function<bool(VideoFrame&&)>& deliver)
     {
-        const auto started = std::chrono::steady_clock::now();
+        const detail::StageClock clock;
         const VideoReaderOptions& options = m_impl->options;
         const StreamInfo& stream_info = m_impl->stream;
         const int stream_index = stream_info.index;
@@ -769,7 +768,7 @@ namespace lossylab
         {
             while (true)
             {
-                const int received = avcodec_receive_frame(decoder.get(), decoded.get());
+                const int received = LL_FF_TIMED(avcodec_receive_frame(decoder.get(), decoded.get()));
                 if (received == AVERROR(EAGAIN) || received == AVERROR_EOF)
                 {
                     return true;
@@ -787,7 +786,7 @@ namespace lossylab
         bool keep_reading = !matcher.exhausted(0);
         while (keep_reading)
         {
-            const int status = av_read_frame(&format, packet.get());
+            const int status = LL_FF_TIMED(av_read_frame(&format, packet.get()));
             if (status == AVERROR_EOF)
             {
                 break;
@@ -800,7 +799,7 @@ namespace lossylab
                 continue;
             }
 
-            const int sent = avcodec_send_packet(decoder.get(), packet.get());
+            const int sent = LL_FF_TIMED(avcodec_send_packet(decoder.get(), packet.get()));
             av_packet_unref(packet.get());
             LL_FF_CHECK(sent);
             keep_reading = drain();
@@ -834,8 +833,8 @@ namespace lossylab
             {"frames_decoded", decoded_count},
             {"frames_selected", selected_count},
         });
-        record.duration_ms =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        record.duration_ms = clock.duration_ms();
+        record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
         m_impl->record = std::move(record);
     }
 

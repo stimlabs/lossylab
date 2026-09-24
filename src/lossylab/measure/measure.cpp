@@ -22,7 +22,6 @@ extern "C" {
 
 #include <algorithm>
 #include <cctype>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -381,7 +380,7 @@ namespace lossylab
                 {
                     while (true)
                     {
-                        const int status = av_buffersink_get_frame(m_sink, filtered.get());
+                        const int status = LL_FF_TIMED(av_buffersink_get_frame(m_sink, filtered.get()));
                         if (status == AVERROR(EAGAIN) || status == AVERROR_EOF)
                         {
                             return;
@@ -461,7 +460,7 @@ namespace lossylab
                 {
                     while (true)
                     {
-                        const int status = av_buffersink_get_frame(m_sink, filtered.get());
+                        const int status = LL_FF_TIMED(av_buffersink_get_frame(m_sink, filtered.get()));
                         if (status == AVERROR(EAGAIN) || status == AVERROR_EOF)
                         {
                             return;
@@ -882,7 +881,7 @@ namespace lossylab
                           const std::vector<Analyzer>& analyzers,
                           const MeasureOptions& options)
     {
-        const auto started = std::chrono::steady_clock::now();
+        const detail::StageClock clock;
 
         if (frames.empty())
         {
@@ -990,8 +989,8 @@ namespace lossylab
             {"measured_as", measured_as},
             {"strict", to_string(options.strict)},
         });
-        record.duration_ms =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        record.duration_ms = clock.duration_ms();
+        record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
         return result;
     }
 
@@ -1005,7 +1004,7 @@ namespace lossylab
                           const std::vector<Metric>& metrics,
                           const CompareOptions& options)
     {
-        const auto started = std::chrono::steady_clock::now();
+        const detail::StageClock clock;
 
         if (reference.empty() || distorted.empty())
         {
@@ -1112,8 +1111,8 @@ namespace lossylab
             {"measured_as", measured_as},
             {"strict", to_string(options.strict)},
         });
-        record.duration_ms =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        record.duration_ms = clock.duration_ms();
+        record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
         return result;
     }
 
@@ -1257,7 +1256,7 @@ namespace lossylab
     RecompressionCurve recompression_curve(const Frame& frame,
                                            const RecompressionOptions& options)
     {
-        const auto started = std::chrono::steady_clock::now();
+        const detail::StageClock clock;
 
         if (frame.empty())
         {
@@ -1393,8 +1392,8 @@ namespace lossylab
             {"color", color.to_json()},
             {"encoder_options", json::to_object(options.encoder_options)},
         });
-        record.duration_ms =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        record.duration_ms = clock.duration_ms();
+        record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
         return curve;
     }
 }

@@ -21,6 +21,21 @@ namespace lossylab::detail
         return buffer.data();
     }
 
+    namespace
+    {
+        thread_local double t_ffmpeg_elapsed_ms = 0.0;
+    }
+
+    double ffmpeg_elapsed_ms() noexcept
+    {
+        return t_ffmpeg_elapsed_ms;
+    }
+
+    void add_ffmpeg_elapsed_ms(const double milliseconds) noexcept
+    {
+        t_ffmpeg_elapsed_ms += milliseconds;
+    }
+
     void throw_ff_error(const int averror, const char* call)
     {
         throw FFmpegError(averror, call, averror_string(averror));

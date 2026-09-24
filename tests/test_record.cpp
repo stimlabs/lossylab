@@ -216,6 +216,7 @@ namespace
         stage.encoder_settings = json::object({{"rate_control", "crf"}, {"gop", 250}});
         stage.seed = std::uint64_t{0xDEADBEEF};
         stage.duration_ms = 12.5;
+        stage.ffmpeg_duration_ms = 9.25;
         stage.conversions.push_back(
             ConversionEvent{"pix_fmt", "rgb24", "yuv420p", ConversionCause::CodecConstraint, "libx264"});
 
@@ -236,6 +237,7 @@ namespace
         assert(parsed.compression_generations() == record.compression_generations());
         assert(parsed.end_to_end_transform() == record.end_to_end_transform());
         assert(parsed.all_conversions().size() == std::size_t{1});
+        assert(parsed.to_json().at("stages").at(0).at("ffmpeg_duration_ms").get<double>() == 9.25);
 
         // Serializing twice gives byte-identical output, which is what makes
         // records comparable across runs and across classes.

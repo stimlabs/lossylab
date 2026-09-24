@@ -16,7 +16,6 @@ extern "C" {
 }
 
 #include <algorithm>
-#include <chrono>
 #include <cstring>
 #include <map>
 #include <optional>
@@ -71,7 +70,7 @@ namespace lossylab
 
             while (true)
             {
-                const int read = av_read_frame(&format, packet.get());
+                const int read = LL_FF_TIMED(av_read_frame(&format, packet.get()));
                 if (read == AVERROR_EOF)
                 {
                     break;
@@ -84,14 +83,14 @@ namespace lossylab
                     continue;
                 }
 
-                const int sent = avcodec_send_packet(&decoder, packet.get());
+                const int sent = LL_FF_TIMED(avcodec_send_packet(&decoder, packet.get()));
                 av_packet_unref(packet.get());
                 if (sent != AVERROR(EAGAIN))
                 {
                     LL_FF_CHECK(sent);
                 }
 
-                const int received = avcodec_receive_frame(&decoder, frame.get());
+                const int received = LL_FF_TIMED(avcodec_receive_frame(&decoder, frame.get()));
                 if (received == 0)
                 {
                     return frame;
@@ -105,7 +104,7 @@ namespace lossylab
             // Flush: a decoder may hold the only frame until told there is no
             // more input.
             LL_FF_CHECK(avcodec_send_packet(&decoder, nullptr));
-            const int received = avcodec_receive_frame(&decoder, frame.get());
+            const int received = LL_FF_TIMED(avcodec_receive_frame(&decoder, frame.get()));
             if (received == 0)
             {
                 return frame;
@@ -295,7 +294,7 @@ namespace lossylab
             LL_FF_CHECK(avcodec_send_packet(&decoder, &packet));
             LL_FF_CHECK(avcodec_send_packet(&decoder, nullptr));
             detail::FramePtr frame = detail::make_frame();
-            const int received = avcodec_receive_frame(&decoder, frame.get());
+            const int received = LL_FF_TIMED(avcodec_receive_frame(&decoder, frame.get()));
             avcodec_flush_buffers(&decoder);
             if (received == AVERROR_EOF)
             {
@@ -344,7 +343,7 @@ namespace lossylab
             while (true)
             {
                 detail::PacketPtr packet = detail::make_packet();
-                const int read = av_read_frame(&format, packet.get());
+                const int read = LL_FF_TIMED(av_read_frame(&format, packet.get()));
                 if (read == AVERROR_EOF)
                 {
                     break;
@@ -492,7 +491,7 @@ namespace lossylab
 
     FrameResult decode_image(const Source& source, const DecodeImageOptions& options)
     {
-        const auto started = std::chrono::steady_clock::now();
+        const detail::StageClock clock;
 
         detail::InputContext input(source);
         input.find_stream_info();
@@ -603,15 +602,13 @@ namespace lossylab
                                       converted.record.conversions.end());
             record.output = converted.frame.describe();
             record.params["converted"] = converted.record.params;
-            record.duration_ms = std::chrono::duration<double, std::milli>(
-                                     std::chrono::steady_clock::now() - started)
-                                     .count();
+            record.duration_ms = clock.duration_ms();
+            record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
             return FrameResult{std::move(converted.frame), std::move(record)};
         }
 
-        record.duration_ms =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
-                .count();
+        record.duration_ms = clock.duration_ms();
+        record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
         return FrameResult{std::move(frame), std::move(record)};
     }
 }

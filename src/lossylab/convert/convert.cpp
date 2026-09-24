@@ -6,7 +6,6 @@
 #include "lossylab/env/build_info.hpp"
 #include "lossylab/env/capabilities.hpp"
 
-#include <chrono>
 
 extern "C" {
 #include <libavutil/pixdesc.h>
@@ -165,7 +164,7 @@ namespace lossylab
 
     FrameResult convert(const Frame& frame, const ConvertOptions& options)
     {
-        const auto started = std::chrono::steady_clock::now();
+        const detail::StageClock clock;
         validate(frame, options);
 
         const PixelFormat source_format = frame.pixel_format();
@@ -186,11 +185,11 @@ namespace lossylab
         Frame output = Frame::allocate(frame.width(), frame.height(), options.pixel_format,
                                        options.color);
 
-        detail::SwsContextPtr scaler(sws_getContext(
+        detail::SwsContextPtr scaler(LL_FF_TIMED(sws_getContext(
             frame.width(), frame.height(), static_cast<AVPixelFormat>(source_format.raw()),
             frame.width(), frame.height(),
             static_cast<AVPixelFormat>(options.pixel_format.raw()),
-            sws_flag_for(kernel.kernel), nullptr, nullptr, nullptr));
+            sws_flag_for(kernel.kernel), nullptr, nullptr, nullptr)));
         if (!scaler)
         {
             throw ConfigError("swscale cannot convert " + source_format.name() + " to " +
@@ -233,9 +232,8 @@ namespace lossylab
             {"backend", to_string(options.backend)},
             {"strict", to_string(options.strict)},
         });
-        record.duration_ms =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
-                .count();
+        record.duration_ms = clock.duration_ms();
+        record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
 
         return FrameResult{std::move(output), std::move(record)};
     }
@@ -252,7 +250,7 @@ namespace lossylab
 
     FrameResult chroma_roundtrip(const Frame& frame, const ChromaRoundtripOptions& options)
     {
-        const auto started = std::chrono::steady_clock::now();
+        const detail::StageClock clock;
 
         if (frame.empty())
         {
@@ -319,9 +317,8 @@ namespace lossylab
             {"backend", to_string(options.backend)},
             {"strict", to_string(options.strict)},
         });
-        record.duration_ms =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
-                .count();
+        record.duration_ms = clock.duration_ms();
+        record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
 
         return FrameResult{std::move(back.frame), std::move(record)};
     }

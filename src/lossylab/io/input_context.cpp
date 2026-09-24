@@ -67,7 +67,7 @@ namespace lossylab::detail
         if (source.is_path())
         {
             const int status =
-                avformat_open_input(&format, source.path().c_str(), nullptr, nullptr);
+                LL_FF_TIMED(avformat_open_input(&format, source.path().c_str(), nullptr, nullptr));
             if (status < 0)
             {
                 throw FFmpegError(status, "avformat_open_input",
@@ -98,7 +98,7 @@ namespace lossylab::detail
         // callbacks above rather than trying to reopen by name.
         format->flags |= AVFMT_FLAG_CUSTOM_IO;
 
-        const int status = avformat_open_input(&format, nullptr, nullptr, nullptr);
+        const int status = LL_FF_TIMED(avformat_open_input(&format, nullptr, nullptr, nullptr));
         if (status < 0)
         {
             // On failure avformat_open_input has already freed the context.

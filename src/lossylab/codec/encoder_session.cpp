@@ -167,7 +167,7 @@ namespace lossylab::detail
             LL_FF_CHECK(av_dict_set(&raw_options, name.c_str(), value.c_str(), 0));
             m_option_names.push_back(name);
         }
-        const int opened = avcodec_open2(&context, codec, &raw_options);
+        const int opened = LL_FF_TIMED(avcodec_open2(&context, codec, &raw_options));
         const DictionaryPtr unused_options(raw_options);
         LL_FF_CHECK(opened);
         if (const AVDictionaryEntry* unused = av_dict_iterate(unused_options.get(), nullptr))
@@ -192,7 +192,7 @@ namespace lossylab::detail
 
         while (true)
         {
-            const int sent = avcodec_send_frame(m_context.get(), input.get());
+            const int sent = LL_FF_TIMED(avcodec_send_frame(m_context.get(), input.get()));
             if (sent == AVERROR(EAGAIN))
             {
                 drain();
@@ -215,7 +215,7 @@ namespace lossylab::detail
         while (true)
         {
             PacketPtr packet = make_packet();
-            const int received = avcodec_receive_packet(m_context.get(), packet.get());
+            const int received = LL_FF_TIMED(avcodec_receive_packet(m_context.get(), packet.get()));
             if (received == AVERROR(EAGAIN) || received == AVERROR_EOF)
             {
                 return;
