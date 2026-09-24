@@ -39,6 +39,9 @@ namespace lossylab::detail
         std::optional<std::vector<std::uint8_t>> icc_profile;
         std::optional<std::vector<std::uint8_t>> exif;
 
+        /// Whether an XMP chunk is present. Its payload is not read.
+        bool has_xmp = false;
+
         /// An ICCP chunk larger than the walker reads, or cut short.
         std::vector<std::string> icc_problems;
     };

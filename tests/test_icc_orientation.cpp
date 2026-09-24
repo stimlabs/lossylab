@@ -6,6 +6,7 @@
 #include <array>
 #include <cassert>
 #include <cstdio>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -104,6 +105,70 @@ namespace
         assert(stream.orientation_source == "exif");
         assert(stream.icc_profile->known_as == "Adobe RGB (1998)");
         assert(stream.image_container->compression == std::optional<std::string>("lossy"));
+    }
+
+    /// The Adobe RGB, orientation 8 WebP with its RIFF size rewritten after
+    /// `edit` changes the chunk bytes that follow the 12-byte RIFF header.
+    std::vector<std::uint8_t> oriented_webp_with_chunks(
+        const std::function<std::vector<std::uint8_t>(const std::vector<std::uint8_t>&)>& edit)
+    {
+        const std::vector<std::uint8_t> original =
+            read_file(data_path("testsrc_64x48_lossy_adobe_rgb_orientation8.webp"));
+        const std::vector<std::uint8_t> chunks = edit({original.begin() + 12, original.end()});
+        std::vector<std::uint8_t> file = {'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'E', 'B', 'P'};
+        file.insert(file.end(), chunks.begin(), chunks.end());
+        const auto riff_size = static_cast<std::uint32_t>(file.size() - 8);
+        for (int byte = 0; byte < 4; ++byte)
+        {
+            file[4 + byte] = static_cast<std::uint8_t>(riff_size >> (8 * byte));
+        }
+        return file;
+    }
+
+    void test_a_webp_exif_chunk_with_the_jpeg_prefix_still_gives_its_orientation()
+    {
+        // FFmpeg's WebP decoder rejects the "Exif\0\0" prefix. The fixture's
+        // EXIF chunk is its last: an 8-byte header and 26 bytes of payload.
+        const std::vector<std::uint8_t> file = oriented_webp_with_chunks(
+            [](const std::vector<std::uint8_t>& chunks)
+            {
+                constexpr std::size_t exif_payload_size = 26;
+                std::vector<std::uint8_t> edited(chunks.begin(), chunks.end() - (8 + exif_payload_size));
+                const std::array<std::uint8_t, 14> header_and_prefix = {'E', 'X', 'I', 'F', 32, 0, 0, 0,
+                                                                        'E', 'x', 'i', 'f', 0,  0};
+                edited.insert(edited.end(), header_and_prefix.begin(), header_and_prefix.end());
+                edited.insert(edited.end(), chunks.end() - exif_payload_size, chunks.end());
+                return edited;
+            });
+
+        const ProbeResult probed = probe(Source::from_bytes(std::vector<std::uint8_t>(file), "webp"));
+        assert(probed.streams.front().orientation == 8);
+
+        DecodeImageOptions options;
+        options.orientation = OrientationHandling::Report;
+        const FrameResult decoded = decode_image(Source::from_bytes(std::vector<std::uint8_t>(file), "webp"), options);
+        assert(decoded.record.params.at("orientation") == 8);
+    }
+
+    void test_a_webp_xmp_chunk_is_reported_as_present()
+    {
+        const StreamInfo& without = probe_stream("testsrc_64x48_lossy_adobe_rgb_orientation8.webp");
+        assert(without.image_container->has_xmp == std::optional<bool>(false));
+
+        const std::string xmp = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"/>";
+        const std::vector<std::uint8_t> file = oriented_webp_with_chunks(
+            [&xmp](std::vector<std::uint8_t> chunks)
+            {
+                chunks.insert(chunks.end(), {'X', 'M', 'P', ' ', static_cast<std::uint8_t>(xmp.size()), 0, 0, 0});
+                chunks.insert(chunks.end(), xmp.begin(), xmp.end());
+                if (xmp.size() % 2 == 1)
+                {
+                    chunks.push_back(0);
+                }
+                return chunks;
+            });
+        const ProbeResult probed = probe(Source::from_bytes(std::vector<std::uint8_t>(file), "webp"));
+        assert(probed.streams.front().image_container->has_xmp == std::optional<bool>(true));
     }
 
     void test_a_png_reports_its_exif_and_its_compressed_profile()
@@ -363,6 +428,8 @@ int main()
     test_a_missing_app2_chunk_is_a_problem();
     test_a_file_without_embedded_data_reports_their_absence();
     test_a_webp_reports_its_chunks();
+    test_a_webp_exif_chunk_with_the_jpeg_prefix_still_gives_its_orientation();
+    test_a_webp_xmp_chunk_is_reported_as_present();
     test_a_png_reports_its_exif_and_its_compressed_profile();
     test_every_png_orientation_is_read();
     test_an_avif_reports_its_rotation_property_as_an_orientation();

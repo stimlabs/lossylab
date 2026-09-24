@@ -55,11 +55,15 @@ namespace lossylab
         /// term to "animated" in the same way.
         std::optional<bool> is_still_image;
 
+        /// WebP only: whether the file has an XMP chunk. FFmpeg's WebP
+        /// decoder skips it, and lossylab does not parse it.
+        std::optional<bool> has_xmp;
+
         [[nodiscard]] json::Value to_json() const;
     };
 
     LOSSYLAB_REFLECT(ImageContainerInfo, has_alpha, is_animated, compression, frame_count, canvas_width,
-                      canvas_height, is_still_image);
+                      canvas_height, is_still_image, has_xmp);
 
     /// What a JPEG file's markers declare: how it was coded and with which
     /// tables. FFmpeg decodes JPEG without reporting any of it, and it is most

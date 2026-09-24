@@ -149,6 +149,10 @@ namespace lossylab::detail
                     }
                     (is_icc ? chunks.icc_profile : chunks.exif) = std::move(payload);
                 }
+                else if (fourcc_is(header, 0, "XMP "))
+                {
+                    chunks.has_xmp = true;
+                }
                 else if (fourcc_is(header, 0, "ANIM"))
                 {
                     chunks.is_animated = true;

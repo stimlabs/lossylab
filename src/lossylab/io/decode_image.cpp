@@ -6,6 +6,7 @@
 #include "lossylab/detail/ff_ptr.hpp"
 #include "lossylab/core/json_io.hpp"
 #include "lossylab/io/icc_profile.hpp"
+#include "lossylab/io/image_container.hpp"
 #include "lossylab/io/input_context.hpp"
 #include "lossylab/io/orientation.hpp"
 
@@ -20,6 +21,7 @@ extern "C" {
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace lossylab
@@ -499,6 +501,18 @@ namespace lossylab
         const AVStreamGroup* tile_grid = find_primary_tile_grid(format);
         DecodedImage decoded = tile_grid != nullptr ? decode_tile_grid(format, *tile_grid)
                                                     : decode_single_image(format);
+
+        // FFmpeg's WebP decoder drops an EXIF chunk that starts with the
+        // "Exif\0\0" prefix, so the chunk is read here as probe() does.
+        if (!decoded.orientation.has_value() && format.iformat != nullptr &&
+            std::string_view(format.iformat->name).find("webp") != std::string_view::npos)
+        {
+            if (const std::optional<detail::WebpChunks> chunks = detail::read_webp_chunks(source);
+                chunks.has_value() && chunks->exif.has_value())
+            {
+                decoded.orientation = detail::exif_orientation(*chunks->exif);
+            }
+        }
         Frame frame = std::move(decoded.frame);
         const std::optional<IccProfileInfo> icc_profile =
             decoded.icc_profile.has_value() ? std::optional(describe_icc_profile(*decoded.icc_profile))

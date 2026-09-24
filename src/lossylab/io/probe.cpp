@@ -377,6 +377,7 @@ namespace lossylab
         }
 
         /// The raw ICC profile and EXIF block a format walker found.
+            info.has_xmp = chunks.has_xmp;
         struct WalkedEmbedded
         {
             std::optional<std::vector<std::uint8_t>> icc_profile;
@@ -470,6 +471,7 @@ namespace lossylab
             {"ijg_quality_exact", ijg_quality_exact},
             {"huffman_tables", huffman_tables},
             {"restart_interval", restart_interval},
+            {"has_xmp", json::optional_or_null(has_xmp)},
             {"scan_count", scan_count},
             {"segments", json::array(std::move(segment_values))},
             {"comment", json::optional_or_null(comment)},
