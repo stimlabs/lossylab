@@ -351,4 +351,26 @@ namespace lossylab
     /// the record's params say why the header was not used.
     [[nodiscard]] CompressionHistory compression_history(const DecodedImage& image,
                                                          const CompressionHistoryOptions& options = {});
+
+    namespace detail
+    {
+        struct LatticeSums
+        {
+            double squared_distance = 0.0;
+            std::size_t unit_count = 0;
+        };
+
+        /// Over `count` non-negative magnitudes, the sum of their squared
+        /// distances from the lattice of steps 1 / `inverse_step`, in steps,
+        /// and how many lie nearest its first nonzero point. The magnitudes
+        /// are summed in four lanes over whole groups of four, as
+        /// lattice_sums_avx2() sums them, so that both agree to the bit.
+        [[nodiscard]] LatticeSums lattice_sums_scalar(const double* magnitudes, std::size_t count,
+                                                      double inverse_step);
+
+        /// lattice_sums_scalar() with AVX2; absent when this build or
+        /// processor has none.
+        [[nodiscard]] std::optional<LatticeSums> lattice_sums_avx2(const double* magnitudes, std::size_t count,
+                                                                   double inverse_step);
+    }
 }

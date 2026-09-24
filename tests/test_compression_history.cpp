@@ -345,6 +345,43 @@ namespace
         }
     }
 
+    void test_the_avx2_lattice_sums_equal_the_scalar_ones()
+    {
+        // Magnitudes at random, on the lattice, and exactly halfway between
+        // two of its points, where rounding decides.
+        std::mt19937 engine(5);
+        for (const int step : {2, 3, 7, 16, 64, 255})
+        {
+            std::normal_distribution<double> spread(0.0, 3.0 * step);
+            for (const std::size_t count : std::array<std::size_t, 10>{0, 1, 3, 4, 5, 7, 8, 63, 2048, 16387})
+            {
+                std::vector<double> magnitudes(count);
+                for (std::size_t index = 0; index < count; ++index)
+                {
+                    const double lattice_point = static_cast<double>(index % 5) * step;
+                    magnitudes[index] = index % 3 == 0   ? std::abs(spread(engine))
+                                        : index % 3 == 1 ? lattice_point
+                                                         : lattice_point + 0.5 * step;
+                }
+                const double inverse_step = 1.0 / step;
+                const detail::LatticeSums scalar = detail::lattice_sums_scalar(magnitudes.data(), count, inverse_step);
+                const std::optional<detail::LatticeSums> avx2 =
+                    detail::lattice_sums_avx2(magnitudes.data(), count, inverse_step);
+                if (!avx2.has_value())
+                {
+                    return;
+                }
+                assert(avx2->squared_distance == scalar.squared_distance);
+                assert(avx2->unit_count == scalar.unit_count);
+            }
+        }
+
+        // On the lattice, nothing is off it; one step out is its first point.
+        const std::vector<double> on_lattice = {8.0, 16.0, 16.0, 24.0, 8.0};
+        const detail::LatticeSums sums = detail::lattice_sums_scalar(on_lattice.data(), on_lattice.size(), 1.0 / 8);
+        assert(sums.squared_distance == 0.0 && sums.unit_count == 2);
+    }
+
     void test_a_jpeg_file_is_read_from_its_header()
     {
         EncodeImageOptions encode;
@@ -597,6 +634,7 @@ int main()
     test_an_achromatic_frame_claims_no_chroma_layout();
     test_a_webp_saved_as_rgb_shows_its_quality();
     test_a_detected_jpeg_is_swept_with_mjpeg_alone();
+    test_the_avx2_lattice_sums_equal_the_scalar_ones();
     test_a_jpeg_file_is_read_from_its_header();
     test_a_jpeg_2000_saved_as_rgb_or_gray_shows_its_ratio();
     test_the_record_serializes();

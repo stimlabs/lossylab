@@ -21,6 +21,11 @@
 #include <optional>
 #include <utility>
 
+#if defined(__GNUC__) && defined(__x86_64__)
+#include <immintrin.h>
+#define LOSSYLAB_LATTICE_AVX2 1
+#endif
+
 namespace lossylab
 {
     namespace
@@ -441,6 +446,54 @@ namespace lossylab
             }
         };
 
+#ifdef LOSSYLAB_LATTICE_AVX2
+        __attribute__((target("avx2"))) detail::LatticeSums lattice_sums_avx2_kernel(const double* magnitudes,
+                                                                                   const std::size_t count,
+                                                                                   const double inverse_step)
+        {
+            const __m256d inverse = _mm256_set1_pd(inverse_step);
+            const __m256d half = _mm256_set1_pd(0.5);
+            const __m128i one = _mm_set1_epi32(1);
+            __m256d squared_distances = _mm256_setzero_pd();
+            __m128i unit_counts = _mm_setzero_si128();
+            std::size_t index = 0;
+            for (; index + 4 <= count; index += 4)
+            {
+                const __m256d position = _mm256_mul_pd(_mm256_loadu_pd(magnitudes + index), inverse);
+                const __m128i lattice_index = _mm256_cvttpd_epi32(_mm256_add_pd(position, half));
+                const __m256d distance = _mm256_sub_pd(position, _mm256_cvtepi32_pd(lattice_index));
+                squared_distances = _mm256_add_pd(squared_distances, _mm256_mul_pd(distance, distance));
+
+                // A match compares as -1 in every bit.
+                unit_counts = _mm_sub_epi32(unit_counts, _mm_cmpeq_epi32(lattice_index, one));
+            }
+            std::array<double, 4> distance_lanes{};
+            std::array<std::int32_t, 4> unit_lanes{};
+            _mm256_storeu_pd(distance_lanes.data(), squared_distances);
+            _mm_storeu_si128(reinterpret_cast<__m128i*>(unit_lanes.data()), unit_counts);
+
+            // The fewer than four left over, then the lanes, as
+            // detail::lattice_sums_scalar() adds them.
+            detail::LatticeSums sums = detail::lattice_sums_scalar(magnitudes + index, count - index, inverse_step);
+            sums.squared_distance += (distance_lanes[0] + distance_lanes[1]) + (distance_lanes[2] + distance_lanes[3]);
+            for (const std::int32_t lane : unit_lanes)
+            {
+                sums.unit_count += static_cast<std::size_t>(lane);
+            }
+            return sums;
+        }
+#endif
+
+        detail::LatticeSums lattice_sums(const double* magnitudes, const std::size_t count, const double inverse_step)
+        {
+            if (const std::optional<detail::LatticeSums> sums =
+                    detail::lattice_sums_avx2(magnitudes, count, inverse_step))
+            {
+                return *sums;
+            }
+            return detail::lattice_sums_scalar(magnitudes, count, inverse_step);
+        }
+
         /// The quantization step, from 2 to `max_step`, whose lattice the
         /// samples fit best. A step is judged on the samples it would not
         /// quantize to zero (at least half a step from it), by 1 - 12 times
@@ -454,42 +507,52 @@ namespace lossylab
         /// step from zero. Otherwise a few samples far out, all of them at a
         /// large true step, make any of its divisors fit, while too few of
         /// them reach the true step for it to be judged.
-        LatticeFit fit_lattice(std::vector<double> values, const int max_step, const bool ac_coefficient)
+        LatticeFit fit_lattice(const std::vector<double>& values, const int max_step, const bool ac_coefficient)
         {
-            // The lattice is symmetric about zero, so only magnitudes count.
-            for (double& value : values)
+            // The lattice is symmetric about zero, so only magnitudes count. A
+            // magnitude is at least half a step when its double, rounded down,
+            // is at least the step; grouped by that, capped at `max_step`, and
+            // largest group first, every step's samples are a prefix.
+            const auto group_of = [max_step](const double magnitude)
             {
-                value = std::abs(value);
+                const double doubled = 2.0 * magnitude;
+                return doubled >= max_step ? max_step : static_cast<int>(doubled);
+            };
+            std::vector<std::size_t> at_least(static_cast<std::size_t>(max_step) + 2, 0);
+            for (const double value : values)
+            {
+                at_least[static_cast<std::size_t>(group_of(std::abs(value)))] += 1;
             }
-            std::sort(values.begin(), values.end(), std::greater<>());
+            for (int group = max_step - 1; group >= 0; --group)
+            {
+                at_least[static_cast<std::size_t>(group)] += at_least[static_cast<std::size_t>(group) + 1];
+            }
+            std::vector<double> magnitudes(at_least[2]);
+            std::vector<std::size_t> next(at_least.begin() + 1, at_least.end());
+            for (const double value : values)
+            {
+                const double magnitude = std::abs(value);
+                const int group = group_of(magnitude);
+                if (group >= 2)
+                {
+                    magnitudes[next[static_cast<std::size_t>(group)]++] = magnitude;
+                }
+            }
 
             LatticeFit best;
             std::vector<double> scores(static_cast<std::size_t>(max_step) + 1, -1.0);
             std::vector<std::size_t> counts(scores.size(), 0);
             for (int step = 2; step <= max_step; ++step)
             {
-                const double half_step = step / 2.0;
-                const auto end = std::partition_point(values.begin(), values.end(),
-                                                      [half_step](const double value) { return value >= half_step; });
-                const auto count = static_cast<std::size_t>(end - values.begin());
+                const std::size_t count = at_least[static_cast<std::size_t>(step)];
                 if (count < static_cast<std::size_t>(min_lattice_samples))
                 {
                     break;
                 }
-                const double inverse_step = 1.0 / step;
-                double squared_distance = 0.0;
-                std::size_t unit_count = 0;
-                for (auto it = values.begin(); it != end; ++it)
-                {
-                    const double position = *it * inverse_step;
 
-                    // Truncating a non-negative position plus a half rounds
-                    // it to the nearest index, as std::round does.
-                    const int index = static_cast<int>(position + 0.5);
-                    const double distance = position - index;
-                    squared_distance += distance * distance;
-                    unit_count += index == 1;
-                }
+                const detail::LatticeSums sums = lattice_sums(magnitudes.data(), count, 1.0 / step);
+                const double squared_distance = sums.squared_distance;
+                const std::size_t unit_count = sums.unit_count;
                 if (ac_coefficient &&
                     static_cast<double>(unit_count) < min_unit_share * static_cast<double>(count))
                 {
@@ -635,9 +698,9 @@ namespace lossylab
                 }
             }
             std::vector<double> probe_scores;
-            for (std::vector<double>& values : probes)
+            for (const std::vector<double>& values : probes)
             {
-                const LatticeFit fit = fit_lattice(std::move(values), 64, true);
+                const LatticeFit fit = fit_lattice(values, 64, true);
                 probe_scores.push_back(std::max(0.0, fit.lower_bound()));
             }
             std::partial_sort(probe_scores.begin(), probe_scores.begin() + scored_probes, probe_scores.end(),
@@ -787,7 +850,7 @@ namespace lossylab
             double total_score = 0.0;
             for (std::size_t i = 0; i < coefficients.size(); ++i)
             {
-                const LatticeFit fit = fit_lattice(std::move(coefficients[i]), 255, i != 0);
+                const LatticeFit fit = fit_lattice(coefficients[i], 255, i != 0);
                 if (fit.step != 0 && fit.score >= min_step_score)
                 {
                     table.values[i] = fit.step;
@@ -1944,5 +2007,55 @@ namespace lossylab
             throw ConfigError("compression_history() received an empty frame");
         }
         return analyze(image.frame, options, read_jpeg_header(image));
+    }
+
+    detail::LatticeSums detail::lattice_sums_scalar(const double* magnitudes, const std::size_t count,
+                                                    const double inverse_step)
+    {
+        const auto add = [inverse_step](const double magnitude, double& squared_distance, std::size_t& unit_count)
+        {
+            const double position = magnitude * inverse_step;
+
+            // Truncating a non-negative position plus a half rounds it to the
+            // nearest lattice index, as std::round does.
+            const int lattice_index = static_cast<int>(position + 0.5);
+            const double distance = position - lattice_index;
+            squared_distance += distance * distance;
+            unit_count += lattice_index == 1;
+        };
+
+        std::array<double, 4> lanes{};
+        std::size_t unit_count = 0;
+        std::size_t index = 0;
+        for (; index + 4 <= count; index += 4)
+        {
+            for (std::size_t lane = 0; lane < lanes.size(); ++lane)
+            {
+                add(magnitudes[index + lane], lanes[lane], unit_count);
+            }
+        }
+        double rest = 0.0;
+        for (; index < count; ++index)
+        {
+            add(magnitudes[index], rest, unit_count);
+        }
+        return LatticeSums{rest + ((lanes[0] + lanes[1]) + (lanes[2] + lanes[3])), unit_count};
+    }
+
+    std::optional<detail::LatticeSums> detail::lattice_sums_avx2(const double* magnitudes, const std::size_t count,
+                                                                 const double inverse_step)
+    {
+#ifdef LOSSYLAB_LATTICE_AVX2
+        static const bool has_avx2 = __builtin_cpu_supports("avx2");
+        if (has_avx2)
+        {
+            return lattice_sums_avx2_kernel(magnitudes, count, inverse_step);
+        }
+#else
+        static_cast<void>(magnitudes);
+        static_cast<void>(count);
+        static_cast<void>(inverse_step);
+#endif
+        return std::nullopt;
     }
 }
