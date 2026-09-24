@@ -8,8 +8,8 @@ that stage:
   - decode: the decode's record (still images only); the image is decoded as the file tags its color
   - measure: signal levels, blockiness, blurriness, noise, letterbox
   - compression_history: traces of earlier lossy compression (compression_history() with its defaults): JPEG
-    quantization tables read off the pixels, with the libjpeg quality and chroma subsampling they imply; chroma
-    upsampled from 4:2:0, 4:2:2 or 4:4:0; and a WebP recompression curve
+    quantization tables, from a JPEG file's header or read off the pixels of any other file, with the libjpeg quality
+    and chroma subsampling they imply; chroma upsampled from 4:2:0, 4:2:2 or 4:4:0; and a WebP recompression curve
 
 Run as:
 
@@ -38,10 +38,13 @@ Measurement caveats:
     Expect false positives on screenshots and graphics.
   - compression_history() recovers libjpeg quality 30 to 95 and the chroma subsampling of JPEGs saved losslessly, also
     after a crop, and WebP quality to within a few steps on detailed content; see its documentation for the limits.
-    Nothing survives a resize after the last compression, and JPEG qualities above about 95 leave no lattice to find.
+    Nothing survives a resize after the last compression, and in a file that is not itself a JPEG, JPEG qualities
+    above about 95 leave no lattice to find.
   - JPEG quantization table recognition is limited to libjpeg. Other encoders (camera
     firmware, Photoshop, FFmpeg, mozjpeg) report "not exact libjpeg" with a quality estimate.
 """
+
+from __future__ import annotations
 
 import argparse
 import collections
@@ -132,8 +135,9 @@ def find_groups(directory: Path, group_depth: int, name_patterns: NamePatterns) 
         for group in groups:
             matching_paths, group_subdirectories = scan_directory(directory / group, name_patterns)
             num_ungrouped += len(matching_paths)
-            subdirectories.extend(f"{group}/{subdirectory.name}" if group else subdirectory.name
-                                  for subdirectory in group_subdirectories)
+            subdirectories.extend(
+                f"{group}/{subdirectory.name}" if group else subdirectory.name for subdirectory in group_subdirectories
+            )
         groups = subdirectories
     return sorted(groups), num_ungrouped
 
@@ -229,7 +233,7 @@ def audit_still_image(source: lossylab.Source, line: dict) -> None:
     measure_result = lossylab.capture_measure(source, [decoded_image.frame], ANALYZERS, measure_options)
     line["measure"] = measure_result.to_dict()
 
-    compression_history_result = lossylab.capture_compression_history(source, decoded_image.frame)
+    compression_history_result = lossylab.capture_compression_history(source, decoded_image)
     line["compression_history"] = compression_history_result.to_dict()
 
 

@@ -32,11 +32,15 @@ def through(image, image_format, **save_options):
     return Image.open(io.BytesIO(buffer.getvalue()))
 
 
-def as_png(image):
-    """The image saved as a PNG and decoded by lossylab, as an audit meets it."""
+def as_png_bytes(image):
     buffer = io.BytesIO()
     image.save(buffer, "PNG")
-    return lossylab.decode_image(lossylab.Source.from_memory(buffer.getvalue())).frame
+    return buffer.getvalue()
+
+
+def as_png(image):
+    """The image saved as a PNG and decoded by lossylab, as an audit meets it."""
+    return lossylab.decode_image(lossylab.Source.from_memory(as_png_bytes(image))).frame
 
 
 def traces_of(history, evidence):
@@ -182,3 +186,77 @@ def test_capture_compression_history_serializes():
     assert document["record"]["kind"] == "compression_history"
     assert any(trace["evidence"] == "jpeg_quantization" for trace in document["traces"])
     assert result.value().to_dict()["jpeg"]["ijg_quality"] == 75
+
+
+def jpeg_bytes(image, **save_options):
+    buffer = io.BytesIO()
+    image.save(buffer, "JPEG", **save_options)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize("quality", [75, 95, 100])
+@pytest.mark.parametrize(
+    ("subsampling", "expected"),
+    [(0, lossylab.Subsampling.Yuv444), (1, lossylab.Subsampling.Yuv422), (2, lossylab.Subsampling.Yuv420)],
+)
+def test_a_jpeg_file_is_read_from_its_header(quality, subsampling, expected):
+    image = lossylab.decode_image(
+        lossylab.Source.from_memory(jpeg_bytes(texture(), quality=quality, subsampling=subsampling))
+    )
+    history = lossylab.compression_history(image, without_recompression())
+    params = history.record.to_dict()["params"]
+    assert params["jpeg_tables"] == "header"
+    assert params["jpeg_header_unused"] is None
+    assert history.jpeg.detected
+    assert history.jpeg.ijg_quality == quality and history.jpeg.ijg_match == 1.0
+    assert history.jpeg.chroma_subsampling == expected
+    assert history.jpeg.grid_score is None and history.jpeg.luma.lattice_score is None
+    [trace] = traces_of(history, lossylab.TraceEvidence.JpegHeader)
+    assert trace.quality == quality and trace.confidence == 1.0
+    assert traces_of(history, lossylab.TraceEvidence.JpegQuantization) == []
+
+
+def test_a_quality_100_jpeg_file_is_found_only_from_its_header():
+    data = jpeg_bytes(texture(), quality=100)
+    image = lossylab.decode_image(lossylab.Source.from_memory(data))
+    assert list(lossylab.compression_history(image, without_recompression()).jpeg.luma.values) == [1] * 64
+    assert not lossylab.compression_history(image.frame, without_recompression()).jpeg.detected
+
+
+def test_the_header_is_not_used_for_a_frame_it_does_not_describe():
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    rotated = lossylab.Source.from_memory(jpeg_bytes(texture(), quality=75, exif=exif))
+    options = lossylab.DecodeImageOptions()
+    options.orientation = lossylab.OrientationHandling.Apply
+    cmyk = lossylab.Source.from_memory(jpeg_bytes(Image.new("CMYK", (64, 64), (10, 20, 30, 40)), quality=80))
+    png = lossylab.Source.from_memory(as_png_bytes(texture()))
+    for image, reason in [
+        (lossylab.decode_image(rotated, options), "its orientation was applied"),
+        (lossylab.decode_image(cmyk), "a JPEG of 4 components"),
+        (lossylab.decode_image(png), "not a JPEG file"),
+    ]:
+        params = lossylab.compression_history(image, without_recompression()).record.to_dict()["params"]
+        assert params["jpeg_tables"] == "pixels"
+        assert params["jpeg_header_unused"] == reason
+
+
+def test_the_pixel_check_agrees_with_the_header():
+    options = without_recompression()
+    options.jpeg_pixel_check = True
+    image = lossylab.decode_image(lossylab.Source.from_memory(jpeg_bytes(texture(), quality=75)))
+    history = lossylab.compression_history(image, options)
+    assert history.jpeg_pixel_check.detected
+    check = history.record.to_dict()["params"]["jpeg_pixel_check"]
+    assert check["ijg_quality_equal"]
+    assert check["luma"]["matching"] == check["luma"]["determined"]
+    assert lossylab.compression_history(image, without_recompression()).jpeg_pixel_check is None
+
+
+def test_capture_compression_history_takes_a_decoded_image():
+    source = lossylab.Source.from_memory(jpeg_bytes(texture(), quality=75))
+    result = lossylab.capture_compression_history(source, lossylab.decode_image(source))
+    assert result
+    document = result.to_dict()["value"]
+    assert [trace["evidence"] for trace in document["traces"]] == ["jpeg_header"]
+    assert document["jpeg"]["grid_score"] is None

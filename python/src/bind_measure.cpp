@@ -79,6 +79,7 @@ namespace lossylab::pybind
             .value("Triangle", ChromaUpsampling::Triangle);
 
         nb::enum_<TraceEvidence>(m, "TraceEvidence")
+            .value("JpegHeader", TraceEvidence::JpegHeader)
             .value("JpegQuantization", TraceEvidence::JpegQuantization)
             .value("ChromaSubsampling", TraceEvidence::ChromaSubsampling)
             .value("Recompression", TraceEvidence::Recompression);
@@ -91,7 +92,11 @@ namespace lossylab::pybind
 
         bind_reflected<CompressionHistory>(m, "CompressionHistory");
 
-        m.def("compression_history", &compression_history, "frame"_a, "options"_a = CompressionHistoryOptions{},
-              nb::call_guard<nb::gil_scoped_release>());
+        m.def("compression_history",
+              nb::overload_cast<const Frame&, const CompressionHistoryOptions&>(&compression_history), "frame"_a,
+              "options"_a = CompressionHistoryOptions{}, nb::call_guard<nb::gil_scoped_release>());
+        m.def("compression_history",
+              nb::overload_cast<const DecodedImage&, const CompressionHistoryOptions&>(&compression_history),
+              "image"_a, "options"_a = CompressionHistoryOptions{}, nb::call_guard<nb::gil_scoped_release>());
     }
 }

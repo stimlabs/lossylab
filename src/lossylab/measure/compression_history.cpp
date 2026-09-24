@@ -795,10 +795,7 @@ namespace lossylab
                     total_score += fit.score;
                 }
             }
-            if (table.determined > 0)
-            {
-                table.lattice_score = total_score / table.determined;
-            }
+            table.lattice_score = table.determined > 0 ? total_score / table.determined : 0.0;
             match_ijg_quality(table, standard_table);
             return estimate;
         }
@@ -1333,8 +1330,10 @@ namespace lossylab
             // Only a sweep whose confidence can list a trace is refined.
             const double refine_confidence = std::max(min_refine_confidence, options.min_confidence);
 
-            const bool jpeg_only = history.jpeg.has_value() && history.jpeg->detected &&
-                                   history.jpeg->grid_score > min_jpeg_only_grid_score;
+            // A header declares a JPEG outright and leaves the grid score absent.
+            const bool jpeg_only =
+                history.jpeg.has_value() && history.jpeg->detected &&
+                (!history.jpeg->grid_score.has_value() || *history.jpeg->grid_score > min_jpeg_only_grid_score);
 
             // Lossy WebP codes 4:2:0 alone, so 4:4:4 chroma is not swept with it.
             const bool full_resolution_chroma =
@@ -1456,6 +1455,378 @@ namespace lossylab
                 {"errors", errors},
             });
         }
+
+        /// The libjpeg quality `evidence`'s luma table agrees with best, the
+        /// chroma table breaking ties when it matches a libjpeg table itself.
+        void add_joint_ijg_quality(JpegQuantizationEvidence& evidence)
+        {
+            std::vector<std::pair<const QuantizationEstimate*, const std::array<int, 64>*>> tables = {
+                {&evidence.luma, &detail::standard_luminance_table}};
+            if (evidence.chroma.has_value() && evidence.chroma->ijg_match >= min_tie_breaking_match)
+            {
+                tables.emplace_back(&*evidence.chroma, &detail::standard_chrominance_table);
+            }
+            const IjgMatch joint = match_ijg_quality(tables);
+            evidence.ijg_quality = joint.quality;
+            evidence.ijg_quality_lowest = joint.lowest;
+            evidence.ijg_quality_highest = joint.highest;
+            evidence.ijg_match = joint.match;
+        }
+
+        CompressionTrace jpeg_trace(const JpegQuantizationEvidence& evidence, const TraceEvidence kind,
+                                    const double confidence)
+        {
+            CompressionTrace trace;
+            trace.evidence = kind;
+            trace.codec = ImageCodec::Mjpeg;
+            if (evidence.ijg_quality.has_value() && evidence.ijg_match >= min_quality_match)
+            {
+                trace.quality = *evidence.ijg_quality;
+            }
+            trace.quality_scale = "libjpeg quality, an integer from 1 to 100, higher is better";
+            trace.subsampling = evidence.chroma_subsampling;
+            trace.confidence = confidence;
+            return trace;
+        }
+
+        /// The JPEG quantization the pixels show, with every luma grid
+        /// offset's screening score put in `luma_grid_scores`; absent for
+        /// planes too small for an 8x8 grid.
+        std::optional<JpegQuantizationEvidence> pixel_jpeg_evidence(
+            const WorkingPlanes& planes, const std::optional<ChromaPairing>& pairing,
+            const std::optional<ChromaSubsamplingEvidence>& chroma, json::Value& luma_grid_scores)
+        {
+            if (planes.luma.width < 16 || planes.luma.height < 16)
+            {
+                return std::nullopt;
+            }
+            const GridEstimate luma = estimate_quantization({&planes.luma}, detail::standard_luminance_table);
+            luma_grid_scores = luma.grid_scores;
+            JpegQuantizationEvidence evidence;
+            evidence.grid_x = luma.grid_x;
+            evidence.grid_y = luma.grid_y;
+            evidence.grid_score = luma.grid_score;
+            evidence.runner_up_grid_score = luma.runner_up_grid_score;
+            evidence.blocks = luma.blocks;
+            evidence.luma = luma.table;
+            evidence.detected = luma.grid_score >= min_grid_score &&
+                                luma.grid_score - luma.runner_up_grid_score >= min_grid_margin &&
+                                luma.table.determined >= min_determined_steps;
+            if (!evidence.detected)
+            {
+                return evidence;
+            }
+            if (planes.cb.empty())
+            {
+                evidence.chroma_subsampling = Subsampling::Gray;
+            }
+            else if (!planes.achromatic)
+            {
+                add_chroma_quantization(planes, pairing, chroma, evidence);
+                if (!evidence.chroma_subsampling.has_value() && chroma.has_value())
+                {
+                    evidence.chroma_subsampling = chroma->subsampling;
+                }
+            }
+            add_joint_ijg_quality(evidence);
+            return evidence;
+        }
+
+        /// What a JPEG file's header declares about a decoded image, or why
+        /// it does not describe the image's frame.
+        struct HeaderReading
+        {
+            std::optional<JpegQuantizationEvidence> evidence;
+            std::string unused_because;
+        };
+
+        /// The chroma layout of a gray or YCbCr JPEG's sampling factors;
+        /// absent when a chroma component is itself subsampled or the factors
+        /// match no layout.
+        std::optional<Subsampling> jpeg_layout(const std::vector<JpegInfo::Component>& components)
+        {
+            if (components.size() == 1)
+            {
+                return Subsampling::Gray;
+            }
+            for (std::size_t index = 1; index < components.size(); ++index)
+            {
+                if (components[index].horizontal_sampling != 1 || components[index].vertical_sampling != 1)
+                {
+                    return std::nullopt;
+                }
+            }
+            const std::pair<int, int> factors{components[0].horizontal_sampling, components[0].vertical_sampling};
+            if (factors == std::pair{1, 1}) { return Subsampling::Yuv444; }
+            if (factors == std::pair{2, 1}) { return Subsampling::Yuv422; }
+            if (factors == std::pair{1, 2}) { return Subsampling::Yuv440; }
+            if (factors == std::pair{2, 2}) { return Subsampling::Yuv420; }
+            if (factors == std::pair{4, 1}) { return Subsampling::Yuv411; }
+            return std::nullopt;
+        }
+
+        /// The table a JPEG defines under `id`; absent when it defines none,
+        /// or different ones one after another.
+        std::optional<std::array<int, 64>> jpeg_table(const JpegInfo& jpeg, const int id)
+        {
+            std::optional<std::array<int, 64>> found;
+            for (const JpegInfo::QuantizationTable& table : jpeg.quantization_tables)
+            {
+                if (table.id != id)
+                {
+                    continue;
+                }
+                if (found.has_value() && *found != table.values)
+                {
+                    return std::nullopt;
+                }
+                found = table.values;
+            }
+            return found;
+        }
+
+        QuantizationEstimate declared_table(const std::array<int, 64>& values,
+                                            const std::array<int, 64>& standard_table)
+        {
+            QuantizationEstimate table;
+            table.values = values;
+            table.determined = static_cast<int>(values.size());
+            match_ijg_quality(table, standard_table);
+            return table;
+        }
+
+        HeaderReading read_jpeg_header(const DecodedImage& image)
+        {
+            const auto unused = [](std::string reason) { return HeaderReading{std::nullopt, std::move(reason)}; };
+            if (image.tile_grid() != nullptr)
+            {
+                return unused("a tile grid");
+            }
+            const StreamInfo& stream = image.stream();
+            if (!stream.jpeg.has_value())
+            {
+                return unused("not a JPEG file");
+            }
+            const json::Value& decode_params = image.record.params;
+            if (!decode_params.contains("orientation_handling") ||
+                decode_params.at("orientation_handling").get<std::string>() != "reported")
+            {
+                return unused("its orientation was applied");
+            }
+            if (decode_params.contains("converted"))
+            {
+                return unused("it was converted on decode");
+            }
+            if (image.frame.describe() != image.record.output || image.frame.pixel_format() != stream.pixel_format)
+            {
+                return unused("the frame is not the file's decode as stored");
+            }
+
+            const JpegInfo& jpeg = *stream.jpeg;
+            if (jpeg.precision != 8)
+            {
+                return unused("a " + std::to_string(jpeg.precision) + "-bit JPEG");
+            }
+            if (jpeg.process == "lossless" || jpeg.process == "hierarchical")
+            {
+                return unused("a " + jpeg.process + " JPEG");
+            }
+            if (jpeg.components.size() != 1 && jpeg.components.size() != 3)
+            {
+                return unused("a JPEG of " + std::to_string(jpeg.components.size()) + " components");
+            }
+            if (jpeg.adobe_transform == 0)
+            {
+                return unused("a JPEG coded in RGB");
+            }
+            const std::optional<Subsampling> layout = jpeg_layout(jpeg.components);
+            if (!layout.has_value())
+            {
+                return unused("sampling factors of no known chroma layout");
+            }
+            const std::optional<std::array<int, 64>> luma = jpeg_table(jpeg, jpeg.components[0].quantization_table);
+            if (!luma.has_value())
+            {
+                return unused("no single luma table");
+            }
+
+            JpegQuantizationEvidence evidence;
+            evidence.detected = true;
+            evidence.luma = declared_table(*luma, detail::standard_luminance_table);
+            evidence.chroma_subsampling = layout;
+            if (jpeg.components.size() == 3)
+            {
+                if (jpeg.components[1].quantization_table != jpeg.components[2].quantization_table)
+                {
+                    return unused("different Cb and Cr tables");
+                }
+                const std::optional<std::array<int, 64>> chroma =
+                    jpeg_table(jpeg, jpeg.components[1].quantization_table);
+                if (!chroma.has_value())
+                {
+                    return unused("no single chroma table");
+                }
+                evidence.chroma = declared_table(*chroma, detail::standard_chrominance_table);
+            }
+            add_joint_ijg_quality(evidence);
+            return HeaderReading{std::move(evidence), ""};
+        }
+
+        /// How many of the steps the pixels determine equal the header's.
+        json::Value table_agreement(const QuantizationEstimate* pixels, const QuantizationEstimate* header)
+        {
+            if (pixels == nullptr || header == nullptr)
+            {
+                return {};
+            }
+            int matching = 0;
+            for (std::size_t index = 0; index < pixels->values.size(); ++index)
+            {
+                matching += pixels->values[index] != 0 && pixels->values[index] == header->values[index];
+            }
+            return json::object({{"determined", pixels->determined}, {"matching", matching}});
+        }
+
+        CompressionHistory analyze(const Frame& frame, const CompressionHistoryOptions& options,
+                                   const HeaderReading& header)
+        {
+            const detail::StageClock clock;
+            if (frame.empty())
+            {
+                throw ConfigError("compression_history() received an empty frame");
+            }
+            if (options.recompression_crop < 0)
+            {
+                throw ConfigError("compression_history() recompression_crop must not be negative");
+            }
+
+            CompressionHistory history;
+            StageRecord& record = history.record;
+            record.kind = StageKind::CompressionHistory;
+            record.implementation = "lossylab";
+            record.input = frame.describe();
+            record.output = record.input;
+            record.transform = CoordinateTransform::identity();
+
+            const WorkingPlanes planes = working_planes(frame, record.conversions);
+            const bool has_chroma = !planes.cb.empty() && !planes.achromatic;
+
+            // A frame still in subsampled YUV says its layout itself; converting
+            // it to RGB for analysis upsamples its chroma, which is not a trace.
+            const Subsampling frame_layout = frame.pixel_format().subsampling();
+            const bool full_resolution_chroma =
+                frame_layout == Subsampling::Rgb || frame_layout == Subsampling::Yuv444;
+            std::optional<ChromaPairing> pairing;
+            if (has_chroma && planes.chroma_layout == Subsampling::Yuv444 && full_resolution_chroma)
+            {
+                pairing =
+                    ChromaPairing{pair_axis(planes.cb, planes.cr, true), pair_axis(planes.cb, planes.cr, false)};
+                history.chroma = subsampling_evidence(*pairing);
+                if (!history.chroma->subsampling.has_value())
+                {
+                    pairing.reset();
+                }
+            }
+
+            json::Value luma_grid_scores;
+            json::Value pixel_check;
+            if (header.evidence.has_value())
+            {
+                history.jpeg = header.evidence;
+                CompressionTrace trace = jpeg_trace(*header.evidence, TraceEvidence::JpegHeader, 1.0);
+                if (trace.confidence >= options.min_confidence)
+                {
+                    history.traces.push_back(std::move(trace));
+                }
+                if (options.jpeg_pixel_check)
+                {
+                    history.jpeg_pixel_check = pixel_jpeg_evidence(planes, pairing, history.chroma, luma_grid_scores);
+                    if (history.jpeg_pixel_check.has_value())
+                    {
+                        const JpegQuantizationEvidence& pixels = *history.jpeg_pixel_check;
+                        pixel_check = json::object({
+                            {"detected", pixels.detected},
+                            {"ijg_quality_equal", pixels.ijg_quality == header.evidence->ijg_quality},
+                            {"luma", table_agreement(&pixels.luma, &header.evidence->luma)},
+                            {"chroma", table_agreement(pixels.chroma ? &*pixels.chroma : nullptr,
+                                                       header.evidence->chroma ? &*header.evidence->chroma : nullptr)},
+                        });
+                    }
+                }
+            }
+            else
+            {
+                history.jpeg = pixel_jpeg_evidence(planes, pairing, history.chroma, luma_grid_scores);
+                if (history.jpeg.has_value() && history.jpeg->detected)
+                {
+                    CompressionTrace trace = jpeg_trace(*history.jpeg, TraceEvidence::JpegQuantization,
+                                                        std::min(1.0, *history.jpeg->grid_score));
+                    if (trace.confidence >= options.min_confidence)
+                    {
+                        history.traces.push_back(std::move(trace));
+                    }
+                }
+            }
+
+            if (history.chroma.has_value() && history.chroma->subsampling.has_value() &&
+                *history.chroma->subsampling != Subsampling::Yuv444 &&
+                history.chroma->confidence >= options.min_confidence)
+            {
+                CompressionTrace trace;
+                trace.evidence = TraceEvidence::ChromaSubsampling;
+                trace.subsampling = history.chroma->subsampling;
+                trace.confidence = history.chroma->confidence;
+                history.traces.push_back(std::move(trace));
+            }
+
+            json::Value params = json::object({
+                {"analyzed_as", planes.analyzed_as},
+                {"chroma", planes.cb.empty()   ? "none"
+                           : planes.achromatic ? "achromatic"
+                                               : to_string(planes.chroma_layout)},
+                {"jpeg_tables", header.evidence.has_value() ? "header" : "pixels"},
+                {"jpeg_header_unused", header.evidence.has_value() ? json::Value() : json::Value(header.unused_because)},
+                {"jpeg_pixel_check", pixel_check},
+                {"jpeg_quantization", json::object({
+                                          {"dct", "8x8 orthonormal DCT-II of YCbCr - 128, as JPEG's"},
+                                          {"grid_score", "mean of the 5 best AC lattice fits, each less two "
+                                                         "standard deviations of its noise"},
+                                          {"max_screening_blocks", max_screening_blocks},
+                                          {"rescored_offsets", rescored_offsets},
+                                          {"min_decisive_screening_score", min_decisive_screening_score},
+                                          {"max_grid_blocks", max_grid_blocks},
+                                          {"max_table_blocks", max_table_blocks},
+                                          {"min_lattice_samples", min_lattice_samples},
+                                          {"min_unit_share", min_unit_share},
+                                          {"min_step_score", min_step_score},
+                                          {"min_grid_score", min_grid_score},
+                                          {"min_grid_margin", min_grid_margin},
+                                          {"min_determined_steps", min_determined_steps},
+                                          {"min_tie_breaking_match", min_tie_breaking_match},
+                                          {"min_quality_match", min_quality_match},
+                                          {"luma_grid_scores", luma_grid_scores},
+                                      })},
+                {"chroma_subsampling", json::object({
+                                           {"upsamplings", json::array({"triangle", "replicate"})},
+                                           {"max_residual", max_upsampled_residual},
+                                           {"max_phase_ratio", max_phase_ratio},
+                                           {"max_phase_ratio_alone", max_phase_ratio_alone},
+                                           {"max_upsampling_ratio", max_upsampling_ratio},
+                                           {"max_lines", max_pairing_lines},
+                                           {"achromatic_limit", achromatic_limit},
+                                       })},
+                {"min_confidence", options.min_confidence},
+            });
+            add_recompression(frame, options, history, params);
+            record.params = std::move(params);
+
+            std::stable_sort(history.traces.begin(), history.traces.end(),
+                             [](const CompressionTrace& left, const CompressionTrace& right)
+                             { return left.confidence > right.confidence; });
+            record.duration_ms = clock.duration_ms();
+            record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
+            return history;
+        }
     }
 
     std::string to_string(const ChromaUpsampling upsampling)
@@ -1474,6 +1845,7 @@ namespace lossylab
     {
         switch (evidence)
         {
+        case TraceEvidence::JpegHeader: return "jpeg_header";
         case TraceEvidence::JpegQuantization: return "jpeg_quantization";
         case TraceEvidence::ChromaSubsampling: return "chroma_subsampling";
         case TraceEvidence::Recompression: return "recompression";
@@ -1483,6 +1855,7 @@ namespace lossylab
 
     TraceEvidence trace_evidence_from_string(const std::string_view name)
     {
+        if (name == "jpeg_header") { return TraceEvidence::JpegHeader; }
         if (name == "jpeg_quantization") { return TraceEvidence::JpegQuantization; }
         if (name == "chroma_subsampling") { return TraceEvidence::ChromaSubsampling; }
         if (name == "recompression") { return TraceEvidence::Recompression; }
@@ -1496,7 +1869,7 @@ namespace lossylab
             {"determined", determined},
             {"ijg_quality", json::optional_or_null(ijg_quality)},
             {"ijg_match", ijg_match},
-            {"lattice_score", lattice_score},
+            {"lattice_score", json::optional_or_null(lattice_score)},
         });
     }
 
@@ -1506,9 +1879,9 @@ namespace lossylab
             {"detected", detected},
             {"grid_x", grid_x},
             {"grid_y", grid_y},
-            {"grid_score", grid_score},
-            {"runner_up_grid_score", runner_up_grid_score},
-            {"blocks", blocks},
+            {"grid_score", json::optional_or_null(grid_score)},
+            {"runner_up_grid_score", json::optional_or_null(runner_up_grid_score)},
+            {"blocks", json::optional_or_null(blocks)},
             {"luma", luma.to_json()},
             {"chroma", json::optional_or_null(chroma)},
             {"chroma_subsampling", enum_or_null(chroma_subsampling)},
@@ -1552,6 +1925,7 @@ namespace lossylab
             {"schema_version", schema_version},
             {"traces", json::to_array(traces)},
             {"jpeg", json::optional_or_null(jpeg)},
+            {"jpeg_pixel_check", json::optional_or_null(jpeg_pixel_check)},
             {"chroma", json::optional_or_null(chroma)},
             {"recompression_curves", json::to_array(recompression_curves)},
             {"record", record.to_json()},
@@ -1560,156 +1934,15 @@ namespace lossylab
 
     CompressionHistory compression_history(const Frame& frame, const CompressionHistoryOptions& options)
     {
-        const detail::StageClock clock;
-        if (frame.empty())
+        return analyze(frame, options, HeaderReading{std::nullopt, "only a frame was given"});
+    }
+
+    CompressionHistory compression_history(const DecodedImage& image, const CompressionHistoryOptions& options)
+    {
+        if (image.frame.empty())
         {
             throw ConfigError("compression_history() received an empty frame");
         }
-        if (options.recompression_crop < 0)
-        {
-            throw ConfigError("compression_history() recompression_crop must not be negative");
-        }
-
-        CompressionHistory history;
-        StageRecord& record = history.record;
-        record.kind = StageKind::CompressionHistory;
-        record.implementation = "lossylab";
-        record.input = frame.describe();
-        record.output = record.input;
-        record.transform = CoordinateTransform::identity();
-
-        const WorkingPlanes planes = working_planes(frame, record.conversions);
-        const bool has_chroma = !planes.cb.empty() && !planes.achromatic;
-
-        // A frame still in subsampled YUV says its layout itself; converting it
-        // to RGB for analysis upsamples its chroma, which is not a trace.
-        const Subsampling frame_layout = frame.pixel_format().subsampling();
-        const bool full_resolution_chroma = frame_layout == Subsampling::Rgb || frame_layout == Subsampling::Yuv444;
-        std::optional<ChromaPairing> pairing;
-        if (has_chroma && planes.chroma_layout == Subsampling::Yuv444 && full_resolution_chroma)
-        {
-            pairing = ChromaPairing{pair_axis(planes.cb, planes.cr, true), pair_axis(planes.cb, planes.cr, false)};
-            history.chroma = subsampling_evidence(*pairing);
-            if (!history.chroma->subsampling.has_value())
-            {
-                pairing.reset();
-            }
-        }
-
-        json::Value luma_grid_scores;
-        if (planes.luma.width >= 16 && planes.luma.height >= 16)
-        {
-            const GridEstimate luma = estimate_quantization({&planes.luma}, detail::standard_luminance_table);
-            luma_grid_scores = luma.grid_scores;
-            JpegQuantizationEvidence evidence;
-            evidence.grid_x = luma.grid_x;
-            evidence.grid_y = luma.grid_y;
-            evidence.grid_score = luma.grid_score;
-            evidence.runner_up_grid_score = luma.runner_up_grid_score;
-            evidence.blocks = luma.blocks;
-            evidence.luma = luma.table;
-            evidence.detected = luma.grid_score >= min_grid_score &&
-                                luma.grid_score - luma.runner_up_grid_score >= min_grid_margin &&
-                                luma.table.determined >= min_determined_steps;
-            if (evidence.detected)
-            {
-                if (planes.cb.empty())
-                {
-                    evidence.chroma_subsampling = Subsampling::Gray;
-                }
-                else if (!planes.achromatic)
-                {
-                    add_chroma_quantization(planes, pairing, history.chroma, evidence);
-                    if (!evidence.chroma_subsampling.has_value() && history.chroma.has_value())
-                    {
-                        evidence.chroma_subsampling = history.chroma->subsampling;
-                    }
-                }
-
-                std::vector<std::pair<const QuantizationEstimate*, const std::array<int, 64>*>> tables = {
-                    {&evidence.luma, &detail::standard_luminance_table}};
-                if (evidence.chroma.has_value() && evidence.chroma->ijg_match >= min_tie_breaking_match)
-                {
-                    tables.emplace_back(&*evidence.chroma, &detail::standard_chrominance_table);
-                }
-                const IjgMatch joint = match_ijg_quality(tables);
-                evidence.ijg_quality = joint.quality;
-                evidence.ijg_quality_lowest = joint.lowest;
-                evidence.ijg_quality_highest = joint.highest;
-                evidence.ijg_match = joint.match;
-
-                CompressionTrace trace;
-                trace.evidence = TraceEvidence::JpegQuantization;
-                trace.codec = ImageCodec::Mjpeg;
-                if (evidence.ijg_quality.has_value() && evidence.ijg_match >= min_quality_match)
-                {
-                    trace.quality = *evidence.ijg_quality;
-                }
-                trace.quality_scale = "libjpeg quality, an integer from 1 to 100, higher is better";
-                trace.subsampling = evidence.chroma_subsampling;
-                trace.confidence = std::min(1.0, evidence.grid_score);
-                if (trace.confidence >= options.min_confidence)
-                {
-                    history.traces.push_back(std::move(trace));
-                }
-            }
-            history.jpeg = std::move(evidence);
-        }
-
-        if (history.chroma.has_value() && history.chroma->subsampling.has_value() &&
-            *history.chroma->subsampling != Subsampling::Yuv444 &&
-            history.chroma->confidence >= options.min_confidence)
-        {
-            CompressionTrace trace;
-            trace.evidence = TraceEvidence::ChromaSubsampling;
-            trace.subsampling = history.chroma->subsampling;
-            trace.confidence = history.chroma->confidence;
-            history.traces.push_back(std::move(trace));
-        }
-
-        json::Value params = json::object({
-            {"analyzed_as", planes.analyzed_as},
-            {"chroma", planes.cb.empty()   ? "none"
-                       : planes.achromatic ? "achromatic"
-                                           : to_string(planes.chroma_layout)},
-            {"jpeg_quantization", json::object({
-                                      {"dct", "8x8 orthonormal DCT-II of YCbCr - 128, as JPEG's"},
-                                      {"grid_score", "mean of the 5 best AC lattice fits, each less two "
-                                                     "standard deviations of its noise"},
-                                      {"max_screening_blocks", max_screening_blocks},
-                                      {"rescored_offsets", rescored_offsets},
-                                      {"min_decisive_screening_score", min_decisive_screening_score},
-                                      {"max_grid_blocks", max_grid_blocks},
-                                      {"max_table_blocks", max_table_blocks},
-                                      {"min_lattice_samples", min_lattice_samples},
-                                      {"min_unit_share", min_unit_share},
-                                      {"min_step_score", min_step_score},
-                                      {"min_grid_score", min_grid_score},
-                                      {"min_grid_margin", min_grid_margin},
-                                      {"min_determined_steps", min_determined_steps},
-                                      {"min_tie_breaking_match", min_tie_breaking_match},
-                                      {"min_quality_match", min_quality_match},
-                                      {"luma_grid_scores", luma_grid_scores},
-                                  })},
-            {"chroma_subsampling", json::object({
-                                       {"upsamplings", json::array({"triangle", "replicate"})},
-                                       {"max_residual", max_upsampled_residual},
-                                       {"max_phase_ratio", max_phase_ratio},
-                                       {"max_phase_ratio_alone", max_phase_ratio_alone},
-                                       {"max_upsampling_ratio", max_upsampling_ratio},
-                                       {"max_lines", max_pairing_lines},
-                                       {"achromatic_limit", achromatic_limit},
-                                   })},
-            {"min_confidence", options.min_confidence},
-        });
-        add_recompression(frame, options, history, params);
-        record.params = std::move(params);
-
-        std::stable_sort(history.traces.begin(), history.traces.end(),
-                         [](const CompressionTrace& left, const CompressionTrace& right)
-                         { return left.confidence > right.confidence; });
-        record.duration_ms = clock.duration_ms();
-        record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
-        return history;
+        return analyze(image.frame, options, read_jpeg_header(image));
     }
 }

@@ -331,7 +331,7 @@ namespace
         CompressionHistoryOptions options;
         options.recompression_codecs = {ImageCodec::WebP, ImageCodec::Mjpeg};
         const CompressionHistory history = compression_history(after_mjpeg(texture(), 4, "yuvj420p"), options);
-        assert(history.jpeg->detected && history.jpeg->grid_score > 0.8);
+        assert(history.jpeg->detected && *history.jpeg->grid_score > 0.8);
         assert(!history.recompression_curves.empty());
         for (const RecompressionCurve& curve : history.recompression_curves)
         {
@@ -343,6 +343,54 @@ namespace
             assert(skipped_after_jpeg.size() == 1);
             assert(skipped_after_jpeg.at(0).get<std::string>() == to_string(ImageCodec::WebP));
         }
+    }
+
+    void test_a_jpeg_file_is_read_from_its_header()
+    {
+        EncodeImageOptions encode;
+        encode.codec = ImageCodec::Mjpeg;
+        encode.pixel_format = PixelFormat::from_name("yuvj420p");
+        encode.color = jpeg_color();
+        encode.rate_control = RateControl::quality(4);
+        encode.strict = Strict::AllowRecorded;
+        const EncodedResult encoded = encode_image(texture(), encode);
+        const Source source = Source::from_memory(encoded.bytes, "jpg");
+
+        const DecodedImage image = decode_image(source);
+        const JpegInfo& header = *image.stream().jpeg;
+        const CompressionHistory history = compression_history(image, without_recompression());
+        assert(history.record.params.at("jpeg_tables").get<std::string>() == "header");
+        assert(history.jpeg->detected && history.jpeg->luma.determined == 64);
+        assert(!history.jpeg->grid_score.has_value() && !history.jpeg->blocks.has_value());
+        assert(history.jpeg->chroma_subsampling == Subsampling::Yuv420);
+        for (const JpegInfo::QuantizationTable& table : header.quantization_tables)
+        {
+            if (table.id == header.components[0].quantization_table)
+            {
+                assert(history.jpeg->luma.values == table.values);
+            }
+        }
+        assert(history.traces.front().evidence == TraceEvidence::JpegHeader);
+        assert(history.traces.front().confidence == 1.0);
+        assert(!history.jpeg_pixel_check.has_value());
+
+        // The pixels' estimate, asked for, agrees with the header.
+        CompressionHistoryOptions checked = without_recompression();
+        checked.jpeg_pixel_check = true;
+        const CompressionHistory cross_checked = compression_history(image, checked);
+        assert(cross_checked.jpeg_pixel_check.has_value() && cross_checked.jpeg_pixel_check->detected);
+        const json::Value& luma_agreement = cross_checked.record.params.at("jpeg_pixel_check").at("luma");
+        assert(luma_agreement.at("matching").get<int>() == luma_agreement.at("determined").get<int>());
+
+        // A bare frame, or a decode converted to RGB, is read off its pixels.
+        const CompressionHistory from_frame = compression_history(image.frame, without_recompression());
+        assert(from_frame.record.params.at("jpeg_tables").get<std::string>() == "pixels");
+        assert(from_frame.traces.front().evidence == TraceEvidence::JpegQuantization);
+        DecodeImageOptions to_rgb;
+        to_rgb.pixel_format = PixelFormat::from_name("rgb24");
+        const CompressionHistory converted = compression_history(decode_image(source, to_rgb), without_recompression());
+        assert(converted.record.params.at("jpeg_tables").get<std::string>() == "pixels");
+        assert(converted.record.params.at("jpeg_header_unused").get<std::string>() == "it was converted on decode");
     }
 
     void test_a_jpeg_2000_saved_as_rgb_or_gray_shows_its_ratio()
@@ -538,6 +586,7 @@ int main()
     test_an_achromatic_frame_claims_no_chroma_layout();
     test_a_webp_saved_as_rgb_shows_its_quality();
     test_a_detected_jpeg_is_swept_with_mjpeg_alone();
+    test_a_jpeg_file_is_read_from_its_header();
     test_a_jpeg_2000_saved_as_rgb_or_gray_shows_its_ratio();
     test_the_record_serializes();
     test_bad_options_are_refused();

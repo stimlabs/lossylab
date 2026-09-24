@@ -148,5 +148,16 @@ namespace lossylab::pybind
             nb::call_guard<nb::gil_scoped_release>(),
             "compression_history(frame, options), with any exception it raises returned as a FileError instead. "
             "`source` names the file the frame came from.");
+        m.def(
+            "capture_compression_history",
+            [](const Source& source, const DecodedImage& image, const CompressionHistoryOptions& options)
+            {
+                return capture("compression_history", source,
+                               [&] { return compression_history(image, options); });
+            },
+            "source"_a, "image"_a, "options"_a = CompressionHistoryOptions{},
+            nb::call_guard<nb::gil_scoped_release>(),
+            "compression_history(image, options), with any exception it raises returned as a FileError instead. "
+            "`source` names the file the image was decoded from.");
     }
 }

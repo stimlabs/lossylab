@@ -6,6 +6,7 @@
 #include "lossylab/core/pixel_format.hpp"
 #include "lossylab/core/record.hpp"
 #include "lossylab/core/reflect.hpp"
+#include "lossylab/io/decode_image.hpp"
 #include "lossylab/measure/measure.hpp"
 
 #include <array>
@@ -37,6 +38,10 @@ namespace lossylab
     /// What kind of evidence a trace rests on.
     enum class TraceEvidence
     {
+        /// The quantization tables a JPEG file's own header declares, for a
+        /// frame that is that file's decode as stored.
+        JpegHeader,
+
         /// DCT coefficients that sit on a JPEG quantization lattice.
         JpegQuantization,
 
@@ -51,13 +56,14 @@ namespace lossylab
     std::string to_string(TraceEvidence evidence);
     TraceEvidence trace_evidence_from_string(std::string_view name);
 
-    /// A JPEG quantization table read off decoded pixels.
+    /// A JPEG quantization table read off decoded pixels, or off a JPEG
+    /// file's header.
     struct QuantizationEstimate
     {
         /// The quantization step of each DCT coefficient, in natural
         /// (row-major) order, or 0 where the pixels do not determine it: too
         /// few coefficients away from zero, or a step of 1, which leaves no
-        /// lattice to see.
+        /// lattice to see. A header determines every step, 1 included.
         std::array<int, 64> values{};
 
         /// How many of `values` are determined.
@@ -75,7 +81,8 @@ namespace lossylab
 
         /// How closely the coefficients sit on the lattice of the determined
         /// steps, averaged over them: 1 exactly on it, 0 for no lattice.
-        double lattice_score = 0.0;
+        /// Absent for a table read off a header.
+        std::optional<double> lattice_score;
 
         [[nodiscard]] json::Value to_json() const;
     };
@@ -85,12 +92,14 @@ namespace lossylab
     /// Whether a frame's 8x8 DCT coefficients sit on a JPEG quantization
     /// lattice, which a JPEG decode leaves behind through any lossless step
     /// that follows: a PNG or lossless WebP save, a conversion to RGB and
-    /// back, a crop.
+    /// back, a crop. Or, for a frame that is a JPEG file's decode as stored,
+    /// what the file's header declares, with the fields only pixels can
+    /// measure absent.
     struct JpegQuantizationEvidence
     {
         /// Whether the luma coefficients sit on a lattice: a grid score of at
         /// least 0.5, at least 0.2 above `runner_up_grid_score`, with at
-        /// least three steps determined.
+        /// least three steps determined. Always true from a header.
         bool detected = false;
 
         /// Where the 8x8 block grid starts in this frame, 0 to 7 in each
@@ -114,13 +123,14 @@ namespace lossylab
         /// one, and the three best that differ from the grid chosen in both
         /// directions, are scored again; otherwise every offset is. The
         /// record's params list the 64 screening scores under
-        /// "luma_grid_scores".
-        double grid_score = 0.0;
-        double runner_up_grid_score = 0.0;
+        /// "luma_grid_scores". Both absent from a header.
+        std::optional<double> grid_score;
+        std::optional<double> runner_up_grid_score;
 
         /// Luma blocks the tables were estimated from, after leaving out any
         /// block with a sample clipped to 0 or 255, which breaks the lattice.
-        int blocks = 0;
+        /// Absent from a header.
+        std::optional<int> blocks;
 
         QuantizationEstimate luma;
 
@@ -128,9 +138,10 @@ namespace lossylab
         /// a lattice, as at qualities whose chroma steps are 1 and 2.
         std::optional<QuantizationEstimate> chroma;
 
-        /// The chroma layout the JPEG was coded in: the frame's own when it
-        /// is still in the JPEG's YUV, else what ChromaSubsamplingEvidence
-        /// found, under which `chroma` is estimated.
+        /// The chroma layout the JPEG was coded in: the header's sampling
+        /// factors, else the frame's own when it is still in the JPEG's YUV,
+        /// else what ChromaSubsamplingEvidence found, under which `chroma` is
+        /// estimated.
         std::optional<Subsampling> chroma_subsampling;
 
         /// The libjpeg quality whose luminance table agrees best with the
@@ -229,8 +240,9 @@ namespace lossylab
 
         std::optional<Subsampling> subsampling;
 
-        /// From 0 to 1. A JPEG trace's is its grid score; a recompression
-        /// trace's is the coarse curve's confidence.
+        /// From 0 to 1. A JPEG quantization trace's is its grid score; a JPEG
+        /// header trace's is 1; a recompression trace's is the coarse curve's
+        /// confidence.
         double confidence = 0.0;
 
         [[nodiscard]] json::Value to_json() const;
@@ -264,9 +276,15 @@ namespace lossylab
 
         /// Confidence a trace needs to be listed.
         double min_confidence = 0.5;
+
+        /// When the JPEG tables come from the file's header, also estimate
+        /// them from the pixels, into `CompressionHistory::jpeg_pixel_check`,
+        /// and record in the params how well the two agree.
+        bool jpeg_pixel_check = false;
     };
 
-    LOSSYLAB_REFLECT(CompressionHistoryOptions, recompression_codecs, recompression_crop, min_confidence);
+    LOSSYLAB_REFLECT(CompressionHistoryOptions, recompression_codecs, recompression_crop, min_confidence,
+                      jpeg_pixel_check);
 
     struct CompressionHistory
     {
@@ -276,8 +294,15 @@ namespace lossylab
         /// compression erases most of these.
         std::vector<CompressionTrace> traces;
 
-        /// Absent when the frame is too small for an 8x8 grid.
+        /// From the JPEG file's header when the frame is that file's decode as
+        /// stored, else from the pixels. Absent when the frame is too small
+        /// for an 8x8 grid. The record's params say which under
+        /// "jpeg_tables", and why the header was not used.
         std::optional<JpegQuantizationEvidence> jpeg;
+
+        /// The pixels' estimate, when `jpeg` came from the header and the
+        /// options asked for `jpeg_pixel_check`.
+        std::optional<JpegQuantizationEvidence> jpeg_pixel_check;
 
         /// Absent when the frame's chroma is not at full resolution, as in a
         /// frame still in a subsampled YUV format, whose layout says it.
@@ -292,7 +317,7 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
     };
 
-    LOSSYLAB_REFLECT(CompressionHistory, traces, jpeg, chroma, recompression_curves, record);
+    LOSSYLAB_REFLECT(CompressionHistory, traces, jpeg, jpeg_pixel_check, chroma, recompression_curves, record);
 
     /// Looks for every trace of earlier lossy compression in a decoded still
     /// image: which codec, roughly what quality, and which chroma
@@ -315,5 +340,15 @@ namespace lossylab
     /// The record's params list the thresholds, the analyzed format, the
     /// recompression crop, and any codec skipped or failed.
     [[nodiscard]] CompressionHistory compression_history(const Frame& frame,
+                                                         const CompressionHistoryOptions& options = {});
+
+    /// As above, for a decoded image. When it is a JPEG file decoded as
+    /// stored (no orientation applied, no conversion, no tile grid, the
+    /// frame untouched since), in 8 bits, gray or YCbCr, the JPEG tables and
+    /// chroma layout come from the file's header, with a JpegHeader trace,
+    /// and the pixels are not searched for a lattice unless the options ask
+    /// for `jpeg_pixel_check`. Otherwise the frame is analyzed as above, and
+    /// the record's params say why the header was not used.
+    [[nodiscard]] CompressionHistory compression_history(const DecodedImage& image,
                                                          const CompressionHistoryOptions& options = {});
 }
