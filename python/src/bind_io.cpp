@@ -90,8 +90,10 @@ namespace lossylab::pybind
         auto probe_result = bind_reflected<ProbeResult>(m, "ProbeResult");
         bind_reflected<ProbeResult::AdditionalImages>(probe_result, "AdditionalImages");
         probe_result.def("encoder_string", &ProbeResult::encoder_string)
-            .def("primary_video_stream", &ProbeResult::primary_video_stream, nb::rv_policy::reference_internal)
-            .def("primary_tile_grid", &ProbeResult::primary_tile_grid, nb::rv_policy::reference_internal)
+            .def("primary_video_stream", &ProbeResult::primary_video_stream, nb::rv_policy::reference_internal,
+                 nb::sig("def primary_video_stream(self) -> StreamInfo | None"))
+            .def("primary_tile_grid", &ProbeResult::primary_tile_grid, nb::rv_policy::reference_internal,
+                 nb::sig("def primary_tile_grid(self) -> TileGrid | None"))
             .def("additional_images", &ProbeResult::additional_images);
 
         m.def("probe", &probe, "source"_a, nb::call_guard<nb::gil_scoped_release>());
@@ -105,7 +107,8 @@ namespace lossylab::pybind
 
         bind_reflected<DecodedImage>(m, "DecodedImage")
             .def("stream", &DecodedImage::stream, nb::rv_policy::reference_internal)
-            .def("tile_grid", &DecodedImage::tile_grid, nb::rv_policy::reference_internal)
+            .def("tile_grid", &DecodedImage::tile_grid, nb::rv_policy::reference_internal,
+                 nb::sig("def tile_grid(self) -> TileGrid | None"))
             .def("processing_record", &DecodedImage::processing_record);
 
         m.def("decode_image", &decode_image, "source"_a, "options"_a = DecodeImageOptions{},

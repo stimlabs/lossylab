@@ -44,7 +44,8 @@ namespace lossylab::pybind
 
         bind_reflected<CodecInfo>(m, "CodecInfo")
             .def("accepts", &CodecInfo::accepts, "pixel_format"_a)
-            .def("find_option", &CodecInfo::find_option, "name"_a, nb::rv_policy::reference_internal);
+            .def("find_option", &CodecInfo::find_option, "name"_a, nb::rv_policy::reference_internal,
+                 nb::sig("def find_option(self, name: str) -> OptionSchema | None"));
 
         bind_reflected<FilterInfo>(m, "FilterInfo");
 
@@ -59,24 +60,32 @@ namespace lossylab::pybind
             .def("decoders", &Capabilities::decoders)
             .def("filters", &Capabilities::filters)
             .def("hardware_devices", &Capabilities::hardware_devices)
-            .def("find_encoder", &Capabilities::find_encoder, "name"_a, nb::rv_policy::reference_internal)
-            .def("find_decoder", &Capabilities::find_decoder, "name"_a, nb::rv_policy::reference_internal)
-            .def("find_filter", &Capabilities::find_filter, "name"_a, nb::rv_policy::reference_internal)
+            .def("find_encoder", &Capabilities::find_encoder, "name"_a, nb::rv_policy::reference_internal,
+                 nb::sig("def find_encoder(self, name: str) -> CodecInfo | None"))
+            .def("find_decoder", &Capabilities::find_decoder, "name"_a, nb::rv_policy::reference_internal,
+                 nb::sig("def find_decoder(self, name: str) -> CodecInfo | None"))
+            .def("find_filter", &Capabilities::find_filter, "name"_a, nb::rv_policy::reference_internal,
+                 nb::sig("def find_filter(self, name: str) -> FilterInfo | None"))
             .def("has_encoder", &Capabilities::has_encoder, "name"_a)
             .def("has_decoder", &Capabilities::has_decoder, "name"_a)
             .def("has_filter", &Capabilities::has_filter, "name"_a)
             .def("has_hardware_device", &Capabilities::has_hardware_device, "name"_a)
             .def("select_encoder",
                  nb::overload_cast<ImageCodec>(&Capabilities::select_encoder, nb::const_), "codec"_a,
-                 nb::rv_policy::reference_internal)
+                 nb::rv_policy::reference_internal,
+                 nb::sig("def select_encoder(self, codec: ImageCodec) -> CodecInfo | None"))
             .def("select_encoder",
                  nb::overload_cast<VideoCodec, EncoderBackend>(&Capabilities::select_encoder, nb::const_),
-                 "codec"_a, "backend"_a = EncoderBackend::Software, nb::rv_policy::reference_internal)
+                 "codec"_a, "backend"_a = EncoderBackend::Software, nb::rv_policy::reference_internal,
+                 nb::sig("def select_encoder(self, codec: VideoCodec, "
+                         "backend: EncoderBackend = EncoderBackend.Software) -> CodecInfo | None"))
             .def("select_decoder",
                  nb::overload_cast<ImageCodec>(&Capabilities::select_decoder, nb::const_), "codec"_a,
-                 nb::rv_policy::reference_internal)
+                 nb::rv_policy::reference_internal,
+                 nb::sig("def select_decoder(self, codec: ImageCodec) -> CodecInfo | None"))
             .def("select_decoder", nb::overload_cast<VideoCodec>(&Capabilities::select_decoder, nb::const_),
-                 "codec"_a, nb::rv_policy::reference_internal)
+                 "codec"_a, nb::rv_policy::reference_internal,
+                 nb::sig("def select_decoder(self, codec: VideoCodec) -> CodecInfo | None"))
             .def("require_encoder",
                  nb::overload_cast<ImageCodec>(&Capabilities::require_encoder, nb::const_), "codec"_a,
                  nb::rv_policy::reference_internal)
