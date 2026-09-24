@@ -110,7 +110,8 @@ namespace lossylab
         /// are then taken on at most 2048. When the screening singles out one
         /// offset (at least 0.3, and at least 0.2 above every offset that
         /// differs from it in both directions), only its three best offsets,
-        /// and the three best that differ from the grid chosen in both
+        /// offset (0, 0), the offsets sharing a row or column with its best
+        /// one, and the three best that differ from the grid chosen in both
         /// directions, are scored again; otherwise every offset is. The
         /// record's params list the 64 screening scores under
         /// "luma_grid_scores".
@@ -247,9 +248,11 @@ namespace lossylab
         /// nominal ratios 4 to 200, so a file at ratio 4 or less (all but
         /// lossless) is not found. A codec this build cannot
         /// both encode and decode is skipped, and listed in the record. A
-        /// frame whose JPEG quantization is detected is swept with MJPEG
-        /// alone; the other codecs are listed in the record's params under
-        /// "skipped_after_jpeg".
+        /// frame whose JPEG quantization is detected with a grid score above
+        /// 0.8 is swept with MJPEG alone; the other codecs are listed in the
+        /// record's params under "skipped_after_jpeg". A frame whose chroma
+        /// is found to be 4:4:4 is not swept with WebP, which codes 4:2:0
+        /// alone; it is listed under "skipped_for_chroma".
         std::vector<ImageCodec> recompression_codecs{ImageCodec::WebP};
 
         /// The side of the centered square the recompression sweeps run on,

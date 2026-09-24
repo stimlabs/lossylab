@@ -159,6 +159,14 @@ namespace
         assert(history.chroma.has_value() && history.chroma->subsampling == Subsampling::Yuv444);
         assert(history.record.kind == StageKind::CompressionHistory);
         assert(history.record.params.at("analyzed_as").get<std::string>() == "rgb24");
+
+        // 4:4:4 chroma is not swept with WebP.
+        if (capabilities().supports(ImageCodec::WebP))
+        {
+            const json::Value& skipped = history.record.params.at("recompression").at("skipped_for_chroma");
+            assert(skipped.size() == 1 && skipped.at(0).get<std::string>() == to_string(ImageCodec::WebP));
+            assert(history.recompression_curves.empty());
+        }
     }
 
     void test_a_jpeg_saved_as_rgb_shows_its_tables_and_subsampling()
@@ -213,6 +221,26 @@ namespace
         assert(history.jpeg->detected);
         assert(history.jpeg->grid_x == 3 && history.jpeg->grid_y == 5);
         assert(history.jpeg->chroma_subsampling == Subsampling::Yuv420);
+    }
+
+    void test_a_jpeg_mostly_clipped_to_black_is_found()
+    {
+        // A patch of detail on black: nearly every block holds a sample
+        // clipped to 0, and the few that do not still show the lattice.
+        const Frame detail = texture(128, 128);
+        Frame rgb = Frame::allocate(1024, 1024, PixelFormat::from_name("rgb24"), ColorSpec::srgb());
+        for (int y = 0; y < rgb.height(); ++y)
+        {
+            std::memset(rgb.plane(0).row(y), 0, static_cast<std::size_t>(3 * rgb.width()));
+        }
+        for (int y = 0; y < detail.height(); ++y)
+        {
+            std::memcpy(rgb.plane(0).row(448 + y) + 3 * 448, detail.plane(0).row(y),
+                        static_cast<std::size_t>(3 * detail.width()));
+        }
+        const CompressionHistory history =
+            compression_history(after_mjpeg(rgb, 4, "yuvj420p"), without_recompression());
+        assert(history.jpeg->detected);
     }
 
     void test_a_jpeg_still_in_its_yuv_is_read_directly()
@@ -303,7 +331,7 @@ namespace
         CompressionHistoryOptions options;
         options.recompression_codecs = {ImageCodec::WebP, ImageCodec::Mjpeg};
         const CompressionHistory history = compression_history(after_mjpeg(texture(), 4, "yuvj420p"), options);
-        assert(history.jpeg->detected);
+        assert(history.jpeg->detected && history.jpeg->grid_score > 0.8);
         assert(!history.recompression_curves.empty());
         for (const RecompressionCurve& curve : history.recompression_curves)
         {
@@ -504,6 +532,7 @@ int main()
     test_a_jpeg_saved_as_rgb_shows_its_tables_and_subsampling();
     test_chroma_upsampling_is_found_at_any_quality();
     test_a_crop_after_compression_moves_the_grid();
+    test_a_jpeg_mostly_clipped_to_black_is_found();
     test_a_jpeg_still_in_its_yuv_is_read_directly();
     test_gray_and_alpha_frames_are_analyzed();
     test_an_achromatic_frame_claims_no_chroma_layout();

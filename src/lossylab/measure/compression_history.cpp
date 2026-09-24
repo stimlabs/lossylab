@@ -66,6 +66,10 @@ namespace lossylab
         // confident as a trace needs, gets a fine sweep.
         constexpr double min_refine_confidence = 0.3;
 
+        // Recompression: a detected JPEG with a grid score above this is
+        // swept with MJPEG alone.
+        constexpr double min_jpeg_only_grid_score = 0.8;
+
         // Below this many pixels (128 x 128), a notch is as likely to be
         // noise as a trace: the curves are kept, but no trace is listed.
         constexpr long min_recompression_trace_pixels = 128 * 128;
@@ -391,11 +395,7 @@ namespace lossylab
                                                const std::vector<ClippedCounts>& clipped_counts, const int offset_x,
                                                const int offset_y, const std::size_t max_blocks)
         {
-            const std::size_t total = grid_block_count(planes, offset_x, offset_y);
-            const std::size_t stride = std::max<std::size_t>(1, (total + max_blocks - 1) / max_blocks);
-
-            std::vector<BlockOrigin> origins;
-            std::size_t counter = 0;
+            std::vector<BlockOrigin> unclipped;
             for (std::size_t plane_index = 0; plane_index < planes.size(); ++plane_index)
             {
                 const Plane& plane = *planes[plane_index];
@@ -403,13 +403,22 @@ namespace lossylab
                 {
                     for (int x = offset_x; x + 8 <= plane.width; x += 8)
                     {
-                        if (counter++ % stride != 0 || clipped_counts[plane_index].any_in(x, y, 8, 8))
+                        if (!clipped_counts[plane_index].any_in(x, y, 8, 8))
                         {
-                            continue;
+                            unclipped.push_back(BlockOrigin{&plane, x, y});
                         }
-                        origins.push_back(BlockOrigin{&plane, x, y});
                     }
                 }
+            }
+            const std::size_t stride = std::max<std::size_t>(1, (unclipped.size() + max_blocks - 1) / max_blocks);
+            if (stride == 1)
+            {
+                return unclipped;
+            }
+            std::vector<BlockOrigin> origins;
+            for (std::size_t index = 0; index < unclipped.size(); index += stride)
+            {
+                origins.push_back(unclipped[index]);
             }
             return origins;
         }
@@ -649,9 +658,11 @@ namespace lossylab
         /// A decisive screening, whose best offset scores at least
         /// `min_decisive_screening_score` and at least `min_grid_margin` above
         /// every offset sharing neither its row nor its column, has its
-        /// `rescored_offsets` best offsets, and as many of the best that share
-        /// neither a row nor a column with the one chosen, scored again on at
-        /// most `max_grid_blocks`; any other has every offset scored again.
+        /// `rescored_offsets` best offsets, offset (0, 0), every offset
+        /// sharing a row or column with its best one, and as many of the best
+        /// that share neither a row nor a column with the one chosen, scored
+        /// again on at most `max_grid_blocks`; any other has every offset
+        /// scored again.
         /// The grid and its runner-up are chosen from those scores.
         GridEstimate estimate_quantization(const std::vector<const Plane*>& planes,
                                            const std::array<int, 64>& standard_table)
@@ -716,11 +727,29 @@ namespace lossylab
             const std::size_t rescored = decisive ? rescored_offsets : ranked.size();
 
             int best = ranked.front();
+            const auto consider = [&](const int offset)
+            {
+                if (full_score(offset) > full_score(best))
+                {
+                    best = offset;
+                }
+            };
             for (std::size_t rank = 1; rank < rescored; ++rank)
             {
-                if (full_score(ranked[rank]) > full_score(best))
+                consider(ranked[rank]);
+            }
+
+            // Offset (0, 0), and every offset sharing a row or column with the
+            // best screened one, are candidates too.
+            consider(0);
+            if (ranked.front() != 0)
+            {
+                for (int offset = 0; offset < 64; ++offset)
                 {
-                    best = ranked[rank];
+                    if (shares_row_or_column(offset, ranked.front()))
+                    {
+                        consider(offset);
+                    }
                 }
             }
             estimate.grid_x = best % 8;
@@ -1297,14 +1326,19 @@ namespace lossylab
         {
             json::Value skipped = json::Value::array();
             json::Value skipped_after_jpeg = json::Value::array();
+            json::Value skipped_for_chroma = json::Value::array();
             json::Value errors = json::Value::object();
             json::Value crop;
 
             // Only a sweep whose confidence can list a trace is refined.
             const double refine_confidence = std::max(min_refine_confidence, options.min_confidence);
 
-            // A frame on a JPEG lattice is swept with MJPEG alone.
-            const bool jpeg_detected = history.jpeg.has_value() && history.jpeg->detected;
+            const bool jpeg_only = history.jpeg.has_value() && history.jpeg->detected &&
+                                   history.jpeg->grid_score > min_jpeg_only_grid_score;
+
+            // Lossy WebP codes 4:2:0 alone, so 4:4:4 chroma is not swept with it.
+            const bool full_resolution_chroma =
+                history.chroma.has_value() && history.chroma->subsampling == Subsampling::Yuv444;
 
             Frame analyzed = frame;
             if (options.recompression_crop > 0 &&
@@ -1328,9 +1362,14 @@ namespace lossylab
                     skipped.push_back(to_string(codec));
                     continue;
                 }
-                if (jpeg_detected && codec != ImageCodec::Mjpeg)
+                if (jpeg_only && codec != ImageCodec::Mjpeg)
                 {
                     skipped_after_jpeg.push_back(to_string(codec));
+                    continue;
+                }
+                if (full_resolution_chroma && codec == ImageCodec::WebP)
+                {
+                    skipped_for_chroma.push_back(to_string(codec));
                     continue;
                 }
                 try
@@ -1411,7 +1450,9 @@ namespace lossylab
                 {"min_refine_confidence", refine_confidence},
                 {"min_trace_pixels", min_recompression_trace_pixels},
                 {"skipped", skipped},
+                {"min_jpeg_only_grid_score", min_jpeg_only_grid_score},
                 {"skipped_after_jpeg", skipped_after_jpeg},
+                {"skipped_for_chroma", skipped_for_chroma},
                 {"errors", errors},
             });
         }
