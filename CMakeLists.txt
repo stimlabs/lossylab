@@ -127,12 +127,13 @@ if(BUILD_PYTHON_BINDINGS)
 
     nanobind_add_stub(_lossylab_stub
             MODULE _lossylab
-            OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/python/lossylab/__init__.pyi"
+            OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/_lossylab.pyi"
             PYTHON_PATH "$<TARGET_FILE_DIR:_lossylab>"
             DEPENDS _lossylab
     )
 
     install(TARGETS _lossylab LIBRARY DESTINATION lossylab)
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/_lossylab.pyi" DESTINATION lossylab)
 endif()
 
 # ---------------------------------------------------------------------------
