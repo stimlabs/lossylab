@@ -71,6 +71,29 @@ def test_probe_attributes_that_were_dict_only():
     assert stream.image_container is None
 
 
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        "testsrc_64x48.jpg",
+        "testsrc_64x48_422_orientation6.jpg",
+        "testsrc_64x48.tif",
+        "testsrc_64x48.jp2",
+        "testsrc_64x48.j2k",
+        "testsrc_64x48.jxl",
+    ],
+)
+def test_a_still_image_is_not_a_format_mismatch(fixture):
+    result = lossylab.probe(lossylab.Source.from_path(str(DATA_DIR / fixture)))
+    assert result.claimed_extension == Path(fixture).suffix[1:]
+    assert result.format_mismatch is False
+
+
+def test_a_jpeg_xl_file_named_as_a_jpeg_is_a_format_mismatch(tmp_path):
+    renamed = tmp_path / "picture.jpg"
+    renamed.write_bytes((DATA_DIR / "testsrc_64x48.jxl").read_bytes())
+    assert lossylab.probe(lossylab.Source.from_path(str(renamed))).format_mismatch is True
+
+
 def test_a_renamed_file_is_a_format_mismatch(tmp_path):
     renamed = tmp_path / "picture.mp4"
     renamed.write_bytes((DATA_DIR / "testsrc_64x48.png").read_bytes())

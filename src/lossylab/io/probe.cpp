@@ -10,6 +10,7 @@
 #include "lossylab/io/orientation.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <span>
 #include <sstream>
@@ -276,6 +277,40 @@ namespace lossylab
             return brands;
         }
 
+        /// True when `extension` (already lowercased, no dot) is one a file
+        /// holding a still image of `codec_name` is commonly given. A codec
+        /// not listed here is expected to use its own name, as "png" does.
+        bool codec_uses_extension(const std::string& codec_name, const std::string& extension)
+        {
+            struct CodecExtension
+            {
+                std::string_view codec_name;
+                std::string_view extension;
+            };
+            constexpr std::array known_extensions = {
+                CodecExtension{"mjpeg", "jpg"},    CodecExtension{"mjpeg", "jpeg"},
+                CodecExtension{"mjpeg", "jpe"},    CodecExtension{"mjpeg", "jfif"},
+                CodecExtension{"mjpeg", "jif"},    CodecExtension{"tiff", "tif"},
+                CodecExtension{"tiff", "tiff"},    CodecExtension{"jpeg2000", "jp2"},
+                CodecExtension{"jpeg2000", "j2k"}, CodecExtension{"jpeg2000", "jpx"},
+                CodecExtension{"jpegxl", "jxl"},
+            };
+
+            bool codec_is_listed = false;
+            for (const CodecExtension& known : known_extensions)
+            {
+                if (known.codec_name == codec_name)
+                {
+                    codec_is_listed = true;
+                    if (known.extension == extension)
+                    {
+                        return true;
+                    }
+                }
+            }
+            return !codec_is_listed && codec_name == extension;
+        }
+
         /// True when `extension` (already lowercased, no dot) is one of the
         /// extensions FFmpeg lists for this demuxer. Demuxers list their
         /// extensions in `AVInputFormat::extensions`; where that field is
@@ -284,7 +319,11 @@ namespace lossylab
         /// still-image format read without a container, such as a bare PNG
         /// or JPEG, is matched by a "*_pipe" demuxer instead (e.g. "png_pipe"
         /// for a ".png"), so that suffix is stripped before comparing too.
-        bool extension_matches_format(const AVInputFormat& iformat, const std::string& extension)
+        /// A demuxer with no extension list, such as "image2" or the "*_pipe"
+        /// ones, says nothing reliable about extensions, so the codec of
+        /// `primary_video` decides when the name does not match.
+        bool extension_matches_format(const AVInputFormat& iformat, const std::string& extension,
+                                      const StreamInfo* primary_video)
         {
             const char* list = iformat.extensions != nullptr ? iformat.extensions : iformat.name;
             if (list == nullptr)
@@ -306,6 +345,11 @@ namespace lossylab
                 {
                     return true;
                 }
+            }
+
+            if (iformat.extensions == nullptr && primary_video != nullptr)
+            {
+                return codec_uses_extension(primary_video->codec_name, extension);
             }
             return false;
         }
@@ -333,6 +377,7 @@ namespace lossylab
             info.frame_count = chunks.frame_count;
             info.canvas_width = chunks.canvas_width;
             info.canvas_height = chunks.canvas_height;
+            info.has_xmp = chunks.has_xmp;
             if (chunks.has_lossy && chunks.has_lossless)
             {
                 info.compression = "mixed";
@@ -377,7 +422,6 @@ namespace lossylab
         }
 
         /// The raw ICC profile and EXIF block a format walker found.
-            info.has_xmp = chunks.has_xmp;
         struct WalkedEmbedded
         {
             std::optional<std::vector<std::uint8_t>> icc_profile;
@@ -427,6 +471,7 @@ namespace lossylab
             {"frame_count", json::optional_or_null(frame_count)},
             {"canvas_width", json::optional_or_null(canvas_width)},
             {"canvas_height", json::optional_or_null(canvas_height)},
+            {"has_xmp", json::optional_or_null(has_xmp)},
         });
     }
 
@@ -471,7 +516,6 @@ namespace lossylab
             {"ijg_quality_exact", ijg_quality_exact},
             {"huffman_tables", huffman_tables},
             {"restart_interval", restart_interval},
-            {"has_xmp", json::optional_or_null(has_xmp)},
             {"scan_count", scan_count},
             {"segments", json::array(std::move(segment_values))},
             {"comment", json::optional_or_null(comment)},
@@ -651,11 +695,6 @@ namespace lossylab
         }
 
         result.claimed_extension = source.claimed_extension();
-        if (!result.claimed_extension.empty() && format.iformat != nullptr)
-        {
-            result.format_mismatch =
-                !extension_matches_format(*format.iformat, result.claimed_extension);
-        }
 
         if (format.duration != AV_NOPTS_VALUE && format.duration > 0)
         {
@@ -690,6 +729,12 @@ namespace lossylab
         for (unsigned i = 0; i < format.nb_streams; ++i)
         {
             result.streams.push_back(read_stream(*format.streams[i]));
+        }
+
+        if (!result.claimed_extension.empty() && format.iformat != nullptr)
+        {
+            result.format_mismatch = !extension_matches_format(*format.iformat, result.claimed_extension,
+                                                               result.primary_video_stream());
         }
 
         for (unsigned int i = 0; i < format.nb_stream_groups; ++i)

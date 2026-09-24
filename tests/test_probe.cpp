@@ -110,6 +110,49 @@ namespace
         assert(!result.format_mismatch);
     }
 
+    void test_a_jpeg_is_not_a_mismatch_under_any_of_its_extensions()
+    {
+        // The two fixtures are read by different demuxers ("jpeg_pipe" and "image2"), neither of which lists
+        // extensions, so the codec decides.
+        for (const char* fixture : {jpeg_fixture, "testsrc_64x48_422_orientation6.jpg"})
+        {
+            const std::vector<std::uint8_t> bytes = read_file(data_path(fixture));
+            for (const char* extension : {"jpg", "jpeg", "jpe", "jfif"})
+            {
+                assert(!probe(Source::from_memory(bytes, extension)).format_mismatch);
+            }
+            assert(probe(Source::from_memory(bytes, "png")).format_mismatch);
+            assert(probe(Source::from_memory(bytes, "mp4")).format_mismatch);
+        }
+    }
+
+    void test_a_still_image_is_not_a_mismatch_under_its_codec_extensions()
+    {
+        // Each of these is read by a "*_pipe" demuxer named differently from the extension (tiff_pipe, j2k_pipe,
+        // jpegxl_pipe), so the codec decides.
+        struct Case
+        {
+            const char* fixture;
+            std::vector<const char*> extensions;
+        };
+        const std::vector<Case> cases = {
+            {"testsrc_64x48.tif", {"tif", "tiff"}},
+            {"testsrc_64x48.jp2", {"jp2", "j2k", "jpx"}},
+            {"testsrc_64x48.j2k", {"jp2", "j2k", "jpx"}},
+            {"testsrc_64x48.jxl", {"jxl"}},
+        };
+        for (const Case& test_case : cases)
+        {
+            const std::vector<std::uint8_t> bytes = read_file(data_path(test_case.fixture));
+            for (const char* extension : test_case.extensions)
+            {
+                assert(!probe(Source::from_memory(bytes, extension)).format_mismatch);
+            }
+            assert(probe(Source::from_memory(bytes, "jpg")).format_mismatch);
+            assert(probe(Source::from_memory(bytes, "mp4")).format_mismatch);
+        }
+    }
+
     void test_a_constant_frame_rate_video_is_not_flagged_variable()
     {
         const ProbeResult result = probe(Source::from_path(data_path(video_fixture)));
@@ -748,6 +791,8 @@ int main()
     test_an_mp4_reports_its_brands_and_encoder();
     test_a_path_extension_mismatch_is_reported();
     test_a_source_with_no_extension_is_never_a_mismatch();
+    test_a_jpeg_is_not_a_mismatch_under_any_of_its_extensions();
+    test_a_still_image_is_not_a_mismatch_under_its_codec_extensions();
     test_a_constant_frame_rate_video_is_not_flagged_variable();
     test_probe_result_carries_the_schema_version();
     test_non_image_streams_have_no_image_container_info();
