@@ -17,6 +17,8 @@
 #include <limits>
 #include <map>
 #include <numbers>
+#include <numeric>
+#include <optional>
 #include <utility>
 
 namespace lossylab
@@ -29,6 +31,9 @@ namespace lossylab
         // ones have a step of 1 or 2.
         constexpr std::size_t probe_count = 63;
         constexpr std::size_t scored_probes = 5;
+        constexpr std::size_t max_screening_blocks = 256;
+        constexpr std::size_t rescored_offsets = 3;
+        constexpr double min_decisive_screening_score = 0.3;
         constexpr std::size_t max_grid_blocks = 2048;
         constexpr std::size_t max_table_blocks = 16384;
         constexpr int min_lattice_samples = 50;
@@ -57,7 +62,8 @@ namespace lossylab
         constexpr long min_pairing_samples = 1000;
         constexpr double achromatic_limit = 0.5;
 
-        // Recompression: a coarse curve this confident gets a fine sweep.
+        // Recompression: a coarse curve this confident, and at least as
+        // confident as a trace needs, gets a fine sweep.
         constexpr double min_refine_confidence = 0.3;
 
         // Below this many pixels (128 x 128), a notch is as likely to be
@@ -365,11 +371,9 @@ namespace lossylab
             int y = 0;
         };
 
-        /// The unclipped 8x8 blocks of the grid starting at (offset_x,
-        /// offset_y), across `planes`, thinned evenly to at most `max_blocks`.
-        std::vector<BlockOrigin> block_origins(const std::vector<const Plane*>& planes,
-                                               const std::vector<ClippedCounts>& clipped_counts, const int offset_x,
-                                               const int offset_y, const std::size_t max_blocks)
+        /// The 8x8 blocks of the grid starting at (offset_x, offset_y), across
+        /// `planes`, clipped or not.
+        std::size_t grid_block_count(const std::vector<const Plane*>& planes, const int offset_x, const int offset_y)
         {
             std::size_t total = 0;
             for (const Plane* plane : planes)
@@ -378,6 +382,16 @@ namespace lossylab
                 const int rows = std::max(0, (plane->height - offset_y) / 8);
                 total += static_cast<std::size_t>(columns) * static_cast<std::size_t>(rows);
             }
+            return total;
+        }
+
+        /// The unclipped 8x8 blocks of the grid starting at (offset_x,
+        /// offset_y), across `planes`, thinned evenly to at most `max_blocks`.
+        std::vector<BlockOrigin> block_origins(const std::vector<const Plane*>& planes,
+                                               const std::vector<ClippedCounts>& clipped_counts, const int offset_x,
+                                               const int offset_y, const std::size_t max_blocks)
+        {
+            const std::size_t total = grid_block_count(planes, offset_x, offset_y);
             const std::size_t stride = std::max<std::size_t>(1, (total + max_blocks - 1) / max_blocks);
 
             std::vector<BlockOrigin> origins;
@@ -433,8 +447,12 @@ namespace lossylab
         /// them reach the true step for it to be judged.
         LatticeFit fit_lattice(std::vector<double> values, const int max_step, const bool ac_coefficient)
         {
-            std::sort(values.begin(), values.end(),
-                      [](const double left, const double right) { return std::abs(left) > std::abs(right); });
+            // The lattice is symmetric about zero, so only magnitudes count.
+            for (double& value : values)
+            {
+                value = std::abs(value);
+            }
+            std::sort(values.begin(), values.end(), std::greater<>());
 
             LatticeFit best;
             std::vector<double> scores(static_cast<std::size_t>(max_step) + 1, -1.0);
@@ -443,22 +461,25 @@ namespace lossylab
             {
                 const double half_step = step / 2.0;
                 const auto end = std::partition_point(values.begin(), values.end(),
-                                                      [half_step](const double value)
-                                                      { return std::abs(value) >= half_step; });
+                                                      [half_step](const double value) { return value >= half_step; });
                 const auto count = static_cast<std::size_t>(end - values.begin());
                 if (count < static_cast<std::size_t>(min_lattice_samples))
                 {
                     break;
                 }
+                const double inverse_step = 1.0 / step;
                 double squared_distance = 0.0;
                 std::size_t unit_count = 0;
                 for (auto it = values.begin(); it != end; ++it)
                 {
-                    const double position = *it / step;
-                    const double index = std::round(position);
+                    const double position = *it * inverse_step;
+
+                    // Truncating a non-negative position plus a half rounds
+                    // it to the nearest index, as std::round does.
+                    const int index = static_cast<int>(position + 0.5);
                     const double distance = position - index;
                     squared_distance += distance * distance;
-                    unit_count += std::abs(index) == 1.0;
+                    unit_count += index == 1;
                 }
                 if (ac_coefficient &&
                     static_cast<double>(unit_count) < min_unit_share * static_cast<double>(count))
@@ -582,9 +603,56 @@ namespace lossylab
             QuantizationEstimate table;
         };
 
+        /// How well the blocks of the grid starting at (offset_x, offset_y)
+        /// fit a lattice: the mean of the `scored_probes` best AC fits, each
+        /// at its lower bound, from at most `max_blocks` blocks.
+        double offset_grid_score(const std::vector<const Plane*>& planes,
+                                 const std::vector<ClippedCounts>& clipped_counts, const int offset_x,
+                                 const int offset_y, const std::size_t max_blocks)
+        {
+            const std::vector<BlockOrigin> origins =
+                block_origins(planes, clipped_counts, offset_x, offset_y, max_blocks);
+            std::array<std::vector<double>, probe_count> probes;
+            for (std::vector<double>& values : probes)
+            {
+                values.reserve(origins.size());
+            }
+            for (const BlockOrigin& origin : origins)
+            {
+                const std::array<double, 64> dct = block_dct(block_samples(*origin.plane, origin.x, origin.y));
+                for (std::size_t probe = 0; probe < probe_count; ++probe)
+                {
+                    probes[probe].push_back(dct[probe + 1]);
+                }
+            }
+            std::vector<double> probe_scores;
+            for (std::vector<double>& values : probes)
+            {
+                const LatticeFit fit = fit_lattice(std::move(values), 64, true);
+                probe_scores.push_back(std::max(0.0, fit.lower_bound()));
+            }
+            std::partial_sort(probe_scores.begin(), probe_scores.begin() + scored_probes, probe_scores.end(),
+                              std::greater<>());
+            double score = 0.0;
+            for (std::size_t i = 0; i < scored_probes; ++i)
+            {
+                score += probe_scores[i];
+            }
+            return score / static_cast<double>(scored_probes);
+        }
+
         /// The grid offset whose blocks fit a lattice best, and the table
         /// estimated at it, from blocks pooled across `planes` (Cb and Cr
         /// share a table in every libjpeg-written file).
+        ///
+        /// Every offset is screened on at most `max_screening_blocks` blocks.
+        /// A decisive screening, whose best offset scores at least
+        /// `min_decisive_screening_score` and at least `min_grid_margin` above
+        /// every offset sharing neither its row nor its column, has its
+        /// `rescored_offsets` best offsets, and as many of the best that share
+        /// neither a row nor a column with the one chosen, scored again on at
+        /// most `max_grid_blocks`; any other has every offset scored again.
+        /// The grid and its runner-up are chosen from those scores.
         GridEstimate estimate_quantization(const std::vector<const Plane*>& planes,
                                            const std::array<int, 64>& standard_table)
         {
@@ -596,57 +664,80 @@ namespace lossylab
             }
 
             GridEstimate estimate;
-            std::vector<double> scores;
+            std::vector<double> screening_scores;
             for (int offset_y = 0; offset_y < 8; ++offset_y)
             {
                 for (int offset_x = 0; offset_x < 8; ++offset_x)
                 {
-                    const std::vector<BlockOrigin> origins =
-                        block_origins(planes, clipped_counts, offset_x, offset_y, max_grid_blocks);
-                    std::array<std::vector<double>, probe_count> probes;
-                    for (const BlockOrigin& origin : origins)
-                    {
-                        const std::array<double, 64> dct = block_dct(block_samples(*origin.plane, origin.x, origin.y));
-                        for (std::size_t probe = 0; probe < probe_count; ++probe)
-                        {
-                            probes[probe].push_back(dct[probe + 1]);
-                        }
-                    }
-                    std::vector<double> probe_scores;
-                    for (std::vector<double>& values : probes)
-                    {
-                        const LatticeFit fit = fit_lattice(std::move(values), 64, true);
-                        probe_scores.push_back(std::max(0.0, fit.lower_bound()));
-                    }
-                    std::partial_sort(probe_scores.begin(), probe_scores.begin() + scored_probes, probe_scores.end(),
-                                      std::greater<>());
-                    double score = 0.0;
-                    for (std::size_t i = 0; i < scored_probes; ++i)
-                    {
-                        score += probe_scores[i];
-                    }
-                    score /= static_cast<double>(scored_probes);
-                    scores.push_back(score);
-                    if (score > estimate.grid_score || scores.size() == 1)
-                    {
-                        estimate.grid_score = score;
-                        estimate.grid_x = offset_x;
-                        estimate.grid_y = offset_y;
-                    }
+                    screening_scores.push_back(
+                        offset_grid_score(planes, clipped_counts, offset_x, offset_y, max_screening_blocks));
                 }
             }
+            estimate.grid_scores = screening_scores;
+
+            // Offset (0, 0) has the most blocks of any offset.
+            const bool screened_every_block = grid_block_count(planes, 0, 0) <= max_screening_blocks;
+            std::array<std::optional<double>, 64> full_scores;
+            const auto full_score = [&](const int offset)
+            {
+                std::optional<double>& score = full_scores[static_cast<std::size_t>(offset)];
+                if (!score.has_value())
+                {
+                    score = screened_every_block ? screening_scores[static_cast<std::size_t>(offset)]
+                                                 : offset_grid_score(planes, clipped_counts, offset % 8, offset / 8,
+                                                                     max_grid_blocks);
+                }
+                return *score;
+            };
+
+            std::vector<int> ranked(64);
+            std::iota(ranked.begin(), ranked.end(), 0);
+            std::stable_sort(ranked.begin(), ranked.end(), [&](const int left, const int right)
+                             { return screening_scores[static_cast<std::size_t>(left)] >
+                                      screening_scores[static_cast<std::size_t>(right)]; });
+
             // An offset sharing a row or column with the true grid keeps that
             // direction's block edges, and with them part of the lattice.
-            estimate.grid_scores = scores;
-            for (int offset_y = 0; offset_y < 8; ++offset_y)
+            const auto shares_row_or_column = [](const int offset, const int other)
+            { return offset % 8 == other % 8 || offset / 8 == other / 8; };
+
+            const double screened_best = screening_scores[static_cast<std::size_t>(ranked.front())];
+            double screened_runner_up = 0.0;
+            for (int offset = 0; offset < 64; ++offset)
             {
-                for (int offset_x = 0; offset_x < 8; ++offset_x)
+                if (!shares_row_or_column(offset, ranked.front()))
                 {
-                    if (offset_x != estimate.grid_x && offset_y != estimate.grid_y)
-                    {
-                        estimate.runner_up_grid_score = std::max(
-                            estimate.runner_up_grid_score, scores[static_cast<std::size_t>(offset_y * 8 + offset_x)]);
-                    }
+                    screened_runner_up =
+                        std::max(screened_runner_up, screening_scores[static_cast<std::size_t>(offset)]);
+                }
+            }
+            const bool decisive = screened_best >= min_decisive_screening_score &&
+                                  screened_best - screened_runner_up >= min_grid_margin;
+            const std::size_t rescored = decisive ? rescored_offsets : ranked.size();
+
+            int best = ranked.front();
+            for (std::size_t rank = 1; rank < rescored; ++rank)
+            {
+                if (full_score(ranked[rank]) > full_score(best))
+                {
+                    best = ranked[rank];
+                }
+            }
+            estimate.grid_x = best % 8;
+            estimate.grid_y = best / 8;
+            estimate.grid_score = full_score(best);
+
+            std::size_t runner_up_candidates = 0;
+            for (const int offset : ranked)
+            {
+                if (shares_row_or_column(offset, best))
+                {
+                    continue;
+                }
+                estimate.runner_up_grid_score = std::max(estimate.runner_up_grid_score, full_score(offset));
+                if (++runner_up_candidates == rescored)
+                {
+                    break;
                 }
             }
 
@@ -1205,8 +1296,15 @@ namespace lossylab
                                CompressionHistory& history, json::Value& params)
         {
             json::Value skipped = json::Value::array();
+            json::Value skipped_after_jpeg = json::Value::array();
             json::Value errors = json::Value::object();
             json::Value crop;
+
+            // Only a sweep whose confidence can list a trace is refined.
+            const double refine_confidence = std::max(min_refine_confidence, options.min_confidence);
+
+            // A frame on a JPEG lattice is swept with MJPEG alone.
+            const bool jpeg_detected = history.jpeg.has_value() && history.jpeg->detected;
 
             Frame analyzed = frame;
             if (options.recompression_crop > 0 &&
@@ -1228,6 +1326,11 @@ namespace lossylab
                 if (!capabilities().supports(codec))
                 {
                     skipped.push_back(to_string(codec));
+                    continue;
+                }
+                if (jpeg_detected && codec != ImageCodec::Mjpeg)
+                {
+                    skipped_after_jpeg.push_back(to_string(codec));
                     continue;
                 }
                 try
@@ -1256,7 +1359,7 @@ namespace lossylab
                     // A notch is never at either end, so it has two coarse
                     // neighbors; the fine sweep runs between them.
                     std::vector<double> fine_parameters;
-                    if (quality.has_value() && plan.fine_step > 0.0 && confidence >= min_refine_confidence)
+                    if (quality.has_value() && plan.fine_step > 0.0 && confidence >= refine_confidence)
                     {
                         const RecompressionPoint* notch = &point_at(coarse, *quality);
                         const double previous = (notch - 1)->quality_parameter;
@@ -1305,9 +1408,10 @@ namespace lossylab
                                           [](const ImageCodec codec) { return to_string(codec); })},
                 {"crop", crop},
                 {"planes", "luma, or all for JPEG XL and JPEG 2000 in RGB"},
-                {"min_refine_confidence", min_refine_confidence},
+                {"min_refine_confidence", refine_confidence},
                 {"min_trace_pixels", min_recompression_trace_pixels},
                 {"skipped", skipped},
+                {"skipped_after_jpeg", skipped_after_jpeg},
                 {"errors", errors},
             });
         }
@@ -1531,6 +1635,9 @@ namespace lossylab
                                       {"dct", "8x8 orthonormal DCT-II of YCbCr - 128, as JPEG's"},
                                       {"grid_score", "mean of the 5 best AC lattice fits, each less two "
                                                      "standard deviations of its noise"},
+                                      {"max_screening_blocks", max_screening_blocks},
+                                      {"rescored_offsets", rescored_offsets},
+                                      {"min_decisive_screening_score", min_decisive_screening_score},
                                       {"max_grid_blocks", max_grid_blocks},
                                       {"max_table_blocks", max_table_blocks},
                                       {"min_lattice_samples", min_lattice_samples},

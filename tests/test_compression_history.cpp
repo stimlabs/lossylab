@@ -291,6 +291,30 @@ namespace
         assert(webp->codec == ImageCodec::WebP);
         assert(webp->quality.has_value() && std::abs(*webp->quality - 80.0) <= 3.0);
         assert(history.recompression_curves.size() == 2);
+
+        // A coarse curve short of min_confidence gets no fine sweep.
+        CompressionHistoryOptions unreachable;
+        unreachable.min_confidence = 1.0;
+        assert(compression_history(rgb, unreachable).recompression_curves.size() == 1);
+    }
+
+    void test_a_detected_jpeg_is_swept_with_mjpeg_alone()
+    {
+        CompressionHistoryOptions options;
+        options.recompression_codecs = {ImageCodec::WebP, ImageCodec::Mjpeg};
+        const CompressionHistory history = compression_history(after_mjpeg(texture(), 4, "yuvj420p"), options);
+        assert(history.jpeg->detected);
+        assert(!history.recompression_curves.empty());
+        for (const RecompressionCurve& curve : history.recompression_curves)
+        {
+            assert(curve.record.params.at("codec").get<std::string>() == to_string(ImageCodec::Mjpeg));
+        }
+        const json::Value& skipped_after_jpeg = history.record.params.at("recompression").at("skipped_after_jpeg");
+        if (capabilities().supports(ImageCodec::WebP))
+        {
+            assert(skipped_after_jpeg.size() == 1);
+            assert(skipped_after_jpeg.at(0).get<std::string>() == to_string(ImageCodec::WebP));
+        }
     }
 
     void test_a_jpeg_2000_saved_as_rgb_or_gray_shows_its_ratio()
@@ -484,6 +508,7 @@ int main()
     test_gray_and_alpha_frames_are_analyzed();
     test_an_achromatic_frame_claims_no_chroma_layout();
     test_a_webp_saved_as_rgb_shows_its_quality();
+    test_a_detected_jpeg_is_swept_with_mjpeg_alone();
     test_a_jpeg_2000_saved_as_rgb_or_gray_shows_its_ratio();
     test_the_record_serializes();
     test_bad_options_are_refused();

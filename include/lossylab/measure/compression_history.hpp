@@ -100,12 +100,20 @@ namespace lossylab
         int grid_y = 0;
 
         /// How well the coefficients fit a lattice at the grid offset found,
-        /// from 0 to 1: the mean of the five best fits among the first 20 AC
+        /// from 0 to 1: the mean of the five best fits among the 63 AC
         /// coefficients, each less two standard deviations of its noise. And
         /// the same at the best offset that differs from it in both
         /// directions; offsets that share a row or a column with the true
-        /// grid keep part of its lattice. The record's params list all 64
-        /// under "luma_grid_scores".
+        /// grid keep part of its lattice.
+        ///
+        /// Every offset is first screened on at most 256 blocks; both scores
+        /// are then taken on at most 2048. When the screening singles out one
+        /// offset (at least 0.3, and at least 0.2 above every offset that
+        /// differs from it in both directions), only its three best offsets,
+        /// and the three best that differ from the grid chosen in both
+        /// directions, are scored again; otherwise every offset is. The
+        /// record's params list the 64 screening scores under
+        /// "luma_grid_scores".
         double grid_score = 0.0;
         double runner_up_grid_score = 0.0;
 
@@ -238,7 +246,10 @@ namespace lossylab
         /// for how little their curves have been checked. JPEG 2000 sweeps
         /// nominal ratios 4 to 200, so a file at ratio 4 or less (all but
         /// lossless) is not found. A codec this build cannot
-        /// both encode and decode is skipped, and listed in the record.
+        /// both encode and decode is skipped, and listed in the record. A
+        /// frame whose JPEG quantization is detected is swept with MJPEG
+        /// alone; the other codecs are listed in the record's params under
+        /// "skipped_after_jpeg".
         std::vector<ImageCodec> recompression_codecs{ImageCodec::WebP};
 
         /// The side of the centered square the recompression sweeps run on,
@@ -269,7 +280,8 @@ namespace lossylab
         /// frame still in a subsampled YUV format, whose layout says it.
         std::optional<ChromaSubsamplingEvidence> chroma;
 
-        /// Per codec, the coarse sweep, then the fine one when there is one.
+        /// Per codec, the coarse sweep, then the fine one when there is one:
+        /// when the coarse curve has a notch and at least `min_confidence`.
         std::vector<RecompressionCurve> recompression_curves;
 
         StageRecord record;
