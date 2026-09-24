@@ -413,8 +413,19 @@ namespace
 
     void test_decoding_a_single_image_records_no_tile_grid()
     {
-        const FrameResult result = decode_image(Source::from_path(data_path(png_fixture)));
-        assert(result.record.params.at("tile_grid").is_null());
+        const DecodedImage result = decode_image(Source::from_path(data_path(png_fixture)));
+        assert(result.record.params.at("tile_grid_id").is_null());
+        assert(result.tile_grid() == nullptr);
+        assert(&result.stream() == &result.probe.streams.front());
+    }
+
+    void test_decoding_reports_what_probing_reports()
+    {
+        for (const char* name : {png_fixture, jpeg_fixture})
+        {
+            const Source source = Source::from_path(data_path(name));
+            assert(decode_image(source).probe.to_json() == probe(source).to_json());
+        }
     }
 
     // JPEG fixtures written by Pillow 12.3 (libjpeg-turbo) from the 64x48
@@ -668,7 +679,7 @@ namespace
 
     void test_decoding_a_png_gives_native_planes()
     {
-        const FrameResult result = decode_image(Source::from_path(data_path(png_fixture)));
+        const DecodedImage result = decode_image(Source::from_path(data_path(png_fixture)));
 
         assert(result.frame.width() == 64);
         assert(result.frame.height() == 48);
@@ -683,7 +694,7 @@ namespace
 
     void test_decoding_a_jpeg_keeps_its_chroma_subsampling()
     {
-        const FrameResult result = decode_image(Source::from_path(data_path(jpeg_fixture)));
+        const DecodedImage result = decode_image(Source::from_path(data_path(jpeg_fixture)));
 
         // The whole point of native-plane access: the 4:2:0 chroma is still 4:2:0,
         // available for inspection rather than already upsampled away.
@@ -696,7 +707,7 @@ namespace
     {
         // PNG carries no color tags. Assuming something is unavoidable; doing it
         // silently is not, so the assumption has to appear in the record.
-        const FrameResult result = decode_image(Source::from_path(data_path(png_fixture)));
+        const DecodedImage result = decode_image(Source::from_path(data_path(png_fixture)));
 
         assert(result.frame.color().is_fully_specified());
 
@@ -709,7 +720,7 @@ namespace
             }
         }
         assert(recorded);
-        assert(!result.record.params.at("color_fully_tagged").get<bool>());
+        assert(!result.stream().color_fully_tagged);
     }
 
     void test_decoding_to_an_explicit_format_records_the_conversion()
@@ -723,7 +734,7 @@ namespace
         options.pixel_format = PixelFormat::from_name("yuv420p");
         options.color = target;
 
-        const FrameResult result = decode_image(Source::from_path(data_path(png_fixture)), options);
+        const DecodedImage result = decode_image(Source::from_path(data_path(png_fixture)), options);
 
         assert(result.frame.pixel_format().name() == std::string("yuv420p"));
         assert(result.frame.color() == target);
@@ -747,8 +758,8 @@ namespace
     {
         const std::vector<std::uint8_t> bytes = read_file(data_path(jpeg_fixture));
 
-        const FrameResult from_path = decode_image(Source::from_path(data_path(jpeg_fixture)));
-        const FrameResult from_memory = decode_image(Source::from_memory(bytes));
+        const DecodedImage from_path = decode_image(Source::from_path(data_path(jpeg_fixture)));
+        const DecodedImage from_memory = decode_image(Source::from_memory(bytes));
 
         assert(from_path.frame.width() == from_memory.frame.width());
         assert(from_path.frame.pixel_format() == from_memory.frame.pixel_format());
@@ -768,8 +779,8 @@ namespace
     void test_decoding_is_deterministic()
     {
         // Thread counts are pinned, so two decodes of the same bytes agree exactly.
-        const FrameResult first = decode_image(Source::from_path(data_path(jpeg_fixture)));
-        const FrameResult second = decode_image(Source::from_path(data_path(jpeg_fixture)));
+        const DecodedImage first = decode_image(Source::from_path(data_path(jpeg_fixture)));
+        const DecodedImage second = decode_image(Source::from_path(data_path(jpeg_fixture)));
 
         const ConstPlaneView a = first.frame.plane(0);
         const ConstPlaneView b = second.frame.plane(0);
@@ -821,6 +832,7 @@ int main()
     test_a_single_image_alpha_plane_is_an_additional_image();
     test_a_video_has_no_additional_images();
     test_decoding_a_single_image_records_no_tile_grid();
+    test_decoding_reports_what_probing_reports();
     test_probing_from_memory_matches_probing_from_a_path();
     test_an_owning_memory_source_keeps_its_bytes_alive();
     test_a_copied_owning_source_outlives_the_original();

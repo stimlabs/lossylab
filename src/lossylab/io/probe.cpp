@@ -228,6 +228,8 @@ namespace lossylab
             info.height = grid.height;
             info.coded_width = grid.coded_width;
             info.coded_height = grid.coded_height;
+            info.crop_x = grid.horizontal_offset;
+            info.crop_y = grid.vertical_offset;
 
             const SideDataEmbedded embedded = read_side_data_embedded(grid.coded_side_data, grid.nb_coded_side_data);
             info.orientation = embedded.orientation;
@@ -540,6 +542,8 @@ namespace lossylab
             {"height", height},
             {"coded_width", coded_width},
             {"coded_height", coded_height},
+            {"crop_x", crop_x},
+            {"crop_y", crop_y},
             {"orientation", json::optional_or_null(orientation)},
             {"icc_profile", json::optional_or_null(icc_profile)},
             {"tiles", json::array(std::move(tile_values))},
@@ -683,7 +687,11 @@ namespace lossylab
     {
         detail::InputContext input(source);
         input.find_stream_info();
+        return detail::probe_input(input, source);
+    }
 
+    ProbeResult detail::probe_input(const InputContext& input, const Source& source)
+    {
         const AVFormatContext& format = *input.get();
 
         ProbeResult result;

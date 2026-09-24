@@ -146,8 +146,8 @@ namespace
 
         DecodeImageOptions options;
         options.orientation = OrientationHandling::Report;
-        const FrameResult decoded = decode_image(Source::from_bytes(std::vector<std::uint8_t>(file), "webp"), options);
-        assert(decoded.record.params.at("orientation") == 8);
+        const DecodedImage decoded = decode_image(Source::from_bytes(std::vector<std::uint8_t>(file), "webp"), options);
+        assert(decoded.stream().orientation == 8);
     }
 
     void test_a_webp_xmp_chunk_is_reported_as_present()
@@ -236,7 +236,7 @@ namespace
 
     // ---- decode_image -------------------------------------------------------
 
-    FrameResult decode(const std::string_view name, const OrientationHandling handling,
+    DecodedImage decode(const std::string_view name, const OrientationHandling handling,
                        const Strict strict = Strict::AllowRecorded)
     {
         DecodeImageOptions options;
@@ -276,10 +276,11 @@ namespace
 
     void test_by_default_the_orientation_is_reported_not_applied()
     {
-        const FrameResult result = decode("testsrc_64x48_p3_orientation6.jpg", OrientationHandling::Report);
+        const DecodedImage result = decode("testsrc_64x48_p3_orientation6.jpg", OrientationHandling::Report);
         assert(result.frame.width() == 64 && result.frame.height() == 48);
         assert(result.record.transform.is_identity());
-        assert(result.record.params.at("orientation") == 6);
+        assert(result.stream().orientation == 6);
+        assert(result.stream().orientation_source == "exif");
         assert(result.record.params.at("orientation_handling").get<std::string>() == "reported");
     }
 
@@ -288,7 +289,7 @@ namespace
         for (int orientation = 2; orientation <= 8; ++orientation)
         {
             const std::string stored = "testsrc_64x48_orientation" + std::to_string(orientation) + ".png";
-            const FrameResult applied = decode(stored, OrientationHandling::Apply);
+            const DecodedImage applied = decode(stored, OrientationHandling::Apply);
             const Frame upright =
                 decode("testsrc_64x48_orientation" + std::to_string(orientation) + "_upright.png",
                        OrientationHandling::Report)
@@ -326,7 +327,7 @@ namespace
 
     void test_a_transposed_422_image_becomes_440_and_says_so()
     {
-        const FrameResult applied = decode("testsrc_64x48_422_orientation6.jpg", OrientationHandling::Apply);
+        const DecodedImage applied = decode("testsrc_64x48_422_orientation6.jpg", OrientationHandling::Apply);
         assert(applied.frame.pixel_format().subsampling() == Subsampling::Yuv440);
         assert(has_conversion(applied.record.conversions, "subsampling"));
 
@@ -347,22 +348,22 @@ namespace
 
     void test_an_avif_and_a_grid_are_turned_upright()
     {
-        const FrameResult single = decode("testsrc_128x96_p3_irot1.avif", OrientationHandling::Apply);
+        const DecodedImage single = decode("testsrc_128x96_p3_irot1.avif", OrientationHandling::Apply);
         assert(single.frame.width() == 96 && single.frame.height() == 128);
-        assert(single.record.params.at("orientation") == 8);
+        assert(single.stream().orientation == 8);
 
-        const FrameResult grid = decode("testsrc_128x96_grid_irot3.avif", OrientationHandling::Apply);
+        const DecodedImage grid = decode("testsrc_128x96_grid_irot3.avif", OrientationHandling::Apply);
         assert(grid.frame.width() == 96 && grid.frame.height() == 128);
-        assert(grid.record.params.at("orientation") == 6);
-        assert(!grid.record.params.at("tile_grid").is_null());
+        assert(grid.tile_grid() != nullptr);
+        assert(grid.tile_grid()->orientation == 6);
     }
 
     void test_a_recognized_profile_stands_in_for_missing_tags()
     {
-        const FrameResult result = decode("testsrc_64x48_p3_orientation6.jpg", OrientationHandling::Report);
+        const DecodedImage result = decode("testsrc_64x48_p3_orientation6.jpg", OrientationHandling::Report);
         assert(result.frame.color().primaries == ColorPrimaries::Smpte432);
         assert(result.frame.color().transfer == TransferCharacteristic::Srgb);
-        assert(result.record.params.at("icc_profile").at("known_as").get<std::string>() == "Display P3");
+        assert(result.stream().icc_profile->known_as == "Display P3");
 
         const auto from_profile = std::find_if(result.record.conversions.begin(), result.record.conversions.end(),
                                                [](const ConversionEvent& event)
@@ -397,7 +398,7 @@ namespace
         assert(refused);
 
         options.strict = Strict::AllowRecorded;
-        const FrameResult allowed = decode_image(webp, options);
+        const DecodedImage allowed = decode_image(webp, options);
         const auto ignored = std::find_if(allowed.record.conversions.begin(), allowed.record.conversions.end(),
                                           [](const ConversionEvent& event)
                                           { return event.property == "icc_profile"; });
@@ -405,7 +406,7 @@ namespace
         assert(ignored->from == "Adobe RGB (1998)" && ignored->to == "ignored");
 
         // Without a conversion there is nothing the profile could be ignored by.
-        const FrameResult reported = decode("testsrc_64x48_lossy_adobe_rgb_orientation8.webp",
+        const DecodedImage reported = decode("testsrc_64x48_lossy_adobe_rgb_orientation8.webp",
                                             OrientationHandling::Report, Strict::Refuse);
         assert(!has_conversion(reported.record.conversions, "icc_profile"));
         assert(reported.frame.color().primaries == ColorPrimaries::Bt709);
@@ -413,11 +414,24 @@ namespace
 
     void test_a_file_without_embedded_data_records_its_absence()
     {
-        const FrameResult result = decode("testsrc_64x48.png", OrientationHandling::Apply);
-        assert(result.record.params.at("icc_profile").is_null());
-        assert(result.record.params.at("orientation").is_null());
+        const DecodedImage result = decode("testsrc_64x48.png", OrientationHandling::Apply);
+        assert(!result.stream().icc_profile.has_value());
+        assert(result.stream().icc_profile_availability == Availability::NotPresent);
+        assert(!result.stream().orientation.has_value());
+        assert(result.stream().orientation_availability == Availability::NotPresent);
         assert(result.record.params.at("orientation_handling").get<std::string>() == "reported");
         assert(result.record.transform.is_identity());
+    }
+
+    void test_decoding_completes_what_probe_cannot_read()
+    {
+        const StreamInfo& probed = probe_stream("testsrc_64x48.tif");
+        assert(probed.orientation_availability == Availability::NotSupportedByBuild);
+        assert(probed.icc_profile_availability == Availability::NotSupportedByBuild);
+
+        const DecodedImage decoded = decode("testsrc_64x48.tif", OrientationHandling::Report);
+        assert(decoded.stream().orientation_availability == Availability::NotPresent);
+        assert(decoded.stream().icc_profile_availability == Availability::NotPresent);
     }
 }
 
@@ -444,6 +458,7 @@ int main()
     test_a_recognized_profile_stands_in_for_missing_tags();
     test_a_profile_without_a_tag_equivalent_blocks_a_color_conversion_under_refuse();
     test_a_file_without_embedded_data_records_its_absence();
+    test_decoding_completes_what_probe_cannot_read();
     std::puts("test_icc_orientation: all passed");
     return 0;
 }

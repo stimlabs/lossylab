@@ -358,7 +358,7 @@ namespace
 
     void test_a_decoded_jpeg_measures_without_conversion()
     {
-        const FrameResult decoded = decode_image(Source::from_path(data_path("testsrc_64x48_q75.jpg")));
+        const DecodedImage decoded = decode_image(Source::from_path(data_path("testsrc_64x48_q75.jpg")));
         const MeasureResult result =
             measure(decoded.frame, {Analyzer::SignalLevels, Analyzer::Blockiness, Analyzer::Blurriness,
                                     Analyzer::Noise, Analyzer::Letterbox});

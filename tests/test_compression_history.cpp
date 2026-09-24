@@ -463,7 +463,7 @@ namespace
         {
             return;
         }
-        const FrameResult decoded = decode_image(Source::from_path(data_path("testsrc_64x48_lossy.webp")));
+        const DecodedImage decoded = decode_image(Source::from_path(data_path("testsrc_64x48_lossy.webp")));
         assert(decoded.frame.color().chroma_location == ChromaLocation::Center);
         assert(std::any_of(decoded.record.conversions.begin(), decoded.record.conversions.end(),
                            [](const ConversionEvent& event) { return event.performed_by == "codec_implied_color"; }));

@@ -233,15 +233,16 @@ namespace lossylab
         /// Where `orientation` came from: "exif" for the Orientation tag of a
         /// JPEG's, PNG's or WebP's EXIF block; "irot_imir" for an AVIF/HEIF
         /// image's rotation and mirror properties, which take precedence over
-        /// any EXIF there; "display_matrix" for a video track's matrix.
+        /// any EXIF there; "display_matrix" for a video track's matrix;
+        /// "decoder" for one only the decoder reported, set by decode_image().
         std::string orientation_source;
 
         /// `Present` when the file declares an orientation. `NotPresent` when
         /// probe read where one would be and found none, or the demuxer
         /// reported none. `NotSupportedByBuild` for a still-image format whose
         /// orientation probe cannot read without decoding (JPEG XL, TIFF, and
-        /// others FFmpeg reads with a bare image parser); decode_image()
-        /// reports it for those.
+        /// others FFmpeg reads with a bare image parser); the `probe` of
+        /// decode_image()'s result has it filled in.
         Availability orientation_availability = Availability::NotPresent;
 
         /// The embedded ICC profile, from a JPEG's APP2 segments, a PNG's
@@ -348,6 +349,10 @@ namespace lossylab
         int coded_width = 0;
         int coded_height = 0;
 
+        /// The assembled image's top-left corner on the canvas.
+        int crop_x = 0;
+        int crop_y = 0;
+
         /// The grid image's orientation, from its irot and imir properties,
         /// with the meaning of `StreamInfo::orientation`. An iPhone photo
         /// taken in portrait carries it here, not on any stream.
@@ -369,8 +374,8 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
     };
 
-    LOSSYLAB_REFLECT(TileGrid, id, is_primary, title, width, height, coded_width, coded_height, orientation,
-                      icc_profile, tiles);
+    LOSSYLAB_REFLECT(TileGrid, id, is_primary, title, width, height, coded_width, coded_height, crop_x, crop_y,
+                      orientation, icc_profile, tiles);
 
     LOSSYLAB_REFLECT(TileGrid::Tile, stream_index, x, y);
 

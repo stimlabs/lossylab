@@ -438,6 +438,25 @@ namespace lossylab
             return record;
         }
 
+        /// The decode's params, plus what the decoded file declared: its codec,
+        /// color tags, ICC profile and orientation.
+        json::Value params_with_declared(const DecodedImage& decoded)
+        {
+            const StreamInfo& stream = decoded.stream();
+            const TileGrid* grid = decoded.tile_grid();
+            const std::optional<IccProfileInfo>& icc_profile = grid != nullptr ? grid->icc_profile : stream.icc_profile;
+
+            json::Value params = decoded.record.params;
+            params["codec"] = decoded.record.implementation;
+            params["tagged_color"] = stream.color.to_json();
+            params["color_fully_tagged"] = stream.color_fully_tagged;
+            params["icc_profile"] = json::optional_or_null(icc_profile);
+            params["icc_matches_tagged_color"] =
+                icc_profile.has_value() ? json::Value(icc_profile->agrees_with(stream.color)) : json::Value();
+            params["orientation"] = json::optional_or_null(grid != nullptr ? grid->orientation : stream.orientation);
+            return params;
+        }
+
         /// Decodes an encoded image, assuming the encoded color for whatever
         /// the file leaves untagged.
         FrameResult decode_encoded(const EncodedResult& encoded, const DecodeSpec& decode_spec)
@@ -448,7 +467,9 @@ namespace lossylab
             options.assumed_color = encoded.record.output.color;
             options.strict = decode_spec.strict;
             const std::string extension = encoded.record.params.at("extension").get<std::string>();
-            return decode_image(Source::from_memory(encoded.bytes, extension), options);
+            DecodedImage decoded = decode_image(Source::from_memory(encoded.bytes, extension), options);
+            decoded.record.params = params_with_declared(decoded);
+            return FrameResult{std::move(decoded.frame), std::move(decoded.record)};
         }
 
         /// Decodes an encoded clip, which must give back `frame_count` frames.

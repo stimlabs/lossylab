@@ -5,6 +5,7 @@
 #include "lossylab/core/reflect.hpp"
 #include "lossylab/core/result.hpp"
 #include "lossylab/core/strict.hpp"
+#include "lossylab/io/probe.hpp"
 #include "lossylab/io/source.hpp"
 
 #include <optional>
@@ -63,6 +64,31 @@ namespace lossylab
 
     LOSSYLAB_REFLECT(DecodeImageOptions, pixel_format, color, assumed_color, orientation, strict);
 
+    /// What decode_image() produced: the picture, the record of how, and
+    /// everything probe() reports about the file.
+    struct DecodedImage
+    {
+        /// probe()'s result for the same file, completed with what only
+        /// decoding reveals: the orientation and ICC profile of a format read
+        /// with a bare image parser, which probe reports as
+        /// `NotSupportedByBuild`. Where the decoder and the file's own
+        /// metadata disagree on either, this holds what the decoder used.
+        ProbeResult probe;
+
+        Frame frame;
+        StageRecord record;
+
+        /// The stream that was decoded; for a tile grid, its first tile's.
+        [[nodiscard]] const StreamInfo& stream() const;
+
+        /// The grid that was assembled, or nullptr for a single image.
+        [[nodiscard]] const TileGrid* tile_grid() const;
+
+        [[nodiscard]] json::Value to_json() const;
+    };
+
+    LOSSYLAB_REFLECT(DecodedImage, probe, frame, record);
+
     /// Decodes a still image.
     ///
     /// Covers the formats outside a typical PIL setup, gives access to native
@@ -71,12 +97,14 @@ namespace lossylab
     /// decoder is available here as a second implementation when comparing the
     /// two is the point.
     ///
-    /// The record states the codec that decoded it, the format it arrived in,
-    /// and any conversion applied afterwards. Its params carry the embedded
-    /// ICC profile (`icc_profile`), the declared orientation (`orientation`,
-    /// an EXIF value) and what was done with it (`orientation_handling`:
-    /// "reported", "applied", or "applied_by_decoder" for JPEG XL, whose
-    /// decoder turns the image upright itself).
-    [[nodiscard]] FrameResult decode_image(const Source& source,
-                                           const DecodeImageOptions& options = {});
+    /// The file is opened once, for both the probe and the decode. The record
+    /// states the codec that decoded it, the format it arrived in, and any
+    /// conversion applied afterwards. Its params carry what decoding decided,
+    /// never what the file declares, which is in `probe`: the stream decoded
+    /// (`stream_index`), the tile grid assembled (`tile_grid_id`), the color
+    /// assumed for untagged fields (`assumed_color`), and what was done with
+    /// the orientation (`orientation_handling`: "reported", "applied", or
+    /// "applied_by_decoder" for JPEG XL, whose decoder turns the image upright
+    /// itself).
+    [[nodiscard]] DecodedImage decode_image(const Source& source, const DecodeImageOptions& options = {});
 }

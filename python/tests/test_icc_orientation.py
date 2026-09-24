@@ -56,7 +56,8 @@ def test_applying_the_orientation_matches_pillows_exif_transpose():
 def test_reporting_leaves_the_pixels_as_stored():
     result = lossylab.decode_image(_source("testsrc_64x48_orientation6.png"))
     assert result.frame.width() == 64
-    assert result.record.to_dict()["params"]["orientation"] == 6
+    assert result.stream().orientation == 6
+    assert result.record.to_dict()["params"]["orientation_handling"] == "reported"
 
 
 def test_a_recognized_profile_stands_in_for_missing_tags():

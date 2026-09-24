@@ -59,7 +59,8 @@ def test_a_grid_avif_decodes_to_the_whole_image():
     result = lossylab.decode_image(lossylab.Source.from_path(str(DATA_DIR / "testsrc_128x96_grid_420.avif")))
     assert (result.frame.width(), result.frame.height()) == (128, 96)
     assert result.frame.plane(0).shape == (96, 128)
-    assert result.record.params["tile_grid"]["tiles"] == 4
+    assert len(result.tile_grid().tiles) == 4
+    assert result.record.params["tile_grid_id"] == result.tile_grid().id
 
 
 def test_decode_image_record_describes_the_decode():
@@ -67,3 +68,11 @@ def test_decode_image_record_describes_the_decode():
     assert result.record.kind == lossylab.StageKind.Decode
     assert result.record.transform.is_identity()
     assert result.record.output == result.frame.describe()
+
+
+def test_decode_image_carries_the_probe():
+    source = lossylab.Source.from_path(str(DATA_DIR / "testsrc_64x48.jpg"))
+    result = lossylab.decode_image(source)
+    assert result.probe.to_dict() == lossylab.probe(source).to_dict()
+    assert result.stream().jpeg is not None
+    assert result.tile_grid() is None

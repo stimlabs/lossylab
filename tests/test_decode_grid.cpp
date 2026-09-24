@@ -111,29 +111,30 @@ namespace
 
     void test_a_444_grid_assembles_to_the_reference_decode()
     {
-        const FrameResult result = decode_image(Source::from_path(data_path(grid_444_fixture)));
+        const DecodedImage result = decode_image(Source::from_path(data_path(grid_444_fixture)));
         assert(result.frame.pixel_format() == PixelFormat::from_name("yuv444p"));
         assert_matches_reference(result.frame, read_y4m(grid_444_reference));
     }
 
     void test_a_420_grid_places_chroma_at_half_the_offset()
     {
-        const FrameResult result = decode_image(Source::from_path(data_path(grid_420_fixture)));
+        const DecodedImage result = decode_image(Source::from_path(data_path(grid_420_fixture)));
         assert(result.frame.pixel_format() == PixelFormat::from_name("yuv420p"));
         assert_matches_reference(result.frame, read_y4m(grid_420_reference));
     }
 
     void test_the_record_describes_the_grid()
     {
-        const FrameResult result = decode_image(Source::from_path(data_path(grid_444_fixture)));
-        const json::Value& grid = result.record.params.at("tile_grid");
-        assert(grid.at("tiles") == 4);
-        assert(grid.at("tile_width") == 64);
-        assert(grid.at("tile_height") == 64);
-        assert(grid.at("coded_width") == 128);
-        assert(grid.at("coded_height") == 128);
-        assert(grid.at("crop").at("width") == 128);
-        assert(grid.at("crop").at("height") == 96);
+        const DecodedImage result = decode_image(Source::from_path(data_path(grid_444_fixture)));
+        const TileGrid* grid = result.tile_grid();
+        assert(grid != nullptr && grid->is_primary);
+        assert(result.record.params.at("tile_grid_id") == grid->id);
+        assert(grid->tiles.size() == 4);
+        assert(result.stream().width == 64 && result.stream().height == 64);
+        assert(result.stream().index == grid->tiles.front().stream_index);
+        assert(grid->coded_width == 128 && grid->coded_height == 128);
+        assert(grid->crop_x == 0 && grid->crop_y == 0);
+        assert(grid->width == 128 && grid->height == 96);
         assert(result.record.transform.is_identity());
         assert(result.record.output.width == 128 && result.record.output.height == 96);
     }
@@ -142,17 +143,17 @@ namespace
     {
         // The file also carries a grid of alpha tiles, which stays out of the
         // decoded image; see ProbeResult::additional_images().
-        const FrameResult result = decode_image(Source::from_path(data_path(grid_alpha_fixture)));
+        const DecodedImage result = decode_image(Source::from_path(data_path(grid_alpha_fixture)));
         assert(result.frame.width() == 128 && result.frame.height() == 96);
         assert(result.frame.pixel_format() == PixelFormat::from_name("yuv444p"));
     }
 
     void test_a_grid_decodes_the_same_from_memory()
     {
-        const FrameResult from_path = decode_image(Source::from_path(data_path(grid_420_fixture)));
-        const FrameResult from_memory = decode_image(Source::from_bytes(read_file(data_path(grid_420_fixture))));
+        const DecodedImage from_path = decode_image(Source::from_path(data_path(grid_420_fixture)));
+        const DecodedImage from_memory = decode_image(Source::from_bytes(read_file(data_path(grid_420_fixture))));
         assert_matches_reference(from_memory.frame, read_y4m(grid_420_reference));
-        assert(from_path.record.params.at("tile_grid") == from_memory.record.params.at("tile_grid"));
+        assert(from_path.tile_grid()->to_json() == from_memory.tile_grid()->to_json());
     }
 }
 

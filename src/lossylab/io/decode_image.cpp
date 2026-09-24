@@ -6,7 +6,6 @@
 #include "lossylab/detail/ff_ptr.hpp"
 #include "lossylab/core/json_io.hpp"
 #include "lossylab/io/icc_profile.hpp"
-#include "lossylab/io/image_container.hpp"
 #include "lossylab/io/input_context.hpp"
 #include "lossylab/io/orientation.hpp"
 
@@ -119,13 +118,16 @@ namespace lossylab
         }
 
         /// A decoded picture, before color handling, with how it was made.
-        struct DecodedImage
+        struct DecodedPicture
         {
             Frame frame;
             std::string decoder_name;
 
-            /// Describes the grid for a tile-grid image; null otherwise.
-            json::Value tile_grid;
+            /// The stream decoded; for a tile grid, its first tile's.
+            int stream_index = 0;
+
+            /// The grid assembled, for a tile-grid image.
+            std::optional<std::int64_t> tile_grid_id;
 
             /// The embedded ICC profile, and the EXIF orientation the display
             /// matrix describes, as FFmpeg attached them to the picture.
@@ -135,7 +137,7 @@ namespace lossylab
 
         /// Fills in whatever of the ICC profile and orientation `image` does
         /// not have yet from container side data.
-        void take_embedded_from(const AVPacketSideData* side_data, const int count, DecodedImage& image)
+        void take_embedded_from(const AVPacketSideData* side_data, const int count, DecodedPicture& image)
         {
             if (const AVPacketSideData* profile = av_packet_side_data_get(side_data, count, AV_PKT_DATA_ICC_PROFILE);
                 profile != nullptr && !image.icc_profile.has_value())
@@ -149,7 +151,7 @@ namespace lossylab
             }
         }
 
-        DecodedImage decode_single_image(AVFormatContext& format)
+        DecodedPicture decode_single_image(AVFormatContext& format)
         {
             const int stream_index = find_image_stream(format);
             const AVStream& stream = *format.streams[stream_index];
@@ -159,7 +161,8 @@ namespace lossylab
 
             Frame frame = Frame::from_av_frame(decoded.get());
             frame.set_time_base(Rational{stream.time_base.num, stream.time_base.den});
-            DecodedImage image{std::move(frame), decoder_name(*decoder), json::Value(), std::nullopt, std::nullopt};
+            DecodedPicture image{std::move(frame), decoder_name(*decoder), stream_index, std::nullopt, std::nullopt,
+                                 std::nullopt};
 
             // Decoders attach what the bitstream carries (a JPEG's APP2 and
             // EXIF, a PNG's iCCP, a WebP's ICCP) to the frame; the container's
@@ -307,7 +310,7 @@ namespace lossylab
         /// Assembles the primary image of a tile-grid file: every tile decoded
         /// one at a time and copied into the cropped output, so peak memory is
         /// the output plus one tile.
-        DecodedImage decode_tile_grid(AVFormatContext& format, const AVStreamGroup& group)
+        DecodedPicture decode_tile_grid(AVFormatContext& format, const AVStreamGroup& group)
         {
             const AVStreamGroupTileGrid& grid = *group.params.tile_grid;
             if (grid.nb_tiles == 0 || grid.width <= 0 || grid.height <= 0)
@@ -390,20 +393,8 @@ namespace lossylab
                 place_tile(*image, tile_frame, tile.x, tile.y);
             }
 
-            json::Value description = json::object({
-                {"id", group.id},
-                {"tiles", grid.nb_tiles},
-                {"tile_width", tiles.front().width},
-                {"tile_height", tiles.front().height},
-                {"coded_width", grid.coded_width},
-                {"coded_height", grid.coded_height},
-                {"crop", json::object({{"x", grid.horizontal_offset},
-                                       {"y", grid.vertical_offset},
-                                       {"width", grid.width},
-                                       {"height", grid.height}})},
-            });
-            DecodedImage decoded{std::move(*image), decoder_name(*decoder), std::move(description), std::nullopt,
-                                 std::nullopt};
+            DecodedPicture decoded{std::move(*image), decoder_name(*decoder), first_stream.index, group.id,
+                                   std::nullopt, std::nullopt};
             take_embedded_from(grid.coded_side_data, grid.nb_coded_side_data, decoded);
             return decoded;
         }
@@ -454,6 +445,95 @@ namespace lossylab
             return color;
         }
 
+        TileGrid& find_tile_grid(ProbeResult& probed, const std::int64_t id)
+        {
+            const auto grid = std::find_if(probed.tile_grids.begin(), probed.tile_grids.end(),
+                                           [id](const TileGrid& candidate) { return candidate.id == id; });
+            if (grid == probed.tile_grids.end())
+            {
+                throw ConfigError("probe found no tile grid " + std::to_string(id));
+            }
+            return *grid;
+        }
+
+        StreamInfo& find_stream(ProbeResult& probed, const int index)
+        {
+            const auto stream = std::find_if(probed.streams.begin(), probed.streams.end(),
+                                             [index](const StreamInfo& candidate) { return candidate.index == index; });
+            if (stream == probed.streams.end())
+            {
+                throw ConfigError("probe found no stream " + std::to_string(index));
+            }
+            return *stream;
+        }
+
+        /// Makes the probe and the decoded picture agree on the picture's
+        /// orientation and ICC profile. The orientation the decoder attached
+        /// wins over the file's metadata; the profile the file's metadata
+        /// holds wins over the decoder's, since probe's reading of it also
+        /// lists its structural problems. Either fills in what the other left
+        /// out, and a format probe could not read becomes `Present` or
+        /// `NotPresent`. Returns the ICC profile to decode by.
+        std::optional<IccProfileInfo> reconcile_embedded(DecodedPicture& picture, ProbeResult& probed)
+        {
+            std::optional<IccProfileInfo> decoded_profile;
+            if (picture.icc_profile.has_value())
+            {
+                decoded_profile = describe_icc_profile(*picture.icc_profile);
+            }
+
+            if (picture.tile_grid_id.has_value())
+            {
+                TileGrid& grid = find_tile_grid(probed, *picture.tile_grid_id);
+                if (picture.orientation.has_value())
+                {
+                    grid.orientation = picture.orientation;
+                }
+                picture.orientation = grid.orientation;
+                if (!grid.icc_profile.has_value())
+                {
+                    grid.icc_profile = std::move(decoded_profile);
+                }
+                return grid.icc_profile;
+            }
+
+            StreamInfo& stream = find_stream(probed, picture.stream_index);
+            if (picture.orientation.has_value())
+            {
+                if (stream.orientation != picture.orientation)
+                {
+                    stream.orientation = picture.orientation;
+                    stream.orientation_source = "decoder";
+                }
+                stream.orientation_availability = Availability::Present;
+            }
+            else if (stream.orientation.has_value())
+            {
+                picture.orientation = stream.orientation;
+            }
+            else if (picture.decoder_name != "libjxl")
+            {
+                // libjxl turns the image upright and FFmpeg removes the
+                // orientation it applied, so for JPEG XL nothing is known.
+                stream.orientation_availability = Availability::NotPresent;
+            }
+
+            if (!stream.icc_profile.has_value() && decoded_profile.has_value())
+            {
+                stream.icc_profile = std::move(decoded_profile);
+            }
+            if (stream.icc_profile.has_value())
+            {
+                stream.icc_profile_availability = Availability::Present;
+                stream.icc_matches_tagged_color = stream.icc_profile->agrees_with(stream.color);
+            }
+            else
+            {
+                stream.icc_profile_availability = Availability::NotPresent;
+            }
+            return stream.icc_profile;
+        }
+
         /// What an ICC profile is called in a record: the color space it was
         /// recognized as, else its own description.
         std::string profile_name(const IccProfileInfo& profile)
@@ -489,33 +569,60 @@ namespace lossylab
         throw ConfigError("unknown orientation handling '" + std::string(name) + "'");
     }
 
-    FrameResult decode_image(const Source& source, const DecodeImageOptions& options)
+    const StreamInfo& DecodedImage::stream() const
+    {
+        const int index = record.params.at("stream_index").get<int>();
+        for (const StreamInfo& candidate : probe.streams)
+        {
+            if (candidate.index == index)
+            {
+                return candidate;
+            }
+        }
+        throw ConfigError("the probe holds no stream " + std::to_string(index));
+    }
+
+    const TileGrid* DecodedImage::tile_grid() const
+    {
+        const json::Value& id = record.params.at("tile_grid_id");
+        if (id.is_null())
+        {
+            return nullptr;
+        }
+        for (const TileGrid& candidate : probe.tile_grids)
+        {
+            if (candidate.id == id.get<std::int64_t>())
+            {
+                return &candidate;
+            }
+        }
+        return nullptr;
+    }
+
+    json::Value DecodedImage::to_json() const
+    {
+        return json::object({
+            {"probe", probe.to_json()},
+            {"frame", frame.describe().to_json()},
+            {"record", record.to_json()},
+        });
+    }
+
+    DecodedImage decode_image(const Source& source, const DecodeImageOptions& options)
     {
         const detail::StageClock clock;
 
         detail::InputContext input(source);
         input.find_stream_info();
+        ProbeResult probed = detail::probe_input(input, source);
 
         AVFormatContext& format = *input.get();
         const AVStreamGroup* tile_grid = find_primary_tile_grid(format);
-        DecodedImage decoded = tile_grid != nullptr ? decode_tile_grid(format, *tile_grid)
-                                                    : decode_single_image(format);
+        DecodedPicture decoded = tile_grid != nullptr ? decode_tile_grid(format, *tile_grid)
+                                                      : decode_single_image(format);
 
-        // FFmpeg's WebP decoder drops an EXIF chunk that starts with the
-        // "Exif\0\0" prefix, so the chunk is read here as probe() does.
-        if (!decoded.orientation.has_value() && format.iformat != nullptr &&
-            std::string_view(format.iformat->name).find("webp") != std::string_view::npos)
-        {
-            if (const std::optional<detail::WebpChunks> chunks = detail::read_webp_chunks(source);
-                chunks.has_value() && chunks->exif.has_value())
-            {
-                decoded.orientation = detail::exif_orientation(*chunks->exif);
-            }
-        }
+        const std::optional<IccProfileInfo> icc_profile = reconcile_embedded(decoded, probed);
         Frame frame = std::move(decoded.frame);
-        const std::optional<IccProfileInfo> icc_profile =
-            decoded.icc_profile.has_value() ? std::optional(describe_icc_profile(*decoded.icc_profile))
-                                            : std::nullopt;
 
         StageRecord record;
         record.kind = StageKind::Decode;
@@ -573,16 +680,10 @@ namespace lossylab
         record.output = frame.describe();
         record.params = json::object({
             {"source", source.describe()},
-            {"codec", record.implementation},
-            {"tagged_color", tagged.to_json()},
-            {"color_fully_tagged", tagged.is_fully_specified()},
+            {"stream_index", decoded.stream_index},
+            {"tile_grid_id", json::optional_or_null(decoded.tile_grid_id)},
             {"assumed_color", options.assumed_color.to_json()},
-            {"icc_profile", json::optional_or_null(icc_profile)},
-            {"icc_matches_tagged_color",
-             icc_profile.has_value() ? json::optional_or_null(icc_profile->agrees_with(tagged)) : json::Value()},
-            {"orientation", json::optional_or_null(decoded.orientation)},
             {"orientation_handling", orientation_handling},
-            {"tile_grid", decoded.tile_grid},
         });
 
         // An explicit target means one conversion, run through the same code
@@ -604,11 +705,11 @@ namespace lossylab
             record.params["converted"] = converted.record.params;
             record.duration_ms = clock.duration_ms();
             record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
-            return FrameResult{std::move(converted.frame), std::move(record)};
+            return DecodedImage{std::move(probed), std::move(converted.frame), std::move(record)};
         }
 
         record.duration_ms = clock.duration_ms();
         record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
-        return FrameResult{std::move(frame), std::move(record)};
+        return DecodedImage{std::move(probed), std::move(frame), std::move(record)};
     }
 }

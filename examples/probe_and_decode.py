@@ -4,7 +4,8 @@ Writes one JSON line per file to the output file and logs each failure and a sum
 
     uv run python examples/probe_and_decode.py path/to/files --output-file probe_and_decode.jsonl
 
-A file that fails to probe or decode gets a FileError in its line instead of stopping the run. A worker process that
+A decode's value carries everything probe() reports, so a file is probed on its own only when it fails to decode. A
+file that fails to probe or decode gets a FileError in its line instead of stopping the run. A worker process that
 dies (a segfault, an abort, being killed for memory) breaks the pool: the script then logs the files that did not
 finish and exits with status 1. One of them killed its worker; with --num-workers 1 it is the first one listed.
 """
@@ -24,21 +25,15 @@ logger = logging.getLogger("probe_and_decode")
 
 
 def probe_and_decode_file(path: Path) -> dict:
-    """The probe and, if it succeeded, the decode of one file, each as {"ok": ..., "value" or "error": ..., "log"}."""
+    """The decode of one file, whose value holds its probe too, and the probe on its own only when the decode failed,
+    each as {"ok": ..., "value" or "error": ..., "log"}."""
     source = lossylab.Source.from_path(str(path))
     line = {"path": str(path)}
 
-    probed = lossylab.capture_probe(source)
-    line["probe"] = probed.to_dict()
-    if not probed:
-        return line
-
     decoded = lossylab.capture_decode_image(source)
-    if decoded:
-        line["decode"] = {"ok": True, "value": decoded.value().record.to_dict()}
-    else:
-        line["decode"] = {"ok": False, "error": decoded.error().to_dict()}
-    line["decode"]["log"] = [message.to_dict() for message in decoded.log()]
+    line["decode"] = decoded.to_dict()
+    if not decoded:
+        line["probe"] = lossylab.capture_probe(source).to_dict()
     return line
 
 

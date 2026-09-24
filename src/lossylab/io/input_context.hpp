@@ -8,6 +8,11 @@
 #include <cstdint>
 #include <span>
 
+namespace lossylab
+{
+    struct ProbeResult;
+}
+
 namespace lossylab::detail
 {
     /// An open input, whether backed by a file or by a buffer.
@@ -53,4 +58,8 @@ namespace lossylab::detail
         AvIoContextPtr m_io_context;
         FormatContextPtr m_format;
     };
+
+    /// What probe() reports for an input already opened from `source`, whose
+    /// stream info has been read. Defined in probe.cpp.
+    [[nodiscard]] ProbeResult probe_input(const InputContext& input, const Source& source);
 }

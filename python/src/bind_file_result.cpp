@@ -65,7 +65,8 @@ namespace lossylab::pybind
 
         bind_file_result<ProbeResult>(m, "ProbeFileResult")
             .def("to_dict", [](const FileResult<ProbeResult>& self) { return to_python(self.to_json()); });
-        bind_file_result<FrameResult>(m, "DecodeImageFileResult");
+        bind_file_result<DecodedImage>(m, "DecodeImageFileResult")
+            .def("to_dict", [](const FileResult<DecodedImage>& self) { return to_python(self.to_json()); });
         bind_file_result<HeaderInfo>(m, "ReadHeadersFileResult")
             .def("to_dict", [](const FileResult<HeaderInfo>& self) { return to_python(self.to_json()); });
 
