@@ -59,6 +59,7 @@ namespace lossylab::pybind
             .def("empty", &ProcessingRecord::empty)
             .def("__len__", &ProcessingRecord::size)
             .def_prop_rw("build_id", &ProcessingRecord::build_id, &ProcessingRecord::set_build_id)
+            .def_prop_rw("origin", &ProcessingRecord::origin, &ProcessingRecord::set_origin, nb::arg("origin").none())
             .def("end_to_end_transform", &ProcessingRecord::end_to_end_transform)
             .def("effective_block_grid", &ProcessingRecord::effective_block_grid)
             .def("is_reproducible", &ProcessingRecord::is_reproducible)

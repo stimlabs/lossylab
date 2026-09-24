@@ -5,7 +5,9 @@
 #include "lossylab/env/build_info.hpp"
 
 extern "C" {
+#include <libavcodec/exif.h>
 #include <libavutil/avutil.h>
+#include <libavutil/display.h>
 #include <libavutil/intreadwrite.h>
 #include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
@@ -107,7 +109,40 @@ namespace lossylab::detail
         context.pix_fmt = static_cast<AVPixelFormat>(setup.pixel_format.raw());
         context.framerate = AVRational{setup.frame_rate.num, setup.frame_rate.den};
         context.time_base = AVRational{setup.frame_rate.den, setup.frame_rate.num};
-        context.sample_aspect_ratio = AVRational{1, 1};
+        context.sample_aspect_ratio = AVRational{setup.sample_aspect_ratio.num, setup.sample_aspect_ratio.den};
+        if (setup.icc_profile != nullptr)
+        {
+            const std::vector<std::uint8_t>& bytes = setup.icc_profile->bytes;
+            const AVFrameSideData* profile =
+                LL_FF_ALLOC(av_frame_side_data_new(&context.decoded_side_data, &context.nb_decoded_side_data,
+                                                   AV_FRAME_DATA_ICC_PROFILE, bytes.size(), 0));
+            std::memcpy(profile->data, bytes.data(), bytes.size());
+        }
+        if (setup.orientation.has_value())
+        {
+            const AVFrameSideData* matrix =
+                LL_FF_ALLOC(av_frame_side_data_new(&context.decoded_side_data, &context.nb_decoded_side_data,
+                                                   AV_FRAME_DATA_DISPLAYMATRIX, sizeof(std::int32_t) * 9, 0));
+            LL_FF_CHECK(av_exif_orientation_to_matrix(reinterpret_cast<std::int32_t*>(matrix->data),
+                                                      *setup.orientation));
+
+            // Some encoders (PNG's) write the orientation from an EXIF block
+            // rather than from the matrix; this one holds nothing else.
+            AVExifMetadata exif{};
+            const std::uint64_t orientation = static_cast<std::uint64_t>(*setup.orientation);
+            constexpr std::uint16_t orientation_tag = 0x0112;
+            AVBufferRef* raw_block = nullptr;
+            const int set = av_exif_set_entry(m_context.get(), &exif, orientation_tag, AV_TIFF_SHORT, 1, nullptr, 0,
+                                              &orientation);
+            const int written = set < 0 ? set : av_exif_write(m_context.get(), &exif, &raw_block, AV_EXIF_TIFF_HEADER);
+            av_exif_free(&exif);
+            LL_FF_CHECK(written);
+            const BufferRefPtr block(raw_block);
+            AVFrameSideData* exif_side_data =
+                LL_FF_ALLOC(av_frame_side_data_new(&context.decoded_side_data, &context.nb_decoded_side_data,
+                                                   AV_FRAME_DATA_EXIF, block->size, 0));
+            std::memcpy(exif_side_data->data, block->data, block->size);
+        }
         context.colorspace = static_cast<AVColorSpace>(setup.color.matrix);
         context.color_range = static_cast<AVColorRange>(setup.color.range);
         context.color_primaries = static_cast<AVColorPrimaries>(setup.color.primaries);
@@ -189,6 +224,18 @@ namespace lossylab::detail
         input->color_primaries = m_context->color_primaries;
         input->color_trc = m_context->color_trc;
         input->chroma_location = m_context->chroma_sample_location;
+        input->sample_aspect_ratio = m_context->sample_aspect_ratio;
+
+        // The frame states the ICC profile and orientation the encoder was
+        // opened with, and nothing else of that kind.
+        av_frame_remove_side_data(input.get(), AV_FRAME_DATA_ICC_PROFILE);
+        av_frame_remove_side_data(input.get(), AV_FRAME_DATA_DISPLAYMATRIX);
+        av_frame_remove_side_data(input.get(), AV_FRAME_DATA_EXIF);
+        for (int i = 0; i < m_context->nb_decoded_side_data; ++i)
+        {
+            LL_FF_CHECK(av_frame_side_data_clone(&input->side_data, &input->nb_side_data,
+                                                 m_context->decoded_side_data[i], 0));
+        }
 
         while (true)
         {
@@ -313,6 +360,29 @@ namespace lossylab::detail
         LL_FF_CHECK(avcodec_parameters_from_context(stream->codecpar, &encoder));
         stream->time_base = encoder.time_base;
         stream->avg_frame_rate = encoder.framerate;
+        stream->sample_aspect_ratio = encoder.sample_aspect_ratio;
+        for (int i = 0; i < encoder.nb_decoded_side_data; ++i)
+        {
+            const AVFrameSideData& side_data = *encoder.decoded_side_data[i];
+            AVPacketSideDataType type = AV_PKT_DATA_NB;
+            if (side_data.type == AV_FRAME_DATA_ICC_PROFILE)
+            {
+                type = AV_PKT_DATA_ICC_PROFILE;
+            }
+            else if (side_data.type == AV_FRAME_DATA_DISPLAYMATRIX)
+            {
+                type = AV_PKT_DATA_DISPLAYMATRIX;
+            }
+            if (type == AV_PKT_DATA_NB ||
+                av_packet_side_data_get(stream->codecpar->coded_side_data, stream->codecpar->nb_coded_side_data,
+                                        type) != nullptr)
+            {
+                continue;
+            }
+            AVPacketSideData* copy = LL_FF_ALLOC(av_packet_side_data_new(
+                &stream->codecpar->coded_side_data, &stream->codecpar->nb_coded_side_data, type, side_data.size, 0));
+            std::memcpy(copy->data, side_data.data, side_data.size);
+        }
 
         LL_FF_CHECK(avformat_write_header(format.get(), nullptr));
         for (PacketPtr& packet : packets)

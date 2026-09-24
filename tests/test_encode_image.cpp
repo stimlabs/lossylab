@@ -302,6 +302,139 @@ namespace
         expect_throw<UnsupportedCapability>(
             [&] { (void)encode_image(source, image_options(ImageCodec::Heif, "yuv420p", 30)); });
     }
+
+    // ---- ICC profile, orientation and pixel shape --------------------------
+
+    /// The Display P3 profile of a test JPEG.
+    std::vector<std::uint8_t> display_p3_profile()
+    {
+        return decode_image(Source::from_path(data_path("testsrc_64x48_p3_orientation6.jpg"))).frame.icc_profile()->bytes;
+    }
+
+    /// `frame` with a Display P3 profile, orientation 6 and 4:3 pixels.
+    Frame with_embedded(Frame frame)
+    {
+        frame.set_icc_profile(display_p3_profile());
+        frame.set_orientation(6);
+        frame.set_sample_aspect_ratio(Rational{4, 3});
+        return frame;
+    }
+
+    bool records(const StageRecord& record, const std::string& property)
+    {
+        for (const ConversionEvent& event : record.conversions)
+        {
+            if (event.property == property)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    struct EmbeddedCase
+    {
+        ImageCodec codec;
+        const char* pixel_format;
+        ColorSpec color;
+        double quality;
+        bool lossless;
+    };
+
+    std::vector<EmbeddedCase> embedded_cases()
+    {
+        ColorSpec jpeg_color = bt601_yuv(ColorRange::Full);
+        return {
+            {ImageCodec::Png, "rgb24", ColorSpec::srgb(), 50, true},
+            {ImageCodec::Mjpeg, "yuvj420p", jpeg_color, 5, false},
+            {ImageCodec::WebP, "yuv420p", bt601_yuv(ColorRange::Limited), 80, false},
+            {ImageCodec::Jxl, "rgb24", ColorSpec::srgb(), 1.0, false},
+            {ImageCodec::Avif, "yuv420p", bt601_yuv(ColorRange::Limited), 30, false},
+            {ImageCodec::Jpeg2000, "rgb24", ColorSpec::srgb(), 8, false},
+        };
+    }
+
+    void test_the_record_states_what_each_output_kept()
+    {
+        for (const EmbeddedCase& embedded_case : embedded_cases())
+        {
+            if (!capabilities().supports(embedded_case.codec))
+            {
+                continue;
+            }
+            const Frame source = with_embedded(source_in(embedded_case.pixel_format, embedded_case.color));
+            EncodeImageOptions options = image_options(embedded_case.codec, embedded_case.pixel_format,
+                                                       embedded_case.quality);
+            options.lossless = embedded_case.lossless;
+            options.strict = Strict::AllowRecorded;
+            const EncodedResult encoded = encode_image(source, options);
+
+            // What reading the output back finds is what the record says it kept.
+            const DecodedImage read_back = decode_image(Source::from_memory(encoded.bytes,
+                                                                            encoded.record.params.at("extension")
+                                                                                .get<std::string>()));
+            const TileGrid* grid = read_back.tile_grid();
+            const bool kept_profile = grid != nullptr ? grid->icc_profile.has_value()
+                                                      : read_back.stream().icc_profile.has_value();
+            const std::optional<int> kept_orientation =
+                grid != nullptr ? grid->orientation : read_back.stream().orientation;
+            const Rational kept_ratio = read_back.stream().sample_aspect_ratio;
+
+            assert(records(encoded.record, "icc_profile") == !kept_profile);
+            assert(records(encoded.record, "orientation") == (kept_orientation != 6));
+            assert(records(encoded.record, "sample_aspect_ratio") == (kept_ratio != Rational{4, 3}));
+            assert(encoded.record.input.icc_profile == "Display P3");
+            assert(encoded.record.output.icc_profile == (kept_profile ? "Display P3" : ""));
+        }
+    }
+
+    void test_an_output_that_cannot_keep_the_profile_is_refused()
+    {
+        if (!capabilities().supports(ImageCodec::WebP))
+        {
+            return;
+        }
+        Frame source = source_in("yuv420p", bt601_yuv(ColorRange::Limited));
+        source.set_icc_profile(display_p3_profile());
+        const EncodeImageOptions options = image_options(ImageCodec::WebP, "yuv420p", 80);
+        expect_throw<ConversionRefused>([&] { (void)encode_image(source, options); });
+
+        // Clearing it first is the explicit way to drop it.
+        source.clear_icc_profile();
+        const EncodedResult encoded = encode_image(source, options);
+        assert(!records(encoded.record, "icc_profile"));
+    }
+
+    void test_a_frame_without_embedded_data_records_nothing()
+    {
+        const Frame source = source_in("rgb24", ColorSpec::srgb());
+        EncodeImageOptions options = image_options(ImageCodec::Png, "rgb24", 50);
+        options.lossless = true;
+        const EncodedResult encoded = encode_image(source, options);
+        assert(encoded.record.conversions.empty());
+        assert(encoded.record.output == source.describe());
+    }
+
+    void test_a_non_square_pixel_turns_with_the_image()
+    {
+        Frame source = source_in("rgb24", ColorSpec::srgb());
+        source.set_orientation(6);
+        source.set_sample_aspect_ratio(Rational{4, 3});
+        EncodeImageOptions options = image_options(ImageCodec::Png, "rgb24", 50);
+        options.lossless = true;
+        options.strict = Strict::AllowRecorded;
+        const EncodedResult encoded = encode_image(source, options);
+        if (records(encoded.record, "orientation") || records(encoded.record, "sample_aspect_ratio"))
+        {
+            return;  // this build's PNG encoder keeps neither, so there is nothing to turn
+        }
+        DecodeImageOptions decode_options;
+        decode_options.orientation = OrientationHandling::Apply;
+        const DecodedImage upright = decode_image(Source::from_memory(encoded.bytes, "png"), decode_options);
+        assert(upright.frame.width() == 48 && upright.frame.height() == 64);
+        assert(upright.frame.sample_aspect_ratio() == (Rational{3, 4}));
+        assert(!upright.frame.orientation().has_value());
+    }
 }
 
 int main()
@@ -318,5 +451,9 @@ int main()
     test_lossy_jpeg_2000_encodes_at_a_compression_ratio();
     test_avif_is_muxed_into_an_avif_file();
     test_heif_cannot_be_encoded();
+    test_the_record_states_what_each_output_kept();
+    test_an_output_that_cannot_keep_the_profile_is_refused();
+    test_a_frame_without_embedded_data_records_nothing();
+    test_a_non_square_pixel_turns_with_the_image();
     return 0;
 }

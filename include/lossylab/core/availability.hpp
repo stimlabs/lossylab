@@ -26,4 +26,10 @@ namespace lossylab
 
     std::string to_string(Availability availability);
     Availability availability_from_string(std::string_view name);
+
+    /// For reflect::from_json().
+    inline void from_string(const std::string_view name, Availability& value)
+    {
+        value = availability_from_string(name);
+    }
 }

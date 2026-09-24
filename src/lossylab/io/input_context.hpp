@@ -6,7 +6,9 @@
 #include "lossylab/io/source.hpp"
 
 #include <cstdint>
+#include <map>
 #include <span>
+#include <vector>
 
 namespace lossylab
 {
@@ -59,7 +61,17 @@ namespace lossylab::detail
         FormatContextPtr m_format;
     };
 
+    /// The raw bytes of the ICC profiles probe_input() described, by stream
+    /// index and by tile grid id.
+    struct ProbedIccProfiles
+    {
+        std::map<int, std::vector<std::uint8_t>> by_stream;
+        std::map<std::int64_t, std::vector<std::uint8_t>> by_tile_grid;
+    };
+
     /// What probe() reports for an input already opened from `source`, whose
-    /// stream info has been read. Defined in probe.cpp.
-    [[nodiscard]] ProbeResult probe_input(const InputContext& input, const Source& source);
+    /// stream info has been read. Defined in probe.cpp. When `icc_profiles`
+    /// is given, it receives the bytes of every ICC profile described.
+    [[nodiscard]] ProbeResult probe_input(const InputContext& input, const Source& source,
+                                          ProbedIccProfiles* icc_profiles = nullptr);
 }

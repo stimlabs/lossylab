@@ -3,6 +3,8 @@
 
 #include <cassert>
 #include <cmath>
+#include <cstdint>
+#include <vector>
 
 using namespace lossylab;
 
@@ -348,6 +350,72 @@ namespace
         {
         }
     }
+
+    /// Not a valid profile; only its bytes and that it travels matter here.
+    const std::vector<std::uint8_t> profile_bytes(128, 0);
+
+    void test_a_new_frame_carries_no_embedded_data()
+    {
+        const Frame frame = make_frame();
+        assert(frame.icc_profile() == nullptr);
+        assert(!frame.orientation().has_value());
+        assert(frame.sample_aspect_ratio() == (Rational{1, 1}));
+        assert(frame.describe().icc_profile.empty());
+    }
+
+    void test_embedded_data_travels_with_copies_and_clones()
+    {
+        Frame frame = make_frame();
+        frame.set_icc_profile(profile_bytes);
+        frame.set_orientation(6);
+        frame.set_sample_aspect_ratio(Rational{4, 3});
+
+        const Frame copy = frame;
+        const Frame deep = frame.clone();
+        for (const Frame* each : {&copy, &deep})
+        {
+            assert(each->icc_profile()->bytes == profile_bytes);
+            assert(each->orientation() == 6);
+            assert(each->sample_aspect_ratio() == (Rational{4, 3}));
+            assert(each->describe() == frame.describe());
+        }
+
+        Frame taken = make_frame("rgb24");
+        taken.copy_embedded_from(frame);
+        assert(taken.icc_profile() != nullptr && taken.orientation() == 6);
+        assert(taken.sample_aspect_ratio() == (Rational{4, 3}));
+
+        taken.clear_embedded();
+        assert(taken.icc_profile() == nullptr && !taken.orientation().has_value());
+        assert(taken.sample_aspect_ratio() == (Rational{1, 1}));
+        assert(frame.orientation() == 6);
+    }
+
+    void test_orientation_1_means_nothing_to_apply()
+    {
+        Frame frame = make_frame();
+        frame.set_orientation(1);
+        assert(!frame.orientation().has_value());
+        for (const int invalid : {0, 9})
+        {
+            try
+            {
+                frame.set_orientation(invalid);
+                assert(false && "expected throw");
+            }
+            catch (const ConfigError&)
+            {
+            }
+        }
+        try
+        {
+            frame.set_sample_aspect_ratio(Rational{0, 1});
+            assert(false && "expected throw");
+        }
+        catch (const ConfigError&)
+        {
+        }
+    }
 }
 
 int main()
@@ -373,4 +441,7 @@ int main()
     test_qp_map_indexing_is_bounds_checked();
     test_qp_mean_over_a_crop_covers_every_block_it_touches();
     test_qp_mean_rejects_an_empty_map_or_an_outside_rect();
+    test_a_new_frame_carries_no_embedded_data();
+    test_embedded_data_travels_with_copies_and_clones();
+    test_orientation_1_means_nothing_to_apply();
 }

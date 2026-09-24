@@ -898,7 +898,7 @@ namespace lossylab
         const FormatDescription format = frames.front().describe();
         for (std::size_t index = 1; index < frames.size(); ++index)
         {
-            if (frames[index].empty() || frames[index].describe() != format)
+            if (frames[index].empty() || !frames[index].describe().has_same_samples_as(format))
             {
                 throw ConfigError("measure() frame " + std::to_string(index) +
                                   " differs from frame 0 in size, pixel format or color");
@@ -1039,7 +1039,8 @@ namespace lossylab
         const FormatDescription format = reference.front().describe();
         for (std::size_t i = 0; i < reference.size(); ++i)
         {
-            if (reference[i].describe() != format || distorted[i].describe() != format)
+            if (!reference[i].describe().has_same_samples_as(format) ||
+                !distorted[i].describe().has_same_samples_as(format))
             {
                 throw ConfigError("compare() frame " + std::to_string(i) +
                                   " differs from reference frame 0 in size, pixel format or color; "
@@ -1318,6 +1319,11 @@ namespace lossylab
         }
         record.output = reference.describe();
 
+        // The curve compares samples only, whatever ICC profile, orientation
+        // or pixel shape the encoders could or could not keep.
+        Frame samples = reference;
+        samples.clear_embedded();
+
         EncodeImageOptions encode_options;
         encode_options.codec = options.codec;
         encode_options.pixel_format = pixel_format;
@@ -1335,7 +1341,7 @@ namespace lossylab
         for (const double parameter : parameters)
         {
             encode_options.rate_control = RateControl::quality(parameter);
-            const FrameResult decoded = roundtrip(reference, encode_options, decode_spec);
+            const FrameResult decoded = roundtrip(samples, encode_options, decode_spec);
             const CompareResult compared = compare(reference, decoded.frame, {options.metric}, compare_options);
             const std::map<std::string, double>& values = compared.frames.front();
             const double measured = values.at(error_key(options.metric, options.planes));

@@ -4,8 +4,10 @@
 #include "lossylab/core/geometry.hpp"
 #include "lossylab/core/json.hpp"
 #include "lossylab/core/pixel_format.hpp"
+#include "lossylab/core/rational.hpp"
 #include "lossylab/core/reflect.hpp"
 #include "lossylab/core/strict.hpp"
+#include "lossylab/io/probe.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -63,6 +65,20 @@ namespace lossylab
         PixelFormat pixel_format;
         ColorSpec color;
 
+        /// The name of the ICC profile the frame carries (see
+        /// `IccProfileInfo::name()`); empty when it carries none.
+        std::string icc_profile;
+
+        /// The EXIF orientation the frame carries but has not applied.
+        std::optional<int> orientation;
+
+        /// The shape of one pixel, width to height.
+        Rational sample_aspect_ratio{1, 1};
+
+        /// True when both describe samples of the same size, pixel format and
+        /// color, whatever ICC profile, orientation or pixel shape they carry.
+        [[nodiscard]] bool has_same_samples_as(const FormatDescription& other) const noexcept;
+
         [[nodiscard]] json::Value to_json() const;
         static FormatDescription from_json(const json::Value& value);
     };
@@ -73,7 +89,8 @@ namespace lossylab
         return !(left == right);
     }
 
-    LOSSYLAB_REFLECT(FormatDescription, width, height, pixel_format, color);
+    LOSSYLAB_REFLECT(FormatDescription, width, height, pixel_format, color, icc_profile, orientation,
+                      sample_aspect_ratio);
 
     /// Per-frame statistics from an encode or a decode.
     struct FrameStats
@@ -181,6 +198,13 @@ namespace lossylab
         [[nodiscard]] const std::string& build_id() const noexcept { return m_build_id; }
         void set_build_id(std::string build_id);
 
+        /// What probe() reports for the file the first stage decoded, when the
+        /// history starts from one (see `DecodedImage::processing_record()`):
+        /// the facts about the file that no stage changes, such as its
+        /// container, encoder and JPEG tables.
+        [[nodiscard]] const std::optional<ProbeResult>& origin() const noexcept { return m_origin; }
+        void set_origin(std::optional<ProbeResult> origin);
+
         /// The composition of every stage transform: maps a coordinate in the
         /// original input to the corresponding coordinate in the final output.
         /// Inverting it is how an output crop or an inpainting mask is traced
@@ -215,6 +239,7 @@ namespace lossylab
 
     private:
         std::string m_build_id;
+        std::optional<ProbeResult> m_origin;
         std::vector<StageRecord> m_stages;
     };
 }

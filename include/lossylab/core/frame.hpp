@@ -4,10 +4,13 @@
 #include "lossylab/core/pixel_format.hpp"
 #include "lossylab/core/rational.hpp"
 #include "lossylab/core/record.hpp"
+#include "lossylab/io/icc_profile.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 struct AVFrame;
@@ -122,6 +125,13 @@ namespace lossylab
 
         /// Adopts an existing AVFrame, taking a new reference to its buffers.
         /// The FFmpeg boundary; `raw` must outlive the call but not the Frame.
+        ///
+        /// The ICC profile and display matrix FFmpeg attached become the
+        /// Frame's `icc_profile()` and `orientation()`, the orientation read
+        /// from the EXIF block when no display matrix gives one. All three
+        /// are then removed from the new reference, together with the rest of
+        /// the EXIF block, so what an encoder later sees is what the Frame
+        /// states and nothing else.
         static Frame from_av_frame(const AVFrame* raw, const ColorSpec& color);
 
         /// As above, reading the ColorSpec from the frame's own tags. Tags that
@@ -141,6 +151,29 @@ namespace lossylab
         /// `reinterpret` does, and the reason it is separate from `convert`:
         /// one changes the numbers, the other changes what they mean.
         void set_color(const ColorSpec& color) noexcept { m_color = color; }
+
+        /// The ICC profile the samples are to be read with, or nullptr.
+        [[nodiscard]] const IccProfile* icc_profile() const noexcept { return m_icc_profile.get(); }
+        void set_icc_profile(std::span<const std::uint8_t> bytes);
+        void clear_icc_profile() noexcept { m_icc_profile.reset(); }
+
+        /// The EXIF orientation (2 to 8) the samples are stored in and which
+        /// has not been applied to them; nullopt when there is nothing to
+        /// apply. Setting 1, upright, is the same as setting nullopt.
+        [[nodiscard]] std::optional<int> orientation() const noexcept { return m_orientation; }
+        void set_orientation(std::optional<int> orientation);
+
+        /// The shape of one pixel, width to height; 1:1 when unknown.
+        [[nodiscard]] Rational sample_aspect_ratio() const noexcept;
+        void set_sample_aspect_ratio(Rational sample_aspect_ratio);
+
+        /// Takes over `other`'s ICC profile, orientation and sample aspect
+        /// ratio, for an operation that writes its output into a new Frame.
+        void copy_embedded_from(const Frame& other);
+
+        /// Removes the ICC profile and orientation and makes the pixels
+        /// square, leaving samples that are read by their ColorSpec alone.
+        void clear_embedded() noexcept;
 
         [[nodiscard]] std::int64_t pts() const noexcept;
         void set_pts(std::int64_t pts) noexcept;
@@ -173,7 +206,8 @@ namespace lossylab
         /// An independent deep copy, sharing nothing.
         [[nodiscard]] Frame clone() const;
 
-        /// Format and color as a record entry.
+        /// Format, color, ICC profile, orientation and pixel shape as a
+        /// record entry.
         [[nodiscard]] FormatDescription describe() const;
 
         /// The decoder's per-block quantizer map, when it exported one.
@@ -193,8 +227,14 @@ namespace lossylab
     private:
         explicit Frame(AVFrame* owned, const ColorSpec& color);
 
+        /// Moves the ICC profile, display matrix and EXIF side data off the
+        /// AVFrame into the Frame's own fields.
+        void take_embedded_side_data();
+
         AVFrame* m_frame = nullptr;
         ColorSpec m_color;
         Rational m_time_base{0, 1};
+        std::shared_ptr<const IccProfile> m_icc_profile;
+        std::optional<int> m_orientation;
     };
 }

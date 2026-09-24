@@ -105,7 +105,8 @@ namespace lossylab::pybind
 
         bind_reflected<DecodedImage>(m, "DecodedImage")
             .def("stream", &DecodedImage::stream, nb::rv_policy::reference_internal)
-            .def("tile_grid", &DecodedImage::tile_grid, nb::rv_policy::reference_internal);
+            .def("tile_grid", &DecodedImage::tile_grid, nb::rv_policy::reference_internal)
+            .def("processing_record", &DecodedImage::processing_record);
 
         m.def("decode_image", &decode_image, "source"_a, "options"_a = DecodeImageOptions{},
               nb::call_guard<nb::gil_scoped_release>());

@@ -171,6 +171,13 @@ namespace lossylab::detail
         const int height = transposes ? frame.width() : frame.height();
         Frame oriented = Frame::allocate(width, height, target_format, frame.color());
         oriented.set_time_base(frame.time_base());
+        oriented.copy_embedded_from(frame);
+        oriented.set_orientation(std::nullopt);
+        if (transposes)
+        {
+            const Rational stored = frame.sample_aspect_ratio();
+            oriented.set_sample_aspect_ratio(Rational{stored.den, stored.num});
+        }
 
         for (int plane_index = 0; plane_index < frame.plane_count(); ++plane_index)
         {

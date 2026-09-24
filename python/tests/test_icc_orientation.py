@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 from PIL import Image
 
 import lossylab
@@ -63,3 +64,34 @@ def test_reporting_leaves_the_pixels_as_stored():
 def test_a_recognized_profile_stands_in_for_missing_tags():
     frame = lossylab.decode_image(_source("testsrc_64x48_p3.png")).frame
     assert frame.color().primaries == lossylab.ColorPrimaries.Smpte432
+
+
+def test_the_decoded_frame_carries_its_profile_and_orientation():
+    frame = lossylab.decode_image(_source("testsrc_64x48_p3_orientation6.jpg")).frame
+    assert frame.icc_profile().known_as == "Display P3"
+    assert lossylab.describe_icc_profile(frame.icc_profile_bytes()).known_as == "Display P3"
+    assert frame.orientation() == 6
+    assert frame.sample_aspect_ratio() == lossylab.Rational(1, 1)
+    assert frame.describe().icc_profile == "Display P3"
+
+    frame.set_icc_profile(None)
+    frame.set_orientation(None)
+    assert frame.icc_profile() is None and frame.icc_profile_bytes() is None
+    assert frame.orientation() is None
+
+
+def test_an_encode_that_would_drop_the_profile_is_refused():
+    decoded = lossylab.decode_image(_source("testsrc_64x48_lossy_adobe_rgb_orientation8.webp"))
+    options = lossylab.EncodeImageOptions()
+    options.codec = lossylab.ImageCodec.WebP
+    options.pixel_format = decoded.frame.pixel_format()
+    options.color = decoded.frame.color()
+    options.rate_control = lossylab.RateControl.quality(80)
+    with pytest.raises(lossylab.ConversionRefused):
+        lossylab.encode_image(decoded.frame, options)
+
+    options.strict = lossylab.Strict.AllowRecorded
+    encoded = lossylab.encode_image(decoded.frame, options)
+    dropped = {event.property: event.to for event in encoded.record.conversions}
+    assert dropped["icc_profile"] == "dropped"
+    assert dropped["orientation"] == "dropped"

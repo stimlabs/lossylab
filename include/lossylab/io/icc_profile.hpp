@@ -124,7 +124,12 @@ namespace lossylab
         /// profile is not an RGB matrix/shaper profile.
         [[nodiscard]] std::optional<bool> agrees_with(const ColorSpec& tagged) const noexcept;
 
+        /// What the profile is called in a record: the color space it was
+        /// recognized as, else its own description.
+        [[nodiscard]] std::string name() const;
+
         [[nodiscard]] json::Value to_json() const;
+        static IccProfileInfo from_json(const json::Value& value);
     };
 
     LOSSYLAB_REFLECT(IccProfileInfo::Colorants, red, green, blue, white);
@@ -140,4 +145,14 @@ namespace lossylab
     /// the rest is listed in `problems`, since a damaged profile is itself
     /// something an audit reports.
     [[nodiscard]] IccProfileInfo describe_icc_profile(std::span<const std::uint8_t> bytes);
+
+    /// An ICC profile's bytes together with what they say.
+    struct IccProfile
+    {
+        std::vector<std::uint8_t> bytes;
+        IccProfileInfo info;
+
+        /// Reads `bytes` with describe_icc_profile().
+        [[nodiscard]] static IccProfile from_bytes(std::span<const std::uint8_t> bytes);
+    };
 }

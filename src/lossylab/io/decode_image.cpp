@@ -5,6 +5,7 @@
 #include "lossylab/detail/ff_error.hpp"
 #include "lossylab/detail/ff_ptr.hpp"
 #include "lossylab/core/json_io.hpp"
+#include "lossylab/env/build_info.hpp"
 #include "lossylab/io/icc_profile.hpp"
 #include "lossylab/io/input_context.hpp"
 #include "lossylab/io/orientation.hpp"
@@ -474,13 +475,26 @@ namespace lossylab
         /// lists its structural problems. Either fills in what the other left
         /// out, and a format probe could not read becomes `Present` or
         /// `NotPresent`. Returns the ICC profile to decode by.
-        std::optional<IccProfileInfo> reconcile_embedded(DecodedPicture& picture, ProbeResult& probed)
+        std::optional<IccProfile> reconcile_embedded(DecodedPicture& picture, ProbeResult& probed,
+                                                     const detail::ProbedIccProfiles& probed_profiles)
         {
-            std::optional<IccProfileInfo> decoded_profile;
+            std::optional<IccProfile> decoded_profile;
             if (picture.icc_profile.has_value())
             {
-                decoded_profile = describe_icc_profile(*picture.icc_profile);
+                decoded_profile = IccProfile::from_bytes(*picture.icc_profile);
             }
+
+            // The profile probe described, with its bytes; else the decoder's.
+            const auto chosen_profile = [&decoded_profile](const std::optional<IccProfileInfo>& probed_info,
+                                                           const std::vector<std::uint8_t>* probed_bytes)
+                -> std::optional<IccProfile>
+            {
+                if (probed_info.has_value() && probed_bytes != nullptr)
+                {
+                    return IccProfile{*probed_bytes, *probed_info};
+                }
+                return decoded_profile;
+            };
 
             if (picture.tile_grid_id.has_value())
             {
@@ -490,11 +504,12 @@ namespace lossylab
                     grid.orientation = picture.orientation;
                 }
                 picture.orientation = grid.orientation;
-                if (!grid.icc_profile.has_value())
-                {
-                    grid.icc_profile = std::move(decoded_profile);
-                }
-                return grid.icc_profile;
+
+                const auto bytes = probed_profiles.by_tile_grid.find(grid.id);
+                std::optional<IccProfile> profile = chosen_profile(
+                    grid.icc_profile, bytes != probed_profiles.by_tile_grid.end() ? &bytes->second : nullptr);
+                grid.icc_profile = profile.has_value() ? std::optional(profile->info) : std::nullopt;
+                return profile;
             }
 
             StreamInfo& stream = find_stream(probed, picture.stream_index);
@@ -518,32 +533,23 @@ namespace lossylab
                 stream.orientation_availability = Availability::NotPresent;
             }
 
-            if (!stream.icc_profile.has_value() && decoded_profile.has_value())
+            const auto bytes = probed_profiles.by_stream.find(stream.index);
+            std::optional<IccProfile> profile = chosen_profile(
+                stream.icc_profile, bytes != probed_profiles.by_stream.end() ? &bytes->second : nullptr);
+            if (profile.has_value())
             {
-                stream.icc_profile = std::move(decoded_profile);
-            }
-            if (stream.icc_profile.has_value())
-            {
+                stream.icc_profile = profile->info;
                 stream.icc_profile_availability = Availability::Present;
-                stream.icc_matches_tagged_color = stream.icc_profile->agrees_with(stream.color);
+                stream.icc_matches_tagged_color = profile->info.agrees_with(stream.color);
             }
             else
             {
+                stream.icc_profile.reset();
                 stream.icc_profile_availability = Availability::NotPresent;
             }
-            return stream.icc_profile;
+            return profile;
         }
 
-        /// What an ICC profile is called in a record: the color space it was
-        /// recognized as, else its own description.
-        std::string profile_name(const IccProfileInfo& profile)
-        {
-            if (!profile.known_as.empty())
-            {
-                return profile.known_as;
-            }
-            return profile.description.empty() ? "an unnamed ICC profile" : profile.description;
-        }
     }
 
     std::string to_string(const OrientationHandling handling)
@@ -599,6 +605,14 @@ namespace lossylab
         return nullptr;
     }
 
+    ProcessingRecord DecodedImage::processing_record() const
+    {
+        ProcessingRecord history(build_info().build_id);
+        history.set_origin(probe);
+        history.append(record);
+        return history;
+    }
+
     json::Value DecodedImage::to_json() const
     {
         return json::object({
@@ -614,15 +628,28 @@ namespace lossylab
 
         detail::InputContext input(source);
         input.find_stream_info();
-        ProbeResult probed = detail::probe_input(input, source);
+        detail::ProbedIccProfiles probed_profiles;
+        ProbeResult probed = detail::probe_input(input, source, &probed_profiles);
 
         AVFormatContext& format = *input.get();
         const AVStreamGroup* tile_grid = find_primary_tile_grid(format);
         DecodedPicture decoded = tile_grid != nullptr ? decode_tile_grid(format, *tile_grid)
                                                       : decode_single_image(format);
 
-        const std::optional<IccProfileInfo> icc_profile = reconcile_embedded(decoded, probed);
+        const std::optional<IccProfile> embedded_profile = reconcile_embedded(decoded, probed, probed_profiles);
+        const std::optional<IccProfileInfo> icc_profile =
+            embedded_profile.has_value() ? std::optional(embedded_profile->info) : std::nullopt;
         Frame frame = std::move(decoded.frame);
+        if (embedded_profile.has_value())
+        {
+            frame.set_icc_profile(embedded_profile->bytes);
+        }
+        else
+        {
+            frame.clear_icc_profile();
+        }
+        frame.set_orientation(decoded.decoder_name == "libjxl" ? std::nullopt : decoded.orientation);
+        frame.set_sample_aspect_ratio(find_stream(probed, decoded.stream_index).sample_aspect_ratio);
 
         StageRecord record;
         record.kind = StageKind::Decode;
@@ -651,15 +678,6 @@ namespace lossylab
             frame.sync_color_to_av_frame();
         }
         record.input = frame.describe();
-
-        // A converted image's color would claim to account for the profile.
-        if (icc_profile.has_value() && !icc_profile->is_expressible_as_tags() && options.color.has_value())
-        {
-            record_or_refuse(options.strict, record.conversions, "icc_profile", profile_name(*icc_profile),
-                             "ignored", ConversionCause::Requested, "decode_image",
-                             "decode_image(): the embedded ICC profile has no color tag equivalent, so the requested "
-                             "color conversion cannot take it into account");
-        }
 
         // libjxl turns a JPEG XL image upright itself and FFmpeg removes the
         // orientation it applied, so there is nothing left to apply.

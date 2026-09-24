@@ -472,6 +472,16 @@ namespace
         assert(history.record.params.at("recompression").at("errors").contains("png"));
     }
 
+    void test_a_frame_with_embedded_data_is_analyzed_like_any_other()
+    {
+        // Every recompression codec by default, none of which keeps all of
+        // an ICC profile, an orientation and non-square pixels.
+        Frame frame = decode_image(Source::from_path(data_path("testsrc_64x48_p3_orientation6.jpg"))).frame;
+        frame.set_sample_aspect_ratio(Rational{4, 3});
+        const CompressionHistory history = compression_history(frame);
+        assert(history.record.params.at("recompression").at("errors").empty());
+    }
+
     // -----------------------------------------------------------------------
     // recompression_curve() on any input
     // -----------------------------------------------------------------------
@@ -576,6 +586,7 @@ namespace
 
 int main()
 {
+    test_a_frame_with_embedded_data_is_analyzed_like_any_other();
     test_a_never_compressed_image_shows_no_trace();
     test_a_jpeg_saved_as_rgb_shows_its_tables_and_subsampling();
     test_chroma_upsampling_is_found_at_any_quality();

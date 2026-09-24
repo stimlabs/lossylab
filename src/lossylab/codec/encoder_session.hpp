@@ -33,6 +33,13 @@ namespace lossylab::detail
         Rational frame_rate{1, 1};
         int thread_count = 1;
 
+        /// What the frames carry beyond their samples, handed to the encoder
+        /// and the muxer to write where they can. The profile is copied when
+        /// the session opens.
+        const IccProfile* icc_profile = nullptr;
+        std::optional<int> orientation;
+        Rational sample_aspect_ratio{1, 1};
+
         /// A fixed quantizer, in the encoder's quantizer units; sets
         /// AV_CODEC_FLAG_QSCALE.
         std::optional<int> fixed_qscale;
@@ -86,7 +93,9 @@ namespace lossylab::detail
     [[nodiscard]] std::vector<std::uint8_t> concatenate_packets(const std::vector<PacketPtr>& packets);
 
     /// Muxes the packets into `muxer_name`'s format, in memory. The output is
-    /// seekable, so muxers that rewrite their headers at the end work.
+    /// seekable, so muxers that rewrite their headers at the end work. The
+    /// ICC profile and display matrix the encoder was opened with become the
+    /// stream's side data.
     [[nodiscard]] std::vector<std::uint8_t> mux_packets(const std::string& muxer_name, const AVCodecContext& encoder,
                                                         std::vector<PacketPtr>& packets);
 

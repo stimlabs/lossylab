@@ -6,6 +6,8 @@
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/vector.h>
 
+#include <cstdint>
+#include <span>
 #include <stdexcept>
 
 namespace lossylab::pybind
@@ -95,6 +97,45 @@ namespace lossylab::pybind
             .def("pixel_format", &Frame::pixel_format)
             .def("color", &Frame::color, nb::rv_policy::reference_internal)
             .def("set_color", &Frame::set_color, "color"_a)
+            .def(
+                "icc_profile",
+                [](const Frame& self) -> std::optional<IccProfileInfo>
+                {
+                    const IccProfile* profile = self.icc_profile();
+                    return profile != nullptr ? std::optional(profile->info) : std::nullopt;
+                },
+                "What the ICC profile the samples are to be read with says, or None.")
+            .def(
+                "icc_profile_bytes",
+                [](const Frame& self) -> std::optional<nb::bytes>
+                {
+                    const IccProfile* profile = self.icc_profile();
+                    if (profile == nullptr)
+                    {
+                        return std::nullopt;
+                    }
+                    return nb::bytes(reinterpret_cast<const char*>(profile->bytes.data()), profile->bytes.size());
+                },
+                "The ICC profile's bytes, or None.")
+            .def(
+                "set_icc_profile",
+                [](Frame& self, const std::optional<nb::bytes>& bytes)
+                {
+                    if (!bytes.has_value())
+                    {
+                        self.clear_icc_profile();
+                        return;
+                    }
+                    const auto* data = static_cast<const std::uint8_t*>(bytes->data());
+                    self.set_icc_profile(std::span<const std::uint8_t>(data, bytes->size()));
+                },
+                "bytes"_a.none(), "Sets the ICC profile from its bytes, or removes it with None.")
+            .def("orientation", &Frame::orientation)
+            .def("set_orientation", &Frame::set_orientation, "orientation"_a.none())
+            .def("sample_aspect_ratio", &Frame::sample_aspect_ratio)
+            .def("set_sample_aspect_ratio", &Frame::set_sample_aspect_ratio, "sample_aspect_ratio"_a)
+            .def("copy_embedded_from", &Frame::copy_embedded_from, "other"_a)
+            .def("clear_embedded", &Frame::clear_embedded)
             .def("pts", &Frame::pts)
             .def("set_pts", &Frame::set_pts, "pts"_a)
             .def("time_base", &Frame::time_base)

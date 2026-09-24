@@ -788,16 +788,14 @@ namespace lossylab
         }
     }
 
-    json::Value Chromaticity::to_json() const { return json::object({{"x", x}, {"y", y}}); }
+    json::Value Chromaticity::to_json() const
+    {
+        return reflect::to_json(*this);
+    }
 
     json::Value IccProfileInfo::Colorants::to_json() const
     {
-        return json::object({
-            {"red", red.to_json()},
-            {"green", green.to_json()},
-            {"blue", blue.to_json()},
-            {"white", white.to_json()},
-        });
+        return reflect::to_json(*this);
     }
 
     bool IccProfileInfo::is_expressible_as_tags() const noexcept
@@ -816,30 +814,28 @@ namespace lossylab
         return (!tags_primaries || primaries == tagged.primaries) && (!tags_transfer || transfer == tagged.transfer);
     }
 
+    std::string IccProfileInfo::name() const
+    {
+        if (!known_as.empty())
+        {
+            return known_as;
+        }
+        return description.empty() ? "an unnamed ICC profile" : description;
+    }
+
+    IccProfile IccProfile::from_bytes(const std::span<const std::uint8_t> bytes)
+    {
+        return IccProfile{std::vector<std::uint8_t>(bytes.begin(), bytes.end()), describe_icc_profile(bytes)};
+    }
+
     json::Value IccProfileInfo::to_json() const
     {
-        return json::object({
-            {"size_bytes", size_bytes},
-            {"version", version},
-            {"device_class", device_class},
-            {"data_color_space", data_color_space},
-            {"connection_space", connection_space},
-            {"preferred_cmm", preferred_cmm},
-            {"creator", creator},
-            {"profile_id", profile_id},
-            {"profile_id_embedded", profile_id_embedded},
-            {"description", description},
-            {"copyright", json::optional_or_null(copyright)},
-            {"is_matrix_shaper", is_matrix_shaper},
-            {"has_lookup_table", has_lookup_table},
-            {"colorants", json::optional_or_null(colorants)},
-            {"transfer_curve", transfer_curve},
-            {"gamma", json::optional_or_null(gamma)},
-            {"primaries", primaries.has_value() ? json::Value(to_string(*primaries)) : json::Value()},
-            {"transfer", transfer.has_value() ? json::Value(to_string(*transfer)) : json::Value()},
-            {"known_as", known_as},
-            {"problems", json::to_array(problems)},
-        });
+        return reflect::to_json(*this);
+    }
+
+    IccProfileInfo IccProfileInfo::from_json(const json::Value& value)
+    {
+        return reflect::from_json<IccProfileInfo>(value);
     }
 
     IccProfileInfo describe_icc_profile(const std::span<const std::uint8_t> input)

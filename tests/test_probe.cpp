@@ -1,3 +1,4 @@
+#include "lossylab/convert/convert.hpp"
 #include "lossylab/core/error.hpp"
 #include "lossylab/core/schema_version.hpp"
 #include "lossylab/io/decode_image.hpp"
@@ -7,6 +8,7 @@
 #include <array>
 #include <cassert>
 #include <cstdio>
+#include <filesystem>
 #include <optional>
 #include <vector>
 
@@ -668,9 +670,48 @@ namespace
         const ProbeResult result = probe(Source::from_path(data_path(video_fixture)));
         const json::Value document = result.to_json();
 
-        assert(!document.at("format").get<std::string>().empty());
+        assert(!document.at("format_name").get<std::string>().empty());
         assert(document.at("streams").size() >= 1);
+        assert(document.at("streams").at(0).contains("codec_name"));
+        assert(document.at("streams").at(0).contains("pixel_format"));
         assert(json::parse(document.dump()) == document);
+    }
+
+    void test_a_decoded_image_starts_a_processing_history()
+    {
+        const DecodedImage decoded = decode_image(Source::from_path(data_path(jpeg_fixture)));
+        ProcessingRecord history = decoded.processing_record();
+        assert(history.origin().has_value());
+        assert(history.origin()->to_json() == decoded.probe.to_json());
+        assert(history.size() == 1 && history.stages().front().kind == StageKind::Decode);
+
+        ConvertOptions options;
+        options.pixel_format = PixelFormat::from_name("yuv444p");
+        options.color = decoded.frame.color();
+        history.append(convert(decoded.frame, options).record);
+        history.validate_continuity();
+
+        const ProcessingRecord read_back = ProcessingRecord::from_json(history.to_json());
+        assert(read_back.to_json() == history.to_json());
+        assert(read_back.origin()->streams.front().jpeg.has_value());
+        assert(!history.to_json().at("origin").contains("schema_version"));
+
+        assert(ProcessingRecord().to_json().at("origin").is_null());
+    }
+
+    void test_every_fixture_reads_back_from_json()
+    {
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::directory_iterator(std::string(LOSSYLAB_TEST_DATA_DIR)))
+        {
+            const std::string extension = entry.path().extension().string();
+            if (!entry.is_regular_file() || extension == ".csv" || extension == ".py" || extension == ".y4m")
+            {
+                continue;
+            }
+            const json::Value written = probe(Source::from_path(entry.path().string())).to_json();
+            assert(ProbeResult::from_json(written).to_json() == written);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -838,6 +879,8 @@ int main()
     test_a_copied_owning_source_outlives_the_original();
     test_probe_failures_are_reported_not_guessed();
     test_probe_serializes();
+    test_every_fixture_reads_back_from_json();
+    test_a_decoded_image_starts_a_processing_history();
     test_decoding_a_png_gives_native_planes();
     test_decoding_a_jpeg_keeps_its_chroma_subsampling();
     test_an_untagged_file_records_the_assumption_made_for_it();

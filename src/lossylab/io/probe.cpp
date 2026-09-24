@@ -465,128 +465,42 @@ namespace lossylab
 
     json::Value ImageContainerInfo::to_json() const
     {
-        return json::object({
-            {"has_alpha", has_alpha},
-            {"is_animated", is_animated},
-            {"is_still_image", json::optional_or_null(is_still_image)},
-            {"compression", json::optional_or_null(compression)},
-            {"frame_count", json::optional_or_null(frame_count)},
-            {"canvas_width", json::optional_or_null(canvas_width)},
-            {"canvas_height", json::optional_or_null(canvas_height)},
-            {"has_xmp", json::optional_or_null(has_xmp)},
-        });
+        return reflect::to_json(*this);
+    }
+
+    ImageContainerInfo ImageContainerInfo::from_json(const json::Value& value)
+    {
+        return reflect::from_json<ImageContainerInfo>(value);
     }
 
     json::Value JpegInfo::to_json() const
     {
-        json::Array component_values;
-        for (const Component& component : components)
-        {
-            component_values.push_back(json::object({
-                {"id", component.id},
-                {"horizontal_sampling", component.horizontal_sampling},
-                {"vertical_sampling", component.vertical_sampling},
-                {"quantization_table", component.quantization_table},
-            }));
-        }
-        json::Array table_values;
-        for (const QuantizationTable& table : quantization_tables)
-        {
-            json::Array values(table.values.begin(), table.values.end());
-            table_values.push_back(json::object({
-                {"id", table.id},
-                {"precision", table.precision},
-                {"values", json::array(std::move(values))},
-            }));
-        }
-        json::Array segment_values;
-        for (const Segment& segment : segments)
-        {
-            segment_values.push_back(json::object({
-                {"marker", segment.marker},
-                {"identifier", segment.identifier},
-                {"size_bytes", segment.size_bytes},
-            }));
-        }
-        return json::object({
-            {"process", process},
-            {"arithmetic_coding", arithmetic_coding},
-            {"precision", precision},
-            {"components", json::array(std::move(component_values))},
-            {"quantization_tables", json::array(std::move(table_values))},
-            {"ijg_quality", json::optional_or_null(ijg_quality)},
-            {"ijg_quality_exact", ijg_quality_exact},
-            {"huffman_tables", huffman_tables},
-            {"restart_interval", restart_interval},
-            {"scan_count", scan_count},
-            {"segments", json::array(std::move(segment_values))},
-            {"comment", json::optional_or_null(comment)},
-            {"adobe_transform", json::optional_or_null(adobe_transform)},
-            {"has_end_of_image", has_end_of_image},
-            {"trailing_bytes", trailing_bytes},
-        });
+        return reflect::to_json(*this);
+    }
+
+    JpegInfo JpegInfo::from_json(const json::Value& value)
+    {
+        return reflect::from_json<JpegInfo>(value);
     }
 
     json::Value TileGrid::to_json() const
     {
-        json::Array tile_values;
-        for (const Tile& tile : tiles)
-        {
-            tile_values.push_back(json::object({{"stream_index", tile.stream_index}, {"x", tile.x}, {"y", tile.y}}));
-        }
-        return json::object({
-            {"id", id},
-            {"is_primary", is_primary},
-            {"title", title},
-            {"width", width},
-            {"height", height},
-            {"coded_width", coded_width},
-            {"coded_height", coded_height},
-            {"crop_x", crop_x},
-            {"crop_y", crop_y},
-            {"orientation", json::optional_or_null(orientation)},
-            {"icc_profile", json::optional_or_null(icc_profile)},
-            {"tiles", json::array(std::move(tile_values))},
-        });
+        return reflect::to_json(*this);
+    }
+
+    TileGrid TileGrid::from_json(const json::Value& value)
+    {
+        return reflect::from_json<TileGrid>(value);
     }
 
     json::Value StreamInfo::to_json() const
     {
-        return json::object({
-            {"index", index},
-            {"type", type},
-            {"codec", codec_name},
-            {"codec_long_name", codec_long_name},
-            {"profile", profile},
-            {"level", json::optional_or_null(level)},
-            {"width", width},
-            {"height", height},
-            {"pix_fmt", pixel_format.to_json()},
-            {"bit_depth", bit_depth},
-            {"color", color.to_json()},
-            {"color_fully_tagged", color_fully_tagged},
-            {"frame_rate", frame_rate.to_json()},
-            {"average_frame_rate", average_frame_rate.to_json()},
-            {"is_variable_frame_rate", is_variable_frame_rate},
-            {"time_base", time_base.to_json()},
-            {"sample_aspect_ratio", sample_aspect_ratio.to_json()},
-            {"rotation", json::optional_or_null(rotation)},
-            {"orientation", json::optional_or_null(orientation)},
-            {"orientation_source", orientation_source},
-            {"orientation_availability", to_string(orientation_availability)},
-            {"icc_profile", json::optional_or_null(icc_profile)},
-            {"icc_profile_availability", to_string(icc_profile_availability)},
-            {"icc_matches_tagged_color", json::optional_or_null(icc_matches_tagged_color)},
-            {"frame_count", json::optional_or_null(frame_count)},
-            {"duration_us", json::optional_or_null(duration_us)},
-            {"bit_rate", json::optional_or_null(bit_rate)},
-            {"has_hdr_metadata", has_hdr_metadata},
-            {"is_default", is_default},
-            {"is_dependent", is_dependent},
-            {"image_container", json::optional_or_null(image_container)},
-            {"jpeg", json::optional_or_null(jpeg)},
-            {"metadata", json::to_object(metadata)},
-        });
+        return reflect::to_json(*this);
+    }
+
+    StreamInfo StreamInfo::from_json(const json::Value& value)
+    {
+        return reflect::from_json<StreamInfo>(value);
     }
 
     std::optional<std::string> ProbeResult::encoder_string() const
@@ -665,22 +579,15 @@ namespace lossylab
 
     json::Value ProbeResult::to_json() const
     {
-        return json::object({
-            {"schema_version", schema_version},
-            {"format", format_name},
-            {"format_long_name", format_long_name},
-            {"duration_us", json::optional_or_null(duration_us)},
-            {"bit_rate", json::optional_or_null(bit_rate)},
-            {"size_bytes", json::optional_or_null(size_bytes)},
-            {"encoder", json::optional_or_null(encoder_string())},
-            {"major_brand", major_brand},
-            {"compatible_brands", json::to_array(compatible_brands)},
-            {"claimed_extension", claimed_extension},
-            {"format_mismatch", format_mismatch},
-            {"metadata", json::to_object(metadata)},
-            {"streams", json::to_array(streams)},
-            {"tile_grids", json::to_array(tile_grids)},
-        });
+        json::Value value = json::object({{"schema_version", schema_version}});
+        value.update(reflect::to_json(*this));
+        value["encoder"] = json::optional_or_null(encoder_string());
+        return value;
+    }
+
+    ProbeResult ProbeResult::from_json(const json::Value& value)
+    {
+        return reflect::from_json<ProbeResult>(value);
     }
 
     ProbeResult probe(const Source& source)
@@ -690,7 +597,7 @@ namespace lossylab
         return detail::probe_input(input, source);
     }
 
-    ProbeResult detail::probe_input(const InputContext& input, const Source& source)
+    ProbeResult detail::probe_input(const InputContext& input, const Source& source, ProbedIccProfiles* icc_profiles)
     {
         const AVFormatContext& format = *input.get();
 
@@ -751,8 +658,37 @@ namespace lossylab
             if (group.type == AV_STREAM_GROUP_PARAMS_TILE_GRID)
             {
                 result.tile_grids.push_back(read_tile_grid(group));
+                const AVStreamGroupTileGrid& grid = *group.params.tile_grid;
+                if (const auto profile = find_side_data(grid.coded_side_data, grid.nb_coded_side_data,
+                                                        AV_PKT_DATA_ICC_PROFILE);
+                    profile.has_value() && icc_profiles != nullptr)
+                {
+                    icc_profiles->by_tile_grid[group.id].assign(profile->begin(), profile->end());
+                }
             }
         }
+        if (icc_profiles != nullptr)
+        {
+            for (unsigned int i = 0; i < format.nb_streams; ++i)
+            {
+                const AVCodecParameters& params = *format.streams[i]->codecpar;
+                if (const auto profile =
+                        find_side_data(params.coded_side_data, params.nb_coded_side_data, AV_PKT_DATA_ICC_PROFILE))
+                {
+                    icc_profiles->by_stream[format.streams[i]->index].assign(profile->begin(), profile->end());
+                }
+            }
+        }
+
+        // What a format walker found replaces what the demuxer exported.
+        const auto apply_walked = [icc_profiles](const WalkedEmbedded& embedded, StreamInfo& stream)
+        {
+            apply_walked_embedded(embedded, stream);
+            if (icc_profiles != nullptr && embedded.icc_profile.has_value())
+            {
+                icc_profiles->by_stream[stream.index] = *embedded.icc_profile;
+            }
+        };
 
         const bool is_webp = result.format_name.find("webp") != std::string::npos;
         const std::optional<detail::WebpChunks> webp_chunks =
@@ -779,19 +715,18 @@ namespace lossylab
                     {
                         embedded.icc_profile = std::move(markers->icc_profile);
                     }
-                    apply_walked_embedded(embedded, stream);
+                    apply_walked(embedded, stream);
                 }
             }
             else if (webp_chunks.has_value())
             {
-                apply_walked_embedded({webp_chunks->icc_profile, webp_chunks->icc_problems, webp_chunks->exif},
-                                      stream);
+                apply_walked({webp_chunks->icc_profile, webp_chunks->icc_problems, webp_chunks->exif}, stream);
             }
             else if ((stream.codec_name == "png" || stream.codec_name == "apng") && single_stream)
             {
                 if (const std::optional<detail::PngChunks> chunks = detail::read_png_chunks(source))
                 {
-                    apply_walked_embedded({chunks->icc_profile, chunks->icc_problems, chunks->exif}, stream);
+                    apply_walked({chunks->icc_profile, chunks->icc_problems, chunks->exif}, stream);
                 }
             }
             else if (is_bare_image_format(result.format_name))

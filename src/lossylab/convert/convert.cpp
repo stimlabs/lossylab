@@ -221,6 +221,10 @@ namespace lossylab
         output.set_time_base(frame.time_base());
         output.sync_color_to_av_frame();
 
+        // The primaries and transfer stay as they were (see validate()), so an
+        // ICC profile still describes the samples.
+        output.copy_embedded_from(frame);
+
         record.output = output.describe();
         record.params = json::object({
             {"pix_fmt", options.pixel_format.name()},
@@ -360,6 +364,15 @@ namespace lossylab
         note("transfer", to_string(before.transfer), to_string(as_color.transfer));
         note("chroma_location", to_string(before.chroma_location),
              to_string(as_color.chroma_location));
+
+        // A profile describes the primaries and tone curve the samples had;
+        // relabeling either makes it describe something else.
+        if (const IccProfile* profile = output.icc_profile();
+            profile != nullptr && (before.primaries != as_color.primaries || before.transfer != as_color.transfer))
+        {
+            note("icc_profile", profile->info.name(), "dropped");
+            output.clear_icc_profile();
+        }
 
         record.output = output.describe();
         record.params = json::object({

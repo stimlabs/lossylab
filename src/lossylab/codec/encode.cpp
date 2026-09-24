@@ -71,17 +71,18 @@ namespace lossylab
                 throw ConfigError(std::string(what) + " thread_count must be at least 1");
             }
 
-            // Every frame must share one format: a mixed sequence would have to
-            // be converted somewhere, and that conversion has to be a stage of
-            // its own rather than a side effect of encoding.
+            // Every frame must share one format, ICC profile, orientation and
+            // pixel shape: a mixed sequence would have to be converted
+            // somewhere, and that conversion has to be a stage of its own
+            // rather than a side effect of encoding.
             const FormatDescription first = frames.front().describe();
             for (std::size_t i = 1; i < frames.size(); ++i)
             {
                 if (frames[i].describe() != first)
                 {
-                    throw ConfigError(std::string(what) + " received frame " +
-                                      std::to_string(i) +
-                                      " in a different format from frame 0; convert first");
+                    throw ConfigError(std::string(what) + " received frame " + std::to_string(i) +
+                                      " in a different format, ICC profile, orientation or pixel shape from frame "
+                                      "0; convert first");
                 }
             }
         }
@@ -372,6 +373,94 @@ namespace lossylab
             return converted;
         }
 
+        /// Hands the frame's ICC profile, orientation and pixel shape to the
+        /// encoder.
+        void set_embedded(const Frame& frame, detail::EncoderSetup& setup)
+        {
+            setup.icc_profile = frame.icc_profile();
+            setup.orientation = frame.orientation();
+            setup.sample_aspect_ratio = frame.sample_aspect_ratio();
+        }
+
+        std::string ratio_text(const Rational ratio)
+        {
+            return std::to_string(ratio.num) + ":" + std::to_string(ratio.den);
+        }
+
+        /// Reads back what the encoded output holds of `frame`'s ICC profile,
+        /// orientation and pixel shape. Each one it lost is refused under
+        /// Strict::Refuse and recorded otherwise, and `output` is set to what
+        /// the output holds. A format probe() cannot read these from is
+        /// decoded; what even decoding cannot tell counts as lost.
+        void account_for_embedded(const Frame& frame, const std::vector<std::uint8_t>& bytes,
+                                  const std::string& extension, const std::string& encoder_name, const Strict strict,
+                                  StageRecord& record, const std::string& what)
+        {
+            const IccProfile* profile = frame.icc_profile();
+            const std::optional<int> orientation = frame.orientation();
+            const Rational sample_aspect_ratio = frame.sample_aspect_ratio();
+            if (profile == nullptr && !orientation.has_value() && sample_aspect_ratio == Rational{1, 1})
+            {
+                return;
+            }
+
+            const Source written_source = Source::from_memory(bytes, extension);
+            ProbeResult written = probe(written_source);
+            const StreamInfo* stream = written.primary_video_stream();
+            if (stream != nullptr && (stream->orientation_availability == Availability::NotSupportedByBuild ||
+                                      stream->icc_profile_availability == Availability::NotSupportedByBuild))
+            {
+                written = decode_image(written_source).probe;
+                stream = written.primary_video_stream();
+            }
+            const TileGrid* grid = written.primary_tile_grid();
+            if (stream == nullptr && grid != nullptr && !grid->tiles.empty())
+            {
+                for (const StreamInfo& candidate : written.streams)
+                {
+                    if (candidate.index == grid->tiles.front().stream_index)
+                    {
+                        stream = &candidate;
+                    }
+                }
+            }
+            if (stream == nullptr)
+            {
+                throw Error(what + ": the encoded output holds no picture to check");
+            }
+
+            const std::optional<IccProfileInfo>& written_profile = grid != nullptr ? grid->icc_profile
+                                                                                   : stream->icc_profile;
+            std::optional<int> written_orientation = grid != nullptr ? grid->orientation : stream->orientation;
+            if (written_orientation == 1)
+            {
+                written_orientation.reset();
+            }
+
+            const std::string context = what + ", whose output cannot hold it; clear it on the frame to drop it";
+            if (profile != nullptr && !written_profile.has_value())
+            {
+                record_or_refuse(strict, record.conversions, "icc_profile", profile->info.name(), "dropped",
+                                 ConversionCause::CodecConstraint, encoder_name, context);
+                record.output.icc_profile.clear();
+            }
+            if (orientation != written_orientation)
+            {
+                record_or_refuse(strict, record.conversions, "orientation",
+                                 orientation.has_value() ? std::to_string(*orientation) : "none",
+                                 written_orientation.has_value() ? std::to_string(*written_orientation) : "dropped",
+                                 ConversionCause::CodecConstraint, encoder_name, context);
+                record.output.orientation = written_orientation;
+            }
+            if (stream->sample_aspect_ratio != sample_aspect_ratio)
+            {
+                record_or_refuse(strict, record.conversions, "sample_aspect_ratio", ratio_text(sample_aspect_ratio),
+                                 ratio_text(stream->sample_aspect_ratio), ConversionCause::CodecConstraint,
+                                 encoder_name, context);
+                record.output.sample_aspect_ratio = stream->sample_aspect_ratio;
+            }
+        }
+
         /// One FrameStats per input frame, from the packets that coded it,
         /// matched by timestamp.
         std::vector<FrameStats> frame_stats(const std::vector<detail::PacketPtr>& packets, const bool reports_qp)
@@ -438,25 +527,6 @@ namespace lossylab
             return record;
         }
 
-        /// The decode's params, plus what the decoded file declared: its codec,
-        /// color tags, ICC profile and orientation.
-        json::Value params_with_declared(const DecodedImage& decoded)
-        {
-            const StreamInfo& stream = decoded.stream();
-            const TileGrid* grid = decoded.tile_grid();
-            const std::optional<IccProfileInfo>& icc_profile = grid != nullptr ? grid->icc_profile : stream.icc_profile;
-
-            json::Value params = decoded.record.params;
-            params["codec"] = decoded.record.implementation;
-            params["tagged_color"] = stream.color.to_json();
-            params["color_fully_tagged"] = stream.color_fully_tagged;
-            params["icc_profile"] = json::optional_or_null(icc_profile);
-            params["icc_matches_tagged_color"] =
-                icc_profile.has_value() ? json::Value(icc_profile->agrees_with(stream.color)) : json::Value();
-            params["orientation"] = json::optional_or_null(grid != nullptr ? grid->orientation : stream.orientation);
-            return params;
-        }
-
         /// Decodes an encoded image, assuming the encoded color for whatever
         /// the file leaves untagged.
         FrameResult decode_encoded(const EncodedResult& encoded, const DecodeSpec& decode_spec)
@@ -468,7 +538,6 @@ namespace lossylab
             options.strict = decode_spec.strict;
             const std::string extension = encoded.record.params.at("extension").get<std::string>();
             DecodedImage decoded = decode_image(Source::from_memory(encoded.bytes, extension), options);
-            decoded.record.params = params_with_declared(decoded);
             return FrameResult{std::move(decoded.frame), std::move(decoded.record)};
         }
 
@@ -541,6 +610,7 @@ namespace lossylab
         plan.setup.frame_rate = options.frame_rate;
         plan.setup.thread_count = options.thread_count;
         plan.setup.global_header = detail::muxer_wants_global_header(plan.muxer);
+        set_embedded(first, plan.setup);
 
         detail::EncoderSession session(plan.setup);
         for (std::size_t index = 0; index < encoded_frames.size(); ++index)
@@ -553,6 +623,7 @@ namespace lossylab
         std::vector<std::uint8_t> bytes = detail::mux_packets(plan.muxer, session.context(), session.packets());
 
         record.output = first.describe();
+        account_for_embedded(first, bytes, plan.extension, encoder.name, options.strict, record, "encode_video()");
         record.block_grid = plan.block_grid;
         record.encoder_settings = encoder_settings(plan, session, options.rate_control.to_json());
         record.encoder_settings["gop"] = options.gop.to_json();
@@ -603,6 +674,7 @@ namespace lossylab
         plan.setup.color = encoded_frame.color();
         plan.setup.thread_count = options.thread_count;
         plan.setup.global_header = !plan.muxer.empty() && detail::muxer_wants_global_header(plan.muxer);
+        set_embedded(encoded_frame, plan.setup);
 
         detail::EncoderSession session(plan.setup);
         session.send(encoded_frame, 0);
@@ -623,6 +695,8 @@ namespace lossylab
         const json::Value rate_control = uses_rate_control ? options.rate_control.to_json() : json::Value();
 
         record.output = encoded_frame.describe();
+        account_for_embedded(encoded_frame, bytes, plan.extension, encoder.name, options.strict, record,
+                             "encode_image()");
         record.block_grid = plan.block_grid;
         record.encoder_settings = encoder_settings(plan, session, rate_control);
         record.encoder_settings["lossless"] = options.lossless;

@@ -3,6 +3,7 @@
 #include "lossylab/core/error.hpp"
 #include "lossylab/detail/ff_error.hpp"
 #include "lossylab/detail/ff_ptr.hpp"
+#include "lossylab/io/orientation.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -126,7 +127,9 @@ namespace lossylab
         av_frame_free(&m_frame);
     }
 
-    Frame::Frame(const Frame& other) : m_color(other.m_color), m_time_base(other.m_time_base)
+    Frame::Frame(const Frame& other)
+        : m_color(other.m_color), m_time_base(other.m_time_base), m_icc_profile(other.m_icc_profile),
+          m_orientation(other.m_orientation)
     {
         if (other.m_frame != nullptr)
         {
@@ -136,7 +139,8 @@ namespace lossylab
     }
 
     Frame::Frame(Frame&& other) noexcept
-        : m_frame(other.m_frame), m_color(other.m_color), m_time_base(other.m_time_base)
+        : m_frame(other.m_frame), m_color(other.m_color), m_time_base(other.m_time_base),
+          m_icc_profile(std::move(other.m_icc_profile)), m_orientation(other.m_orientation)
     {
         other.m_frame = nullptr;
     }
@@ -159,6 +163,8 @@ namespace lossylab
             m_frame = other.m_frame;
             m_color = other.m_color;
             m_time_base = other.m_time_base;
+            m_icc_profile = std::move(other.m_icc_profile);
+            m_orientation = other.m_orientation;
             other.m_frame = nullptr;
         }
         return *this;
@@ -195,7 +201,9 @@ namespace lossylab
         {
             throw ConfigError("Frame::from_av_frame() received a null frame");
         }
-        return Frame(detail::ref_frame(raw).release(), color);
+        Frame frame(detail::ref_frame(raw).release(), color);
+        frame.take_embedded_side_data();
+        return frame;
     }
 
     Frame Frame::from_av_frame(const AVFrame* raw)
@@ -204,7 +212,84 @@ namespace lossylab
         {
             throw ConfigError("Frame::from_av_frame() received a null frame");
         }
-        return Frame(detail::ref_frame(raw).release(), color_from_av_frame(*raw));
+        return from_av_frame(raw, color_from_av_frame(*raw));
+    }
+
+    void Frame::take_embedded_side_data()
+    {
+        if (const AVFrameSideData* profile = av_frame_get_side_data(m_frame, AV_FRAME_DATA_ICC_PROFILE))
+        {
+            set_icc_profile({profile->data, profile->size});
+        }
+        std::optional<int> orientation;
+        if (const AVFrameSideData* matrix = av_frame_get_side_data(m_frame, AV_FRAME_DATA_DISPLAYMATRIX))
+        {
+            orientation = detail::orientation_from_display_matrix({matrix->data, matrix->size});
+        }
+        if (const AVFrameSideData* exif = av_frame_get_side_data(m_frame, AV_FRAME_DATA_EXIF);
+            exif != nullptr && !orientation.has_value())
+        {
+            orientation = detail::exif_orientation({exif->data, exif->size});
+        }
+        set_orientation(orientation);
+
+        av_frame_remove_side_data(m_frame, AV_FRAME_DATA_ICC_PROFILE);
+        av_frame_remove_side_data(m_frame, AV_FRAME_DATA_DISPLAYMATRIX);
+        av_frame_remove_side_data(m_frame, AV_FRAME_DATA_EXIF);
+    }
+
+    void Frame::set_icc_profile(const std::span<const std::uint8_t> bytes)
+    {
+        m_icc_profile = std::make_shared<const IccProfile>(IccProfile::from_bytes(bytes));
+    }
+
+    void Frame::set_orientation(const std::optional<int> orientation)
+    {
+        if (orientation.has_value() && (*orientation < 1 || *orientation > 8))
+        {
+            throw ConfigError("an EXIF orientation is 1 to 8, not " + std::to_string(*orientation));
+        }
+        m_orientation = orientation == 1 ? std::nullopt : orientation;
+    }
+
+    Rational Frame::sample_aspect_ratio() const noexcept
+    {
+        if (m_frame == nullptr || m_frame->sample_aspect_ratio.num <= 0 || m_frame->sample_aspect_ratio.den <= 0)
+        {
+            return Rational{1, 1};
+        }
+        return Rational{m_frame->sample_aspect_ratio.num, m_frame->sample_aspect_ratio.den};
+    }
+
+    void Frame::set_sample_aspect_ratio(const Rational sample_aspect_ratio)
+    {
+        if (m_frame == nullptr)
+        {
+            throw ConfigError("set_sample_aspect_ratio() on an empty Frame");
+        }
+        if (sample_aspect_ratio.num <= 0 || sample_aspect_ratio.den <= 0)
+        {
+            throw ConfigError("a sample aspect ratio must be positive, not " + std::to_string(sample_aspect_ratio.num) +
+                              ":" + std::to_string(sample_aspect_ratio.den));
+        }
+        m_frame->sample_aspect_ratio = AVRational{sample_aspect_ratio.num, sample_aspect_ratio.den};
+    }
+
+    void Frame::copy_embedded_from(const Frame& other)
+    {
+        m_icc_profile = other.m_icc_profile;
+        m_orientation = other.m_orientation;
+        set_sample_aspect_ratio(other.sample_aspect_ratio());
+    }
+
+    void Frame::clear_embedded() noexcept
+    {
+        m_icc_profile.reset();
+        m_orientation.reset();
+        if (m_frame != nullptr)
+        {
+            m_frame->sample_aspect_ratio = AVRational{1, 1};
+        }
     }
 
     bool Frame::empty() const noexcept
@@ -344,6 +429,8 @@ namespace lossylab
         }
         Frame copy(detail::clone_frame(m_frame).release(), m_color);
         copy.m_time_base = m_time_base;
+        copy.m_icc_profile = m_icc_profile;
+        copy.m_orientation = m_orientation;
         copy.make_writable();
         return copy;
     }
@@ -355,6 +442,9 @@ namespace lossylab
         description.height = height();
         description.pixel_format = pixel_format();
         description.color = m_color;
+        description.icc_profile = m_icc_profile != nullptr ? m_icc_profile->info.name() : std::string();
+        description.orientation = m_orientation;
+        description.sample_aspect_ratio = sample_aspect_ratio();
         return description;
     }
 

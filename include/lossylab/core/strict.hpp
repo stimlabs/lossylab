@@ -48,7 +48,9 @@ namespace lossylab
     struct ConversionEvent
     {
         /// "pix_fmt", "color_matrix", "color_range", "primaries", "transfer",
-        /// "chroma_location", "bit_depth".
+        /// "chroma_location", "bit_depth"; "icc_profile", "orientation" and
+        /// "sample_aspect_ratio" when an output could not keep what the frame
+        /// carried.
         std::string property;
         std::string from;
         std::string to;

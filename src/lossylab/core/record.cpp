@@ -81,8 +81,11 @@ namespace lossylab
         return json::object({
             {"width", width},
             {"height", height},
-            {"pix_fmt", pixel_format.to_json()},
+            {"pixel_format", pixel_format.to_json()},
             {"color", color.to_json()},
+            {"icc_profile", icc_profile},
+            {"orientation", json::optional_or_null(orientation)},
+            {"sample_aspect_ratio", sample_aspect_ratio.to_json()},
         });
     }
 
@@ -91,15 +94,24 @@ namespace lossylab
         FormatDescription format;
         format.width = static_cast<int>(value.at("width").get<std::int64_t>());
         format.height = static_cast<int>(value.at("height").get<std::int64_t>());
-        format.pixel_format = PixelFormat::from_json(value.at("pix_fmt"));
+        format.pixel_format = PixelFormat::from_json(value.at("pixel_format"));
         format.color = ColorSpec::from_json(value.at("color"));
+        format.icc_profile = value.at("icc_profile").get<std::string>();
+        format.orientation = json::optional_int32(value.at("orientation"));
+        format.sample_aspect_ratio = Rational::from_json(value.at("sample_aspect_ratio"));
         return format;
+    }
+
+    bool FormatDescription::has_same_samples_as(const FormatDescription& other) const noexcept
+    {
+        return width == other.width && height == other.height && pixel_format == other.pixel_format &&
+               color == other.color;
     }
 
     bool operator==(const FormatDescription& left, const FormatDescription& right) noexcept
     {
-        return left.width == right.width && left.height == right.height &&
-               left.pixel_format == right.pixel_format && left.color == right.color;
+        return left.has_same_samples_as(right) && left.icc_profile == right.icc_profile &&
+               left.orientation == right.orientation && left.sample_aspect_ratio == right.sample_aspect_ratio;
     }
 
     // -----------------------------------------------------------------------
@@ -205,6 +217,11 @@ namespace lossylab
         m_build_id = std::move(build_id);
     }
 
+    void ProcessingRecord::set_origin(std::optional<ProbeResult> origin)
+    {
+        m_origin = std::move(origin);
+    }
+
     CoordinateTransform ProcessingRecord::end_to_end_transform() const
     {
         CoordinateTransform combined = CoordinateTransform::identity();
@@ -294,9 +311,11 @@ namespace lossylab
 
     json::Value ProcessingRecord::to_json() const
     {
+        // The origin inside carries no schema version of its own.
         return json::object({
             {"schema_version", schema_version},
             {"build_id", m_build_id},
+            {"origin", m_origin.has_value() ? reflect::to_json(*m_origin) : json::Value()},
             {"stages", json::to_array(m_stages)},
         });
     }
@@ -304,6 +323,11 @@ namespace lossylab
     ProcessingRecord ProcessingRecord::from_json(const json::Value& value)
     {
         ProcessingRecord record(json::string_or(value, "build_id", ""));
+        const json::Value& origin = value.at("origin");
+        if (!origin.is_null())
+        {
+            record.set_origin(ProbeResult::from_json(origin));
+        }
         for (StageRecord& stage : json::from_array<StageRecord>(value.at("stages")))
         {
             record.append(std::move(stage));

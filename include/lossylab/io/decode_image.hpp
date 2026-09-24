@@ -55,10 +55,8 @@ namespace lossylab
         /// training pipeline that wants what a viewer shows asks for Apply.
         OrientationHandling orientation = OrientationHandling::Report;
 
-        /// Applies to the conversion, when one was requested, to the chroma
-        /// layout change applying an orientation can entail, and to an ICC
-        /// profile that cannot be expressed as color tags when a target color
-        /// is requested.
+        /// Applies to the conversion, when one was requested, and to the
+        /// chroma layout change applying an orientation can entail.
         Strict strict = Strict::AllowRecorded;
     };
 
@@ -84,6 +82,11 @@ namespace lossylab
         /// The grid that was assembled, or nullptr for a single image.
         [[nodiscard]] const TileGrid* tile_grid() const;
 
+        /// The start of the frame's processing history: this build's id,
+        /// `probe` as its origin, and the decode as its first stage. Later
+        /// stages are appended to it.
+        [[nodiscard]] ProcessingRecord processing_record() const;
+
         [[nodiscard]] json::Value to_json() const;
     };
 
@@ -97,7 +100,10 @@ namespace lossylab
     /// decoder is available here as a second implementation when comparing the
     /// two is the point.
     ///
-    /// The file is opened once, for both the probe and the decode. The record
+    /// The frame carries the file's ICC profile, the orientation it declares
+    /// (unless applied), and its sample aspect ratio; see
+    /// `Frame::icc_profile()`. The file is opened once, for both the probe
+    /// and the decode. The record
     /// states the codec that decoded it, the format it arrived in, and any
     /// conversion applied afterwards. Its params carry what decoding decided,
     /// never what the file declares, which is in `probe`: the stream decoded

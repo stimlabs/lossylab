@@ -60,6 +60,7 @@ namespace lossylab
         std::optional<bool> has_xmp;
 
         [[nodiscard]] json::Value to_json() const;
+        static ImageContainerInfo from_json(const json::Value& value);
     };
 
     LOSSYLAB_REFLECT(ImageContainerInfo, has_alpha, is_animated, compression, frame_count, canvas_width,
@@ -160,6 +161,7 @@ namespace lossylab
         std::int64_t trailing_bytes = 0;
 
         [[nodiscard]] json::Value to_json() const;
+        static JpegInfo from_json(const json::Value& value);
     };
 
     LOSSYLAB_REFLECT(JpegInfo, process, arithmetic_coding, precision, components, quantization_tables, ijg_quality,
@@ -287,6 +289,7 @@ namespace lossylab
         std::optional<JpegInfo> jpeg;
 
         [[nodiscard]] json::Value to_json() const;
+        static StreamInfo from_json(const json::Value& value);
     };
 
     LOSSYLAB_REFLECT(
@@ -372,6 +375,7 @@ namespace lossylab
         std::vector<Tile> tiles;
 
         [[nodiscard]] json::Value to_json() const;
+        static TileGrid from_json(const json::Value& value);
     };
 
     LOSSYLAB_REFLECT(TileGrid, id, is_primary, title, width, height, coded_width, coded_height, crop_x, crop_y,
@@ -448,7 +452,10 @@ namespace lossylab
         };
         [[nodiscard]] AdditionalImages additional_images() const;
 
+        /// The reflected fields, plus `schema_version` and the derived
+        /// `encoder`, which from_json() ignores.
         [[nodiscard]] json::Value to_json() const;
+        static ProbeResult from_json(const json::Value& value);
     };
 
     LOSSYLAB_REFLECT(ProbeResult, format_name, format_long_name, duration_us, bit_rate, size_bytes, streams,

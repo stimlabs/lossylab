@@ -268,6 +268,38 @@ namespace
         }
         try { picture_type_from_string("S"); assert(false && "expected throw"); } catch (const ConfigError&) {}
     }
+
+    void test_embedded_data_is_part_of_the_format()
+    {
+        FormatDescription described = format(64, 48, "rgb24", ColorSpec::srgb());
+        described.icc_profile = "Display P3";
+        described.orientation = 6;
+        described.sample_aspect_ratio = Rational{4, 3};
+        assert(FormatDescription::from_json(described.to_json()) == described);
+        assert(described.to_json().contains("pixel_format"));
+
+        // A profile, orientation or pixel shape lost between two stages breaks
+        // the chain like any other format change.
+        FormatDescription without_profile = described;
+        without_profile.icc_profile.clear();
+        assert(without_profile != described);
+        StageRecord first;
+        first.output = described;
+        StageRecord second;
+        second.input = without_profile;
+        second.output = without_profile;
+        ProcessingRecord chain;
+        chain.append(first);
+        chain.append(second);
+        try
+        {
+            chain.validate_continuity();
+            assert(false && "expected throw");
+        }
+        catch (const ConfigError&)
+        {
+        }
+    }
 }
 
 int main()
@@ -287,4 +319,5 @@ int main()
     test_a_full_record_round_trips_through_json();
     test_stage_kind_names_round_trip();
     test_picture_type_names_round_trip();
+    test_embedded_data_is_part_of_the_format();
 }

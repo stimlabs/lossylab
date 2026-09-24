@@ -76,3 +76,15 @@ def test_decode_image_carries_the_probe():
     assert result.probe.to_dict() == lossylab.probe(source).to_dict()
     assert result.stream().jpeg is not None
     assert result.tile_grid() is None
+
+
+def test_a_decoded_image_starts_a_processing_history():
+    decoded = lossylab.decode_image(lossylab.Source.from_path(str(DATA_DIR / "testsrc_64x48.jpg")))
+    history = decoded.processing_record()
+    assert history.origin.format_name == decoded.probe.format_name
+    assert len(history) == 1
+
+    read_back = lossylab.ProcessingRecord.from_dict(history.to_dict())
+    assert read_back.origin.streams[0].jpeg is not None
+    read_back.origin = None
+    assert read_back.to_dict()["origin"] is None

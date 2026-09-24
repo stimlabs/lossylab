@@ -1,3 +1,4 @@
+#include "lossylab/convert/convert.hpp"
 #include "lossylab/core/error.hpp"
 #include "lossylab/io/decode_image.hpp"
 #include "lossylab/io/probe.hpp"
@@ -375,7 +376,7 @@ namespace
         assert(avif.color().primaries == ColorPrimaries::Smpte432);
     }
 
-    void test_a_profile_without_a_tag_equivalent_blocks_a_color_conversion_under_refuse()
+    void test_a_profile_without_a_tag_equivalent_stays_with_a_converted_frame()
     {
         // The WebP decodes to YUV with no chroma siting; sRGB names none.
         DecodeImageOptions options;
@@ -383,33 +384,68 @@ namespace
         options.assumed_color.chroma_location = ChromaLocation::Center;
         options.pixel_format = PixelFormat::from_name("rgb24");
         options.color = ColorSpec::srgb();
-        options.strict = Strict::Refuse;
+        options.strict = Strict::AllowRecorded;
         const Source webp = Source::from_path(data_path("testsrc_64x48_lossy_adobe_rgb_orientation8.webp"));
 
-        bool refused = false;
-        try
-        {
-            (void)decode_image(webp, options);
-        }
-        catch (const ConversionRefused&)
-        {
-            refused = true;
-        }
-        assert(refused);
+        // The conversion keeps the primaries and transfer, so the profile still
+        // describes the converted samples.
+        const DecodedImage converted = decode_image(webp, options);
+        assert(converted.frame.pixel_format().name() == std::string("rgb24"));
+        assert(converted.frame.icc_profile() != nullptr);
+        assert(converted.frame.icc_profile()->info.known_as == "Adobe RGB (1998)");
+        assert(converted.record.output.icc_profile == "Adobe RGB (1998)");
+        assert(!has_conversion(converted.record.conversions, "icc_profile"));
+    }
 
-        options.strict = Strict::AllowRecorded;
-        const DecodedImage allowed = decode_image(webp, options);
-        const auto ignored = std::find_if(allowed.record.conversions.begin(), allowed.record.conversions.end(),
+    void test_relabeling_the_primaries_drops_the_profile()
+    {
+        const Frame frame = decode("testsrc_64x48_p3_orientation6.jpg", OrientationHandling::Report).frame;
+        ColorSpec relabeled = frame.color();
+        relabeled.primaries = ColorPrimaries::Bt709;
+        const FrameResult result = reinterpret(frame, relabeled);
+        assert(result.frame.icc_profile() == nullptr);
+        assert(result.record.input.icc_profile == "Display P3");
+        assert(result.record.output.icc_profile.empty());
+        const auto dropped = std::find_if(result.record.conversions.begin(), result.record.conversions.end(),
                                           [](const ConversionEvent& event)
                                           { return event.property == "icc_profile"; });
-        assert(ignored != allowed.record.conversions.end());
-        assert(ignored->from == "Adobe RGB (1998)" && ignored->to == "ignored");
+        assert(dropped != result.record.conversions.end());
+        assert(dropped->from == "Display P3" && dropped->to == "dropped");
 
-        // Without a conversion there is nothing the profile could be ignored by.
-        const DecodedImage reported = decode("testsrc_64x48_lossy_adobe_rgb_orientation8.webp",
-                                            OrientationHandling::Report, Strict::Refuse);
-        assert(!has_conversion(reported.record.conversions, "icc_profile"));
-        assert(reported.frame.color().primaries == ColorPrimaries::Bt709);
+        // Relabeling only the range leaves the profile's primaries and tone curve.
+        ColorSpec full_range = frame.color();
+        full_range.range = ColorRange::Limited;
+        assert(reinterpret(frame, full_range).frame.icc_profile() != nullptr);
+    }
+
+    void test_the_decoded_frame_carries_the_embedded_data()
+    {
+        const DecodedImage reported = decode("testsrc_64x48_p3_orientation6.jpg", OrientationHandling::Report);
+        assert(reported.frame.icc_profile()->info.known_as == "Display P3");
+        assert(reported.frame.orientation() == 6);
+        assert(reported.frame.sample_aspect_ratio() == (Rational{1, 1}));
+        assert(reported.record.output.orientation == 6);
+        assert(reported.record.output.icc_profile == "Display P3");
+
+        // Applied, the orientation is gone from the frame; the profile stays.
+        const DecodedImage applied = decode("testsrc_64x48_p3_orientation6.jpg", OrientationHandling::Apply);
+        assert(!applied.frame.orientation().has_value());
+        assert(applied.record.input.orientation == 6);
+        assert(!applied.record.output.orientation.has_value());
+        assert(applied.frame.icc_profile()->info.known_as == "Display P3");
+
+        // An AVIF carries its profile and its irot as an orientation; a grid
+        // image carries the grid's.
+        const DecodedImage single = decode("testsrc_128x96_p3_irot1.avif", OrientationHandling::Report);
+        assert(single.frame.icc_profile()->info.known_as == "Display P3");
+        assert(single.frame.orientation() == 8);
+        const DecodedImage grid = decode("testsrc_128x96_grid_irot3.avif", OrientationHandling::Report);
+        assert(grid.frame.orientation() == 6);
+        assert((grid.frame.icc_profile() != nullptr) == grid.tile_grid()->icc_profile.has_value());
+
+        // A frame without embedded data states that too.
+        const Frame plain = decode("testsrc_64x48.png", OrientationHandling::Report).frame;
+        assert(plain.icc_profile() == nullptr && !plain.orientation().has_value());
     }
 
     void test_a_file_without_embedded_data_records_its_absence()
@@ -456,7 +492,9 @@ int main()
     test_a_transposed_422_image_becomes_440_and_says_so();
     test_an_avif_and_a_grid_are_turned_upright();
     test_a_recognized_profile_stands_in_for_missing_tags();
-    test_a_profile_without_a_tag_equivalent_blocks_a_color_conversion_under_refuse();
+    test_a_profile_without_a_tag_equivalent_stays_with_a_converted_frame();
+    test_relabeling_the_primaries_drops_the_profile();
+    test_the_decoded_frame_carries_the_embedded_data();
     test_a_file_without_embedded_data_records_its_absence();
     test_decoding_completes_what_probe_cannot_read();
     std::puts("test_icc_orientation: all passed");

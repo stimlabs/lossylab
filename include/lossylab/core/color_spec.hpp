@@ -104,6 +104,17 @@ namespace lossylab
     ColorRange color_range_from_string(std::string_view name);
     ColorPrimaries color_primaries_from_string(std::string_view name);
     TransferCharacteristic transfer_from_string(std::string_view name);
+
+    /// For reflect::from_json().
+    inline void from_string(const std::string_view name, ColorPrimaries& value)
+    {
+        value = color_primaries_from_string(name);
+    }
+
+    inline void from_string(const std::string_view name, TransferCharacteristic& value)
+    {
+        value = transfer_from_string(name);
+    }
     ChromaLocation chroma_location_from_string(std::string_view name);
 
     /// The complete color interpretation of a frame's samples.
