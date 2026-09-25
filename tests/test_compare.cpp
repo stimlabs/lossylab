@@ -108,6 +108,8 @@ namespace
         assert(near(result.pooled.at("psnr_mean"), (first + second) / 2.0));
         assert(result.pooled.at("psnr_min") == second);
         assert(result.pooled.at("psnr_max") == first);
+        assert(near(result.pooled.at("psnr_median"), (first + second) / 2.0));
+        assert(near(result.pooled.at("psnr_std"), std::abs(first - second) / std::sqrt(2.0)));
     }
 
     void test_packed_rgb_is_refused_unless_conversion_is_allowed()

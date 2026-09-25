@@ -11,8 +11,10 @@ decoded = lossylab.decode_image(lossylab.Source.from_path("photo.jpg"))
 options = lossylab.MeasureOptions()
 options.strict = lossylab.Strict.AllowRecorded  # convert formats an analyzer can't measure, and record it
 
-result = lossylab.measure(decoded.frame, [lossylab.Analyzer.Blockiness, lossylab.Analyzer.Noise], options)
-result.frames[0].value("blockiness")  # a float, or None when absent
+analyzers = [lossylab.Analyzer.Blockiness, lossylab.Analyzer.Noise]  # more available, see table below
+result = lossylab.measure(decoded.frame, analyzers, options)
+result.frames[0].blockiness  # a float, or None when the analyzer did not run or found nothing
+result.pooled["blockiness"].mean  # summarized across frames
 ```
 
 - Pass one frame, or a list of frames with the same size, format and color.
@@ -22,20 +24,20 @@ result.frames[0].value("blockiness")  # a float, or None when absent
 
 ## Reading the result
 
-- **`frames[i].values`:** a dict of named values for each frame.
-- **`pooled`:** `<name>_min`, `<name>_mean` and `<name>_max` across frames.
+- **`frames[i]`:** one typed result per analyzer, listed in the table below. An analyzer that was not run leaves its result `None`.
+- **`pooled`:** every number in the frames' results, summarized across the frames that have it. It is a dict keyed by the dotted path of the field, such as `"signal_levels.luma.mean"` or `"blockiness"`, and each value is a `Summary` with `count`, `mean`, `std`, `median`, `minimum` and `maximum`. `std` is the sample standard deviation (n − 1), and NaN for a single frame. `count` is the number of frames the number covers, which is fewer than the frame count when some frames have no value. The frame `index` is not pooled. Report a mean together with its `std`.
 - **`record`:** how the numbers were produced. `params["measured_as"]` gives the format each analyzer measured, and `conversions` lists any conversion applied.
 - **`to_dict()`:** everything as plain dicts, ready to store as JSON.
 
-A value can be absent or NaN when there is nothing to measure: `blurriness` is left out, while `blockiness` is NaN. A NaN also reaches `pooled`, where it makes the mean NaN. Check for both before using a value.
+A value can be `None` or NaN when there is nothing to measure: a frame without edges has `blurriness` `None`, while a frame without content has `blockiness` NaN. A NaN also reaches `pooled`, where it makes the mean, `std`, `median`, `minimum` and `maximum` NaN. Check for both before using a value.
 
-| Analyzer       | Values                                                                                                                                         | Meaning                                                                                                                                                                                   |
-|----------------|------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `SignalLevels` | `luma_*`, `u_*`, `v_*`, `saturation_*` (`min`, `low`, `mean`, `high`, `max`); `hue_mean`, `hue_median`; `*_bit_depth`; `outside_limited_range` | Value ranges per channel, the bits actually used, and the share of pixels outside the TV range. Useful for spotting range mislabels, but only when `measured_as` is the file's own format |
-| `Blockiness`   | `blockiness`                                                                                                                                   | Strength of a regular block grid. About 1 means none                                                                                                                                      |
-| `Blurriness`   | `blurriness`                                                                                                                                   | Average edge width in pixels                                                                                                                                                              |
-| `Noise`        | `noise_sigma`                                                                                                                                  | Grain and noise level, in 8-bit code values                                                                                                                                               |
-| `Letterbox`    | `letterbox_top`/`bottom`/`left`/`right`, `content_fraction`, and `content_rect` on the frame                                                   | Black bars in pixels, and the content area inside them                                                                                                                                    |
+| Analyzer       | Field on the frame                                                                                                                                                                                              | Meaning                                                                                                                                                                                   |
+|----------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `SignalLevels` | `signal_levels`: `luma`, `chroma_u`, `chroma_v`, `saturation` (each with `minimum`, `percentile_10`, `mean`, `percentile_90`, `maximum`); `hue_mean`, `hue_median`; `luma_bit_depth`, `chroma_u_bit_depth`, `chroma_v_bit_depth`; `outside_limited_range` | Value ranges per channel, the bits actually used, and the share of pixels outside the TV range. Useful for spotting range mislabels, but only when `measured_as` is the file's own format |
+| `Blockiness`   | `blockiness`                                                                                                                                                                                                    | Strength of a regular block grid. About 1 means none                                                                                                                                      |
+| `Blurriness`   | `blurriness`                                                                                                                                                                                                    | Average edge width in pixels                                                                                                                                                              |
+| `Noise`        | `noise_sigma`                                                                                                                                                                                                   | Grain and noise level, in 8-bit code values                                                                                                                                               |
+| `Letterbox`    | `letterbox`: `content_rect`, `content_fraction`, and `bars` (`top`, `bottom`, `left`, `right`)                                                                                                                  | Black bars in pixels, and the content area inside them. `bars` is `None` for a frame that is black throughout                                                                             |
 
 ## What these metrics can't see
 
@@ -80,8 +82,18 @@ Blockiness separates the middle row: it is high after strong compression and sta
 
 On six test images, a Gaussian blur of radius 1.5 raised blurriness by 2.5–3.5 and cut noise to about a tenth. A 2× bicubic upscale left blurriness within ±1, with no consistent direction, and cut noise to between a quarter and an eighth. Upscaling shows up in noise, not in blurriness.
 
+**SignalLevels tells you what the code values mean, not how compressed the image is.** It was not part of the calibration above, so read it against the file's own declared range rather than against a threshold.
+
+- **Limited or full range:** look at `signal_levels.luma.minimum` and `.maximum`, and at `.percentile_10` and `.percentile_90`, which single stray pixels don't move. Limited range keeps luma in about 16–235 (8 bit) with `outside_limited_range` near 0. Full range reaches close to 0 and 255, so `outside_limited_range` is large.
+- **Mislabeled range:** compare the measured levels with the range the file declares. Full-range content tagged as limited is expanded a second time by the decoder, so blacks crush and whites clip; here `outside_limited_range` is large although the tag says limited. Limited-range content tagged as full looks washed out; here luma sits in 16–235 although the tag says full.
+- **Bit depth:** a `*_bit_depth` is the format's depth less the low bits that are zero in every sample of the frame. One below the format's depth means the samples use fewer bits than the container holds, as with 8-bit material stored as 10-bit. It also drops for content with few distinct values: a flat frame reads as very few bits, so judge it over real photos. Check all three planes; they can differ.
+- **Chroma:** `chroma_u.mean` and `chroma_v.mean` should sit near neutral (128 at 8 bit). A large offset points to a color cast, a wrong matrix, or a chroma-siting problem. `saturation` and the `hue_*` values show whether frames are grayscale, washed out, or oversaturated.
+- **One frame is not enough:** a dark scene has a low `luma.maximum` because of its content, not its range. Judge range on percentiles pooled over a clip or a source.
+- **Some overshoot is normal:** limited-range material can carry super-blacks and super-whites, so a small nonzero `outside_limited_range` says nothing. A large fraction does.
+- **Converted frames:** `SignalLevels` measures planar YUV only. Under `AllowRecorded`, an RGB frame is converted first, and the levels then describe the conversion's output. That is a valid measurement of what the converted data looks like, but it says nothing about a range the file itself declared. Read it against `measured_as`.
+
 **Watch for:**
-- **Blank images:** NaN blockiness, no blurriness and zero noise mean "no content". On an all-black image, `Letterbox` gives a `content_fraction` of 0 and no `letterbox_*` values. Flag these images; don't count them as clean.
+- **Blank images:** NaN blockiness, no blurriness and zero noise mean "no content". On an all-black image, `Letterbox` gives a `content_fraction` of 0 and no `bars`. Flag these images; don't count them as clean.
 - **RGB images:** blockiness and blurriness are measured on the green channel, and noise on brightness after a conversion. Never mix `measured_as` formats in one comparison (see [What these metrics can't see](#what-these-metrics-cant-see)).
 - **Differences between sources:** in the calibration set, photo sources were mostly JPEGs (blockiness around 2–3), while many generated-image sources were clean PNGs (about 1.07). A model trained to separate such classes can learn compression instead of content. Compare these distributions between classes before training.
 
@@ -97,6 +109,14 @@ On six test images, a Gaussian blur of radius 1.5 raised blurriness by 2.5–3.5
 - Use medians and percentiles. Single images reach extreme values; the mean follows them.
 - Keep 30–50 images or more per group. Smaller groups give noisy numbers.
 - Drop blank images. Flag letterboxed ones (`content_fraction` below 1); black bars skew noise and blurriness. Rows and columns darker than 24/255 count as black, so dark photos with dark edges may be flagged too.
+
+**Auditing levels with `SignalLevels`:**
+- Run it first, before other analyzers or anything that depends on absolute code values (`Noise` in code values, the `Letterbox` luma threshold, PSNR or MSE). A range mismatch shifts all of them.
+- Keep converted files in. Training data usually ends up as an RGB uint8 matrix anyway, and their levels show what the model will see. Record `measured_as` and compare only within one value of it: a file's own YUV format answers whether its range tag is right, a converted format answers what the converted data looks like.
+- Group by declared range and color tags, then look for groups whose measured levels disagree with the tag. Those are the mislabeled ones.
+- Pool per source or clip, using the pooled `median` of `signal_levels.luma.percentile_10`, `signal_levels.luma.percentile_90` and `signal_levels.outside_limited_range`. A mislabeled range usually affects a whole source, and a pooled corpus hides it.
+- Compare the range distribution between classes. If one class is mostly full range and another mostly limited, a model can learn the range instead of the content.
+- Then decide per source: normalize the range explicitly and record it, or drop or flag the source.
 
 **Comparing:**
 - Compare sources with similar content. Portraits and screenshots differ by nature.

@@ -31,12 +31,12 @@ namespace lossylab::pybind
 
         bind_reflected_rw<MeasureOptions>(m, "MeasureOptions");
 
-        nb::class_<FrameMeasurement>(m, "FrameMeasurement")
-            .def_ro("index", &FrameMeasurement::index)
-            .def_ro("values", &FrameMeasurement::values)
-            .def_ro("content_rect", &FrameMeasurement::content_rect)
-            .def("value", &FrameMeasurement::value, "name"_a)
-            .def("to_dict", [](const FrameMeasurement& self) { return to_python(self.to_json()); });
+        bind_reflected<statistics::Summary>(m, "Summary");
+        bind_reflected<Levels>(m, "Levels");
+        bind_reflected<SignalLevels>(m, "SignalLevels");
+        bind_reflected<LetterboxBars>(m, "LetterboxBars");
+        bind_reflected<Letterbox>(m, "Letterbox");
+        bind_reflected<FrameMeasurement>(m, "FrameMeasurement");
 
         nb::class_<MeasureResult>(m, "MeasureResult")
             .def_ro("frames", &MeasureResult::frames)

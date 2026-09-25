@@ -71,11 +71,17 @@ namespace
         return std::clamp(static_cast<int>(std::lround(value)), 0, 255);
     }
 
-    double value_of(const MeasureResult& result, const char* name, const std::size_t frame_index = 0)
+    /// A measurement the analyzer must have produced.
+    template <typename Measurement>
+    const Measurement& present(const std::optional<Measurement>& measurement)
     {
-        const std::optional<double> value = result.frames.at(frame_index).value(name);
-        assert(value.has_value() && "measurement missing");
-        return *value;
+        assert(measurement.has_value() && "measurement missing");
+        return *measurement;
+    }
+
+    const SignalLevels& signal_levels_of(const MeasureResult& result, const std::size_t frame_index = 0)
+    {
+        return present(result.frames.at(frame_index).signal_levels);
     }
 
     void test_signal_levels_report_the_levels_of_the_planes()
@@ -85,14 +91,20 @@ namespace
         write_sample(frame.plane(0), 10, 11, 230);
 
         const MeasureResult result = measure(frame, {Analyzer::SignalLevels});
-        assert(value_of(result, "luma_min") == 20.0);
-        assert(value_of(result, "luma_max") == 230.0);
-        assert(value_of(result, "luma_low") == 100.0);
-        assert(value_of(result, "luma_high") == 100.0);
-        assert(value_of(result, "u_min") == 128.0 && value_of(result, "u_max") == 128.0);
-        assert(value_of(result, "v_mean") == 128.0);
-        assert(value_of(result, "saturation_max") == 0.0);
-        assert(value_of(result, "outside_limited_range") == 0.0);
+        const SignalLevels& levels = signal_levels_of(result);
+        assert(levels.luma.minimum == 20.0);
+        assert(levels.luma.maximum == 230.0);
+        assert(levels.luma.percentile_10 == 100.0);
+        assert(levels.luma.percentile_90 == 100.0);
+        assert(levels.chroma_u.minimum == 128.0 && levels.chroma_u.maximum == 128.0);
+        assert(levels.chroma_v.mean == 128.0);
+        assert(levels.saturation.maximum == 0.0);
+        assert(levels.outside_limited_range == 0.0);
+        // Bits left once the low bits that are zero in every sample are dropped.
+        assert(levels.luma_bit_depth == 6);
+        assert(levels.chroma_u_bit_depth == 1 && levels.chroma_v_bit_depth == 1);
+        assert(!result.frames.front().blockiness.has_value());
+        assert(!result.frames.front().letterbox.has_value());
         assert(result.record.conversions.empty());
         assert(result.record.params.at("measured_as").at("signal_levels") == "yuv444p");
     }
@@ -104,16 +116,17 @@ namespace
         write_sample(frame.plane(0), 1, 0, 250);
 
         const MeasureResult result = measure(frame, {Analyzer::SignalLevels});
-        assert(std::abs(value_of(result, "outside_limited_range") - 2.0 / (64.0 * 48.0)) < 1e-9);
+        assert(std::abs(signal_levels_of(result).outside_limited_range - 2.0 / (64.0 * 48.0)) < 1e-9);
     }
 
     void test_signal_levels_stay_in_the_frames_own_bit_depth()
     {
         const Frame frame = planar_frame(64, 48, "yuv420p10", [](int x, int) { return 64 + x; });
         const MeasureResult result = measure(frame, {Analyzer::SignalLevels});
-        assert(value_of(result, "luma_min") == 64.0);
-        assert(value_of(result, "luma_max") == 127.0);
-        assert(value_of(result, "u_mean") == 512.0);
+        const SignalLevels& levels = signal_levels_of(result);
+        assert(levels.luma.minimum == 64.0);
+        assert(levels.luma.maximum == 127.0);
+        assert(levels.chroma_u.mean == 512.0);
         assert(result.record.conversions.empty());
     }
 
@@ -129,32 +142,30 @@ namespace
                                          });
 
         const MeasureResult result = measure(frame, {Analyzer::Letterbox});
-        const FrameMeasurement& measurement = result.frames.front();
-        assert(measurement.content_rect.has_value());
-        assert(measurement.content_rect->x == 4.0 && measurement.content_rect->y == 6.0);
-        assert(measurement.content_rect->width == 56.0 && measurement.content_rect->height == 36.0);
-        assert(value_of(result, "letterbox_top") == 6.0);
-        assert(value_of(result, "letterbox_bottom") == 6.0);
-        assert(value_of(result, "letterbox_left") == 4.0);
-        assert(value_of(result, "letterbox_right") == 4.0);
-        assert(std::abs(value_of(result, "content_fraction") - (56.0 * 36.0) / (64.0 * 48.0)) < 1e-9);
+        const Letterbox& letterbox = present(result.frames.front().letterbox);
+        assert(letterbox.content_rect.x == 4.0 && letterbox.content_rect.y == 6.0);
+        assert(letterbox.content_rect.width == 56.0 && letterbox.content_rect.height == 36.0);
+        const LetterboxBars& bars = present(letterbox.bars);
+        assert(bars.top == 6 && bars.bottom == 6 && bars.left == 4 && bars.right == 4);
+        assert(std::abs(letterbox.content_fraction - (56.0 * 36.0) / (64.0 * 48.0)) < 1e-9);
     }
 
     void test_a_frame_without_bars_is_all_content()
     {
         const MeasureResult result = measure(flat_frame(128), {Analyzer::Letterbox});
-        assert(value_of(result, "content_fraction") == 1.0);
-        assert(value_of(result, "letterbox_top") == 0.0 && value_of(result, "letterbox_right") == 0.0);
+        const Letterbox& letterbox = present(result.frames.front().letterbox);
+        assert(letterbox.content_fraction == 1.0);
+        const LetterboxBars& bars = present(letterbox.bars);
+        assert(bars.top == 0 && bars.bottom == 0 && bars.left == 0 && bars.right == 0);
     }
 
     void test_a_black_frame_has_no_content()
     {
         const MeasureResult result = measure(flat_frame(16), {Analyzer::Letterbox});
-        const FrameMeasurement& measurement = result.frames.front();
-        assert(measurement.content_rect.has_value());
-        assert(measurement.content_rect->width == 0.0 && measurement.content_rect->height == 0.0);
-        assert(value_of(result, "content_fraction") == 0.0);
-        assert(!measurement.value("letterbox_top").has_value());
+        const Letterbox& letterbox = present(result.frames.front().letterbox);
+        assert(letterbox.content_rect.width == 0.0 && letterbox.content_rect.height == 0.0);
+        assert(letterbox.content_fraction == 0.0);
+        assert(!letterbox.bars.has_value());
     }
 
     void test_blockiness_is_higher_for_an_eight_pixel_block_grid()
@@ -178,8 +189,8 @@ namespace
         const Frame smooth = planar_frame(128, 128, "yuv420p", [&](const int x, const int y)
                                           { return clamp_to_8_bits(60.0 + x + y / 2.0 + noise(generator)); });
 
-        const double blocky_value = value_of(measure(blocky, {Analyzer::Blockiness}), "blockiness");
-        const double smooth_value = value_of(measure(smooth, {Analyzer::Blockiness}), "blockiness");
+        const double blocky_value = present(measure(blocky, {Analyzer::Blockiness}).frames.front().blockiness);
+        const double smooth_value = present(measure(smooth, {Analyzer::Blockiness}).frames.front().blockiness);
         assert(smooth_value < 1.5);
         assert(blocky_value > 3.0 * smooth_value);
     }
@@ -205,15 +216,15 @@ namespace
                                                return total / 81;
                                            });
 
-        const double sharp_value = value_of(measure(sharp, {Analyzer::Blurriness}), "blurriness");
-        const double blurred_value = value_of(measure(blurred, {Analyzer::Blurriness}), "blurriness");
+        const double sharp_value = present(measure(sharp, {Analyzer::Blurriness}).frames.front().blurriness);
+        const double blurred_value = present(measure(blurred, {Analyzer::Blurriness}).frames.front().blurriness);
         assert(blurred_value > 2.0 * sharp_value);
     }
 
     void test_a_frame_without_edges_has_no_blurriness()
     {
         const MeasureResult result = measure(flat_frame(128), {Analyzer::Blurriness});
-        assert(!result.frames.front().value("blurriness").has_value());
+        assert(!result.frames.front().blurriness.has_value());
     }
 
     Frame noisy_frame(const char* pixel_format, const double sigma, const int scale)
@@ -226,14 +237,15 @@ namespace
 
     void test_noise_estimates_the_sigma_of_added_gaussian_noise()
     {
-        const double estimate = value_of(measure(noisy_frame("yuv420p", 5.0, 1), {Analyzer::Noise}), "noise_sigma");
+        const double estimate =
+            present(measure(noisy_frame("yuv420p", 5.0, 1), {Analyzer::Noise}).frames.front().noise_sigma);
         assert(std::abs(estimate - 5.0) < 0.5);
     }
 
     void test_noise_is_reported_in_8_bit_code_values_at_any_depth()
     {
         const double estimate =
-            value_of(measure(noisy_frame("yuv420p10", 5.0, 4), {Analyzer::Noise}), "noise_sigma");
+            present(measure(noisy_frame("yuv420p10", 5.0, 4), {Analyzer::Noise}).frames.front().noise_sigma);
         assert(std::abs(estimate - 5.0) < 0.5);
     }
 
@@ -241,8 +253,8 @@ namespace
     {
         const Frame edges =
             planar_frame(128, 128, "yuv420p", [](const int x, const int y) { return checkerboard(x, y, 64); });
-        assert(value_of(measure(edges, {Analyzer::Noise}), "noise_sigma") == 0.0);
-        assert(value_of(measure(flat_frame(90), {Analyzer::Noise}), "noise_sigma") == 0.0);
+        assert(present(measure(edges, {Analyzer::Noise}).frames.front().noise_sigma) == 0.0);
+        assert(present(measure(flat_frame(90), {Analyzer::Noise}).frames.front().noise_sigma) == 0.0);
     }
 
     Frame rgb_frame()
@@ -299,8 +311,8 @@ namespace
         assert(measured_as.at("noise") == "yuv444p");
         assert(measured_as.at("blockiness") == "gbrp");
         assert(measured_as.at("letterbox") == "rgb24");
-        assert(result.frames.front().value("luma_mean").has_value());
-        assert(result.frames.front().value("noise_sigma").has_value());
+        assert(result.frames.front().signal_levels.has_value());
+        assert(result.frames.front().noise_sigma.has_value());
 
         // One conversion to yuv444p, shared by signal levels and noise, and one
         // to gbrp.
@@ -349,11 +361,40 @@ namespace
             measure({flat_frame(60), flat_frame(100), flat_frame(140)}, {Analyzer::SignalLevels});
         assert(result.frames.size() == 3);
         assert(result.frames[1].index == 1);
-        assert(value_of(result, "luma_mean", 0) == 60.0);
-        assert(value_of(result, "luma_mean", 2) == 140.0);
-        assert(result.pooled.at("luma_mean_mean") == 100.0);
-        assert(result.pooled.at("luma_mean_min") == 60.0);
-        assert(result.pooled.at("luma_mean_max") == 140.0);
+        assert(signal_levels_of(result, 0).luma.mean == 60.0);
+        assert(signal_levels_of(result, 2).luma.mean == 140.0);
+
+        const statistics::Summary& luma_mean = result.pooled.at("signal_levels.luma.mean");
+        assert(luma_mean.count == 3);
+        assert(luma_mean.mean == 100.0);
+        assert(luma_mean.minimum == 60.0);
+        assert(luma_mean.maximum == 140.0);
+        assert(luma_mean.median == 100.0);
+        assert(luma_mean.std == 40.0);
+    }
+
+    void test_pooled_std_needs_two_frames_and_the_median_of_an_even_count_is_the_midpoint()
+    {
+        const MeasureResult single = measure({flat_frame(60)}, {Analyzer::SignalLevels});
+        assert(std::isnan(single.pooled.at("signal_levels.luma.mean").std));
+        assert(single.pooled.at("signal_levels.luma.mean").median == 60.0);
+
+        const MeasureResult pair = measure({flat_frame(60), flat_frame(100)}, {Analyzer::SignalLevels});
+        assert(pair.pooled.at("signal_levels.luma.mean").median == 80.0);
+    }
+
+    void test_only_measurements_are_pooled_and_only_over_the_frames_that_have_them()
+    {
+        const MeasureResult result = measure({flat_frame(60), flat_frame(100)}, {Analyzer::Blurriness});
+        assert(!result.pooled.contains("index"));
+        assert(!result.pooled.contains("signal_levels.luma.mean"));
+
+        // A flat frame has no edges, so no frame contributes a blurriness.
+        assert(!result.pooled.contains("blurriness"));
+
+        const MeasureResult letterboxed = measure({flat_frame(16), flat_frame(128)}, {Analyzer::Letterbox});
+        assert(letterboxed.pooled.at("letterbox.content_fraction").count == 2);
+        assert(letterboxed.pooled.at("letterbox.bars.top").count == 1);
     }
 
     void test_a_decoded_jpeg_measures_without_conversion()
@@ -366,10 +407,12 @@ namespace
         assert(result.record.kind == StageKind::Measure);
         assert(result.record.conversions.empty());
         assert(result.record.params.at("analyzers").size() == 5);
-        for (const char* name : {"luma_mean", "blockiness", "blurriness", "noise_sigma", "content_fraction"})
-        {
-            assert(result.frames.front().value(name).has_value());
-        }
+        const FrameMeasurement& measurement = result.frames.front();
+        assert(measurement.signal_levels.has_value());
+        assert(measurement.blockiness.has_value());
+        assert(measurement.blurriness.has_value());
+        assert(measurement.noise_sigma.has_value());
+        assert(measurement.letterbox.has_value());
         assert(result.to_json().at("record").at("kind") == "measure");
     }
 
@@ -401,6 +444,8 @@ int main()
     test_frames_must_share_one_format();
     test_temporal_analyzers_are_not_implemented_yet();
     test_each_frame_is_measured_and_the_values_pooled();
+    test_pooled_std_needs_two_frames_and_the_median_of_an_even_count_is_the_midpoint();
+    test_only_measurements_are_pooled_and_only_over_the_frames_that_have_them();
     test_a_decoded_jpeg_measures_without_conversion();
     test_the_filters_per_frame_reports_stay_out_of_the_log();
     return 0;

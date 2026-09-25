@@ -4,6 +4,7 @@
 #include "lossylab/core/error.hpp"
 #include "lossylab/core/json_io.hpp"
 #include "lossylab/core/schema_version.hpp"
+#include "lossylab/core/statistics.hpp"
 #include "lossylab/detail/ff_error.hpp"
 #include "lossylab/env/capabilities.hpp"
 #include "lossylab/io/jpeg_markers.hpp"
@@ -705,12 +706,7 @@ namespace lossylab
             }
             std::partial_sort(probe_scores.begin(), probe_scores.begin() + scored_probes, probe_scores.end(),
                               std::greater<>());
-            double score = 0.0;
-            for (std::size_t i = 0; i < scored_probes; ++i)
-            {
-                score += probe_scores[i];
-            }
-            return score / static_cast<double>(scored_probes);
+            return statistics::mean(std::ranges::subrange(probe_scores.begin(), probe_scores.begin() + scored_probes));
         }
 
         /// The grid offset whose blocks fit a lattice best, and the table

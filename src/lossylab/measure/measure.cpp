@@ -5,6 +5,7 @@
 #include "lossylab/core/error.hpp"
 #include "lossylab/core/json_io.hpp"
 #include "lossylab/core/schema_version.hpp"
+#include "lossylab/core/statistics.hpp"
 #include "lossylab/detail/ff_error.hpp"
 #include "lossylab/detail/ff_ptr.hpp"
 #include "lossylab/detail/log_capture.hpp"
@@ -29,6 +30,8 @@ extern "C" {
 #include <initializer_list>
 #include <numbers>
 #include <optional>
+#include <tuple>
+#include <type_traits>
 #include <utility>
 
 namespace lossylab
@@ -579,40 +582,38 @@ namespace lossylab
             read_components(metadata, "lavfi.ssim.", "ssim", values);
         }
 
+        double signal_stat(const FrameMetadata& metadata, const std::string& key)
+        {
+            return attached_number(metadata, "lavfi.signalstats." + key);
+        }
+
+        /// The five levels signalstats reports for a channel, under keys that
+        /// start with `prefix` ("Y", "U", "V" or "SAT").
+        Levels read_levels(const FrameMetadata& metadata, const std::string& prefix)
+        {
+            Levels levels;
+            levels.minimum = signal_stat(metadata, prefix + "MIN");
+            levels.percentile_10 = signal_stat(metadata, prefix + "LOW");
+            levels.mean = signal_stat(metadata, prefix + "AVG");
+            levels.percentile_90 = signal_stat(metadata, prefix + "HIGH");
+            levels.maximum = signal_stat(metadata, prefix + "MAX");
+            return levels;
+        }
+
         void read_signal_levels(const FrameMetadata& metadata, FrameMeasurement& measurement)
         {
-            static const std::pair<const char*, const char*> keys[] = {
-                {"YMIN", "luma_min"},
-                {"YLOW", "luma_low"},
-                {"YAVG", "luma_mean"},
-                {"YHIGH", "luma_high"},
-                {"YMAX", "luma_max"},
-                {"UMIN", "u_min"},
-                {"ULOW", "u_low"},
-                {"UAVG", "u_mean"},
-                {"UHIGH", "u_high"},
-                {"UMAX", "u_max"},
-                {"VMIN", "v_min"},
-                {"VLOW", "v_low"},
-                {"VAVG", "v_mean"},
-                {"VHIGH", "v_high"},
-                {"VMAX", "v_max"},
-                {"SATMIN", "saturation_min"},
-                {"SATLOW", "saturation_low"},
-                {"SATAVG", "saturation_mean"},
-                {"SATHIGH", "saturation_high"},
-                {"SATMAX", "saturation_max"},
-                {"HUEMED", "hue_median"},
-                {"HUEAVG", "hue_mean"},
-                {"YBITDEPTH", "luma_bit_depth"},
-                {"UBITDEPTH", "u_bit_depth"},
-                {"VBITDEPTH", "v_bit_depth"},
-                {"BRNG", "outside_limited_range"},
-            };
-            for (const auto& [key, name] : keys)
-            {
-                measurement.values[name] = attached_number(metadata, std::string("lavfi.signalstats.") + key);
-            }
+            SignalLevels levels;
+            levels.luma = read_levels(metadata, "Y");
+            levels.chroma_u = read_levels(metadata, "U");
+            levels.chroma_v = read_levels(metadata, "V");
+            levels.saturation = read_levels(metadata, "SAT");
+            levels.hue_mean = signal_stat(metadata, "HUEAVG");
+            levels.hue_median = signal_stat(metadata, "HUEMED");
+            levels.luma_bit_depth = static_cast<int>(signal_stat(metadata, "YBITDEPTH"));
+            levels.chroma_u_bit_depth = static_cast<int>(signal_stat(metadata, "UBITDEPTH"));
+            levels.chroma_v_bit_depth = static_cast<int>(signal_stat(metadata, "VBITDEPTH"));
+            levels.outside_limited_range = signal_stat(metadata, "BRNG");
+            measurement.signal_levels = levels;
         }
 
         void read_letterbox(const FrameMetadata& metadata, const Frame& frame, FrameMeasurement& measurement)
@@ -624,22 +625,21 @@ namespace lossylab
 
             // cropdetect leaves the far edge before the near one when every
             // row and column is black.
+            Letterbox letterbox;
             if (right < left || bottom < top)
             {
-                measurement.content_rect = Rect{};
-                measurement.values["content_fraction"] = 0.0;
+                measurement.letterbox = letterbox;
                 return;
             }
 
             const double width = frame.width();
             const double height = frame.height();
-            const Rect content{left, top, right - left + 1.0, bottom - top + 1.0};
-            measurement.content_rect = content;
-            measurement.values["letterbox_top"] = top;
-            measurement.values["letterbox_bottom"] = height - 1.0 - bottom;
-            measurement.values["letterbox_left"] = left;
-            measurement.values["letterbox_right"] = width - 1.0 - right;
-            measurement.values["content_fraction"] = content.width * content.height / (width * height);
+            letterbox.content_rect = Rect{left, top, right - left + 1.0, bottom - top + 1.0};
+            const Rect& content = letterbox.content_rect;
+            letterbox.content_fraction = content.width * content.height / (width * height);
+            letterbox.bars = LetterboxBars{static_cast<int>(top), static_cast<int>(height - 1.0 - bottom),
+                                           static_cast<int>(left), static_cast<int>(width - 1.0 - right)};
+            measurement.letterbox = letterbox;
         }
 
         void read_filter_values(const Analyzer analyzer, const FrameMetadata& metadata, const Frame& frame,
@@ -648,9 +648,7 @@ namespace lossylab
             switch (analyzer)
             {
             case Analyzer::SignalLevels: read_signal_levels(metadata, measurement); break;
-            case Analyzer::Blockiness:
-                measurement.values["blockiness"] = attached_number(metadata, "lavfi.block");
-                break;
+            case Analyzer::Blockiness: measurement.blockiness = attached_number(metadata, "lavfi.block"); break;
             case Analyzer::Blurriness:
             {
                 // blurdetect divides by the number of blocks with edges, so a
@@ -658,7 +656,7 @@ namespace lossylab
                 const double blurriness = attached_number(metadata, "lavfi.blur");
                 if (std::isfinite(blurriness))
                 {
-                    measurement.values["blurriness"] = blurriness;
+                    measurement.blurriness = blurriness;
                 }
                 break;
             }
@@ -746,40 +744,75 @@ namespace lossylab
                    static_cast<double>(1 << (bit_depth - 8));
         }
 
-        const std::map<std::string, double>& values_of(const FrameMeasurement& frame) { return frame.values; }
-        const std::map<std::string, double>& values_of(const std::map<std::string, double>& frame) { return frame; }
+        using NumberSeries = std::map<std::string, std::vector<double>>;
 
-        template <typename FrameValues>
-        void pool_into(std::map<std::string, double>& pooled, const std::vector<FrameValues>& frames)
+        /// Appends every number in `value` to its series, keyed by the dotted
+        /// path of the reflected members leading to it. An unset optional adds
+        /// nothing. Anything else is not a number and is left out.
+        template <typename Value>
+        void collect_numbers(NumberSeries& series, const std::string& path, const Value& value)
         {
-            std::map<std::string, double> totals;
-            std::map<std::string, int> counts;
-
-            for (const FrameValues& frame : frames)
+            if constexpr (std::is_arithmetic_v<Value>)
             {
-                for (const auto& [name, value] : values_of(frame))
+                series[path].push_back(static_cast<double>(value));
+            }
+            else if constexpr (reflect::detail::IsOptional<Value>::value)
+            {
+                if (value.has_value())
                 {
-                    totals[name] += value;
-                    counts[name] += 1;
+                    collect_numbers(series, path, *value);
+                }
+            }
+            else if constexpr (reflect::detail::Reflected<Value>)
+            {
+                std::apply(
+                    [&](const auto&... member)
+                    {
+                        (collect_numbers(series, path.empty() ? std::string(member.name) : path + "." +
+                                                                                              std::string(member.name),
+                                         value.*(member.pointer)),
+                         ...);
+                    },
+                    reflect::Fields<Value>::members);
+            }
+        }
 
-                    auto& minimum = pooled[name + "_min"];
-                    auto& maximum = pooled[name + "_max"];
-                    if (counts[name] == 1)
-                    {
-                        minimum = value;
-                        maximum = value;
-                    }
-                    else
-                    {
-                        minimum = std::min(minimum, value);
-                        maximum = std::max(maximum, value);
-                    }
+        std::map<std::string, statistics::Summary> pool_measurements(const std::vector<FrameMeasurement>& frames)
+        {
+            NumberSeries series;
+            for (const FrameMeasurement& frame : frames)
+            {
+                collect_numbers(series, "", frame);
+            }
+            series.erase("index");
+
+            std::map<std::string, statistics::Summary> pooled;
+            for (const auto& [name, values] : series)
+            {
+                pooled[name] = statistics::summarize(values);
+            }
+            return pooled;
+        }
+
+        void pool_into(std::map<std::string, double>& pooled, const std::vector<std::map<std::string, double>>& frames)
+        {
+            std::map<std::string, std::vector<double>> samples;
+            for (const std::map<std::string, double>& frame : frames)
+            {
+                for (const auto& [name, value] : frame)
+                {
+                    samples[name].push_back(value);
                 }
             }
 
-            for (const auto& [name, total] : totals)
+            for (const auto& [name, values] : samples)
             {
-                pooled[name + "_mean"] = total / counts[name];
+                const statistics::Summary summary = statistics::summarize(values);
+                pooled[name + "_min"] = summary.minimum;
+                pooled[name + "_max"] = summary.maximum;
+                pooled[name + "_mean"] = summary.mean;
+                pooled[name + "_std"] = summary.std;
+                pooled[name + "_median"] = summary.median;
             }
         }
     }
@@ -815,32 +848,22 @@ namespace lossylab
         throw ConfigError("unknown analyzer '" + std::string(name) + "'");
     }
 
-    std::optional<double> FrameMeasurement::value(const std::string_view name) const
-    {
-        const auto it = values.find(std::string(name));
-        return it == values.end() ? std::nullopt : std::optional<double>(it->second);
-    }
-
     json::Value FrameMeasurement::to_json() const
     {
-        json::Value document = json::object({
-            {"index", index},
-            {"values", json::to_object(values)},
-        });
-
-        if (content_rect.has_value())
-        {
-            document["content_rect"] = content_rect->to_json();
-        }
-        return document;
+        return reflect::to_json(*this);
     }
 
     json::Value MeasureResult::to_json() const
     {
+        json::Value pooled_summaries = json::Value::object();
+        for (const auto& [name, summary] : pooled)
+        {
+            pooled_summaries[name] = reflect::to_json(summary);
+        }
         return json::object({
             {"schema_version", schema_version},
             {"frames", json::to_array(frames)},
-            {"pooled", json::to_object(pooled)},
+            {"pooled", pooled_summaries},
             {"record", record.to_json()},
         });
     }
@@ -962,7 +985,7 @@ namespace lossylab
                 {
                     if (const std::optional<double> sigma = noise_sigma(measured[index]))
                     {
-                        result.frames[index].values["noise_sigma"] = *sigma;
+                        result.frames[index].noise_sigma = *sigma;
                     }
                 }
                 continue;
@@ -980,7 +1003,7 @@ namespace lossylab
             }
         }
 
-        pool_into(result.pooled, result.frames);
+        result.pooled = pool_measurements(result.frames);
 
         record.params = json::object({
             {"analyzers", analyzer_names},
@@ -1149,17 +1172,6 @@ namespace lossylab
                 depths[i] = line - log_errors[i];
             }
             return depths;
-        }
-
-        double median(std::vector<double> values)
-        {
-            if (values.empty())
-            {
-                return 0.0;
-            }
-            std::sort(values.begin(), values.end());
-            const std::size_t middle = values.size() / 2;
-            return values.size() % 2 == 1 ? values[middle] : (values[middle - 1] + values[middle]) / 2.0;
         }
 
         /// The format a codec re-encodes a frame in when the caller names
@@ -1374,7 +1386,10 @@ namespace lossylab
                     other_depths.push_back(std::abs(*it));
                 }
             }
-            noise_scale = std::max(median(other_depths), minimum_noise_scale);
+            if (!other_depths.empty())
+            {
+                noise_scale = std::max(statistics::median(other_depths), minimum_noise_scale);
+            }
             curve.confidence = *deepest / (*deepest + 3.0 * noise_scale);
             if (curve.confidence >= 0.5)
             {

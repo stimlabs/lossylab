@@ -109,6 +109,7 @@ namespace lossylab
         std::optional<double> qp_min;
         std::optional<double> qp_max;
         std::optional<double> qp_mean;
+        // TODO: qp_std
 
         [[nodiscard]] json::Value to_json() const;
         static FrameStats from_json(const json::Value& value);

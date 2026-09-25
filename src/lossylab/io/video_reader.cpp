@@ -3,6 +3,7 @@
 #include "lossylab/convert/convert.hpp"
 #include "lossylab/core/error.hpp"
 #include "lossylab/core/json_io.hpp"
+#include "lossylab/core/statistics.hpp"
 #include "lossylab/detail/ff_error.hpp"
 #include "lossylab/detail/ff_ptr.hpp"
 #include "lossylab/env/build_info.hpp"
@@ -500,14 +501,9 @@ namespace lossylab
                 return;
             }
             const auto [lowest, highest] = std::minmax_element(map.values.begin(), map.values.end());
-            double sum = 0.0;
-            for (const int value : map.values)
-            {
-                sum += value;
-            }
             stats.qp_min = *lowest;
             stats.qp_max = *highest;
-            stats.qp_mean = sum / static_cast<double>(map.values.size());
+            stats.qp_mean = statistics::mean(map.values);
         }
 
         /// Wraps a decoded frame with its statistics and whatever side data the

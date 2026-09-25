@@ -5,6 +5,7 @@
 #include "lossylab/core/json.hpp"
 #include "lossylab/core/record.hpp"
 #include "lossylab/core/reflect.hpp"
+#include "lossylab/core/statistics.hpp"
 #include "lossylab/core/strict.hpp"
 
 #include <map>
@@ -22,31 +23,31 @@ namespace lossylab
     /// `params["measured_as"]`.
     enum class Analyzer
     {
-        /// FFmpeg's signalstats. For luma ("luma_"), the two chroma planes
-        /// ("u_", "v_") and saturation ("saturation_"): the minimum, 10th
-        /// percentile ("low"), mean, 90th percentile ("high") and maximum.
-        /// Also "hue_median", "hue_mean", the bit depth each plane actually
-        /// uses ("luma_bit_depth", "u_bit_depth", "v_bit_depth"), and
-        /// "outside_limited_range", the fraction of pixels with any component
+        /// FFmpeg's signalstats. Sets `signal_levels`: for luma, the two chroma
+        /// planes and saturation, the minimum, 10th percentile, mean, 90th
+        /// percentile and maximum. Also `hue_median`, `hue_mean`, the bit
+        /// depth each plane actually uses (`luma_bit_depth`,
+        /// `chroma_u_bit_depth`, `chroma_v_bit_depth`), and
+        /// `outside_limited_range`, the fraction of pixels with any component
         /// outside 16-235 luma or 16-240 chroma (scaled to the bit depth).
         /// Reveals limited versus full range directly, and catches the levels
         /// mismatch that a mislabeled range leaves behind. Planar YUV only.
         SignalLevels,
 
-        /// FFmpeg's blockdetect on the first plane: "blockiness", the gradient
+        /// FFmpeg's blockdetect on the first plane: `blockiness`, the gradient
         /// energy on the strongest regular grid between 3 and 24 pixels,
         /// relative to the energy off it. About 1 for an image without block
         /// artifacts, rising with block-transform compression strength.
         /// 8-bit formats only.
         Blockiness,
 
-        /// FFmpeg's blurdetect on the first plane: "blurriness", the mean width
+        /// FFmpeg's blurdetect on the first plane: `blurriness`, the mean width
         /// in pixels of the edges found by a Canny detector. Grows with blur,
         /// and with resolution for the same content. Absent for a frame with no
         /// edges. 8-bit formats only.
         Blurriness,
 
-        /// Noise level: "noise_sigma", the standard deviation of the noise on
+        /// Noise level: `noise_sigma`, the standard deviation of the noise on
         /// the luma plane in 8-bit code values, whatever the bit depth. Tai and
         /// Yang's variant of Immerkaer's estimator: the response of a
         /// Laplacian-difference kernel, averaged over all pixels except the 10%
@@ -56,12 +57,11 @@ namespace lossylab
 
         /// FFmpeg's cropdetect: the content rectangle inside black bars, found
         /// from rows and columns whose mean luma is at most 24/255 of full
-        /// scale. Sets `content_rect`, "letterbox_top", "letterbox_bottom",
-        /// "letterbox_left", "letterbox_right" (bar sizes in pixels) and
-        /// "content_fraction". A frame that is black throughout has an empty
-        /// `content_rect` and a "content_fraction" of 0. Tells crop sampling
-        /// where not to crop, which otherwise quietly produces training crops
-        /// of pure black.
+        /// scale. Sets `letterbox`: `content_rect`, `content_fraction` and the
+        /// `bars` (sizes in pixels). A frame that is black throughout has an
+        /// empty `content_rect`, no `bars` and a `content_fraction` of 0.
+        /// Tells crop sampling where not to crop, which otherwise quietly
+        /// produces training crops of pure black.
         Letterbox,
 
         /// Interlacing and telecine patterns.
@@ -83,29 +83,100 @@ namespace lossylab
     std::string to_string(Analyzer analyzer);
     Analyzer analyzer_from_string(std::string_view name);
 
-    /// One frame's measurements.
+    /// How the values of one channel spread over a frame, in code values.
+    struct Levels
+    {
+        double minimum = 0.0;
+        double percentile_10 = 0.0;
+        double mean = 0.0;
+        double percentile_90 = 0.0;
+        double maximum = 0.0;
+    };
+
+    LOSSYLAB_REFLECT(Levels, minimum, percentile_10, mean, percentile_90, maximum);
+
+    /// The result of Analyzer::SignalLevels for one frame.
+    struct SignalLevels
+    {
+        Levels luma;
+        Levels chroma_u;
+        Levels chroma_v;
+        Levels saturation;
+        double hue_mean = 0.0;
+        double hue_median = 0.0;
+
+        /// The bit depth each plane actually uses: the format's depth less the
+        /// low bits that are zero in every sample, as when 8-bit material is
+        /// stored in 10 bits.
+        int luma_bit_depth = 0;
+        int chroma_u_bit_depth = 0;
+        int chroma_v_bit_depth = 0;
+
+        /// The fraction of pixels with any component outside the limited range.
+        double outside_limited_range = 0.0;
+    };
+
+    LOSSYLAB_REFLECT(SignalLevels, luma, chroma_u, chroma_v, saturation, hue_mean, hue_median, luma_bit_depth,
+                     chroma_u_bit_depth, chroma_v_bit_depth, outside_limited_range);
+
+    /// The black bars on each side of a frame, in pixels.
+    struct LetterboxBars
+    {
+        int top = 0;
+        int bottom = 0;
+        int left = 0;
+        int right = 0;
+    };
+
+    LOSSYLAB_REFLECT(LetterboxBars, top, bottom, left, right);
+
+    /// The result of Analyzer::Letterbox for one frame.
+    struct Letterbox
+    {
+        /// Empty (zero width and height) when the frame is black throughout.
+        Rect content_rect;
+        double content_fraction = 0.0;
+
+        /// Unset when the frame is black throughout, since no side has bars
+        /// then.
+        std::optional<LetterboxBars> bars;
+    };
+
+    LOSSYLAB_REFLECT(Letterbox, content_rect, content_fraction, bars);
+
+    /// One frame's measurements. An analyzer that was not run leaves its
+    /// result unset.
     struct FrameMeasurement
     {
         int index = 0;
 
-        /// Keyed by a name specific to the analyzer, e.g. "luma_min",
-        /// "blockiness", "si", "ti", "scene_score".
-        std::map<std::string, double> values;
+        std::optional<SignalLevels> signal_levels;
 
-        /// The content rectangle from letterbox detection.
-        std::optional<Rect> content_rect;
+        /// NaN for a frame without content.
+        std::optional<double> blockiness;
 
-        [[nodiscard]] std::optional<double> value(std::string_view name) const;
+        /// Unset for a frame with no edges, even when the analyzer ran.
+        std::optional<double> blurriness;
+
+        /// Unset for a frame smaller than 3x3, even when the analyzer ran.
+        std::optional<double> noise_sigma;
+
+        std::optional<Letterbox> letterbox;
 
         [[nodiscard]] json::Value to_json() const;
     };
+
+    LOSSYLAB_REFLECT(FrameMeasurement, index, signal_levels, blockiness, blurriness, noise_sigma, letterbox);
 
     struct MeasureResult
     {
         std::vector<FrameMeasurement> frames;
 
-        /// Values pooled across frames: mean, min and max of each measurement.
-        std::map<std::string, double> pooled;
+        /// Each number in the frames' measurements, summarized across the
+        /// frames that have it, keyed by its dotted path, e.g.
+        /// "signal_levels.luma.mean" or "blockiness". `count` tells how many
+        /// frames it covers. The frame `index` is not pooled.
+        std::map<std::string, statistics::Summary> pooled;
 
         StageRecord record;
 
@@ -149,10 +220,13 @@ namespace lossylab
         /// and "ssim_<c>" for each component.
         std::vector<std::map<std::string, double>> frames;
 
-        /// Pooled across frames: the mean, min and max of each value, as
-        /// "<name>_mean", "<name>_min" and "<name>_max". "psnr_mean" is the
-        /// mean of per-frame PSNR, which is the convention; it is not the PSNR
-        /// of the mean MSE, and the two disagree on clips with varying quality.
+        /// Pooled across frames: the mean, sample standard deviation (n - 1,
+        /// NaN for a single frame), median, min and max of each value, as
+        /// "<name>_mean", "<name>_std", "<name>_median", "<name>_min" and
+        /// "<name>_max". The median is NaN when any frame's value is NaN.
+        /// "psnr_mean" is the mean of per-frame PSNR, which is the convention;
+        /// it is not the PSNR of the mean MSE, and the two disagree on clips
+        /// with varying quality.
         std::map<std::string, double> pooled;
 
         StageRecord record;
