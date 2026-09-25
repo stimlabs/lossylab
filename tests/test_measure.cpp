@@ -373,12 +373,14 @@ namespace
         assert(luma_mean.std == 40.0);
     }
 
-    void test_pooled_std_needs_two_frames_and_the_median_of_an_even_count_is_the_midpoint()
+    void test_a_single_frame_has_nothing_to_pool()
     {
-        const MeasureResult single = measure({flat_frame(60)}, {Analyzer::SignalLevels});
-        assert(std::isnan(single.pooled.at("signal_levels.luma.mean").std));
-        assert(single.pooled.at("signal_levels.luma.mean").median == 60.0);
+        assert(measure(flat_frame(60), {Analyzer::SignalLevels}).pooled.empty());
+        assert(measure({flat_frame(60)}, {Analyzer::SignalLevels}).pooled.empty());
+    }
 
+    void test_the_pooled_median_of_an_even_count_is_the_midpoint()
+    {
         const MeasureResult pair = measure({flat_frame(60), flat_frame(100)}, {Analyzer::SignalLevels});
         assert(pair.pooled.at("signal_levels.luma.mean").median == 80.0);
     }
@@ -444,7 +446,8 @@ int main()
     test_frames_must_share_one_format();
     test_temporal_analyzers_are_not_implemented_yet();
     test_each_frame_is_measured_and_the_values_pooled();
-    test_pooled_std_needs_two_frames_and_the_median_of_an_even_count_is_the_midpoint();
+    test_a_single_frame_has_nothing_to_pool();
+    test_the_pooled_median_of_an_even_count_is_the_midpoint();
     test_only_measurements_are_pooled_and_only_over_the_frames_that_have_them();
     test_a_decoded_jpeg_measures_without_conversion();
     test_the_filters_per_frame_reports_stay_out_of_the_log();

@@ -14,7 +14,7 @@ options.strict = lossylab.Strict.AllowRecorded  # convert formats an analyzer ca
 analyzers = [lossylab.Analyzer.Blockiness, lossylab.Analyzer.Noise]  # more available, see table below
 result = lossylab.measure(decoded.frame, analyzers, options)
 result.frames[0].blockiness  # a float, or None when the analyzer did not run or found nothing
-result.pooled["blockiness"].mean  # summarized across frames
+result.pooled["blockiness"].mean  # summarized across frames; pooled is empty for a single frame
 ```
 
 - Pass one frame, or a list of frames with the same size, format and color.
@@ -25,7 +25,7 @@ result.pooled["blockiness"].mean  # summarized across frames
 ## Reading the result
 
 - **`frames[i]`:** one typed result per analyzer, listed in the table below. An analyzer that was not run leaves its result `None`.
-- **`pooled`:** every number in the frames' results, summarized across the frames that have it. It is a dict keyed by the dotted path of the field, such as `"signal_levels.luma.mean"` or `"blockiness"`, and each value is a `Summary` with `count`, `mean`, `std`, `median`, `minimum` and `maximum`. `std` is the sample standard deviation (n − 1), and NaN for a single frame. `count` is the number of frames the number covers, which is fewer than the frame count when some frames have no value. The frame `index` is not pooled. Report a mean together with its `std`.
+- **`pooled`:** every number in the frames' results, summarized across the frames that have it. It is a dict keyed by the dotted path of the field, such as `"signal_levels.luma.mean"` or `"blockiness"`, and each value is a `Summary` with `count`, `mean`, `std`, `median`, `minimum` and `maximum`. `std` is the sample standard deviation (n − 1). `count` is the number of frames the number covers, which is fewer than the frame count when some frames have no value. The frame `index` is not pooled. `pooled` is empty for a single frame, whose own values are in `frames[0]`. Report a mean together with its `std`.
 - **`record`:** how the numbers were produced. `params["measured_as"]` gives the format each analyzer measured, and `conversions` lists any conversion applied.
 - **`to_dict()`:** everything as plain dicts, ready to store as JSON.
 

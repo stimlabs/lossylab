@@ -779,6 +779,11 @@ namespace lossylab
 
         std::map<std::string, statistics::Summary> pool_measurements(const std::vector<FrameMeasurement>& frames)
         {
+            if (frames.size() < 2)
+            {
+                return {};
+            }
+
             NumberSeries series;
             for (const FrameMeasurement& frame : frames)
             {

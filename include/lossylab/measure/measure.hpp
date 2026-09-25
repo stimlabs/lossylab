@@ -175,7 +175,8 @@ namespace lossylab
         /// Each number in the frames' measurements, summarized across the
         /// frames that have it, keyed by its dotted path, e.g.
         /// "signal_levels.luma.mean" or "blockiness". `count` tells how many
-        /// frames it covers. The frame `index` is not pooled.
+        /// frames it covers. The frame `index` is not pooled. Empty for fewer
+        /// than two frames, where the frame's own values are all there is.
         std::map<std::string, statistics::Summary> pooled;
 
         StageRecord record;
