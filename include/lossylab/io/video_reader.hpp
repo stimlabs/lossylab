@@ -208,6 +208,9 @@ namespace lossylab
         /// selected frame.
         [[nodiscard]] const StageRecord& record() const noexcept;
 
+        /// The options of that read (see `FrameResult::configuration`).
+        [[nodiscard]] const json::Value& configuration() const noexcept;
+
     private:
         struct Impl;
 

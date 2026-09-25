@@ -70,15 +70,19 @@ namespace lossylab::pybind
         nb::class_<EncodedResult>(m, "EncodedResult")
             .def_prop_ro("bytes", [](const EncodedResult& self) { return to_bytes(self.bytes); })
             .def_ro("record", &EncodedResult::record)
+            .def_prop_ro("configuration", [](const EncodedResult& self) { return to_python(self.configuration); })
             .def("bits_per_pixel", &EncodedResult::bits_per_pixel);
 
         nb::class_<FramesResult>(m, "FramesResult")
             .def_ro("frames", &FramesResult::frames)
-            .def_ro("record", &FramesResult::record);
+            .def_ro("record", &FramesResult::record)
+            .def_prop_ro("configuration", [](const FramesResult& self) { return to_python(self.configuration); });
 
         nb::class_<EncodeToTargetResult>(m, "EncodeToTargetResult")
             .def_prop_ro("bytes", [](const EncodeToTargetResult& self) { return to_bytes(self.bytes); })
             .def_ro("record", &EncodeToTargetResult::record)
+            .def_prop_ro("configuration",
+                         [](const EncodeToTargetResult& self) { return to_python(self.configuration); })
             .def_ro("quality_parameter", &EncodeToTargetResult::quality_parameter)
             .def_ro("achieved", &EncodeToTargetResult::achieved)
             .def_ro("iterations", &EncodeToTargetResult::iterations)

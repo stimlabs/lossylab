@@ -30,7 +30,7 @@ def test_psnr_and_ssim_are_reported_per_frame_and_pooled():
     assert 0 < values["ssim"] <= 1
     assert result.pooled["psnr_mean"] == values["psnr"]
     assert result.record.kind == lossylab.StageKind.Compare
-    assert result.to_dict()["record"]["params"]["metrics"] == ["psnr", "ssim"]
+    assert result.configuration["metrics"] == ["psnr", "ssim"]
 
 
 def test_identical_frames_have_infinite_psnr():

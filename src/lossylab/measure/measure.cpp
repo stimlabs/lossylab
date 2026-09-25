@@ -870,6 +870,7 @@ namespace lossylab
             {"frames", json::to_array(frames)},
             {"pooled", pooled_summaries},
             {"record", record.to_json()},
+            {"configuration", configuration},
         });
     }
 
@@ -882,6 +883,7 @@ namespace lossylab
              })},
             {"pooled", json::to_object(pooled)},
             {"record", record.to_json()},
+            {"configuration", configuration},
         });
     }
 
@@ -902,6 +904,7 @@ namespace lossylab
             {"estimated_prior_parameter", json::optional_or_null(estimated_prior_parameter)},
             {"confidence", confidence},
             {"record", record.to_json()},
+            {"configuration", configuration},
         });
     }
 
@@ -966,6 +969,7 @@ namespace lossylab
 
         StageRecord& record = result.record;
         record.kind = StageKind::Measure;
+        record.modifies_state = false;
         record.implementation = "libavfilter";
         record.input = format;
         record.output = format;
@@ -1011,10 +1015,12 @@ namespace lossylab
         result.pooled = pool_measurements(result.frames);
 
         record.params = json::object({
-            {"analyzers", analyzer_names},
             {"frame_count", frames.size()},
-            {"methods", methods},
             {"measured_as", measured_as},
+        });
+        result.configuration = json::object({
+            {"analyzers", analyzer_names},
+            {"methods", methods},
             {"strict", to_string(options.strict)},
         });
         record.duration_ms = clock.duration_ms();
@@ -1103,6 +1109,7 @@ namespace lossylab
 
         StageRecord& record = result.record;
         record.kind = StageKind::Compare;
+        record.modifies_state = false;
         record.implementation = "libavfilter";
         record.input = format;
         record.output = format;
@@ -1135,9 +1142,11 @@ namespace lossylab
         pool_into(result.pooled, result.frames);
 
         record.params = json::object({
-            {"metrics", metric_names},
             {"frame_count", reference.size()},
             {"measured_as", measured_as},
+        });
+        result.configuration = json::object({
+            {"metrics", metric_names},
             {"strict", to_string(options.strict)},
         });
         record.duration_ms = clock.duration_ms();
@@ -1300,6 +1309,7 @@ namespace lossylab
         RecompressionCurve curve;
         StageRecord& record = curve.record;
         record.kind = StageKind::RecompressionCurve;
+        record.modifies_state = false;
         record.input = frame.describe();
         record.transform = CoordinateTransform::identity();
 
@@ -1404,18 +1414,20 @@ namespace lossylab
         }
 
         record.params = json::object({
+            {"alpha", frame.pixel_format().has_alpha() && !pixel_format.has_alpha() ? "dropped" : "kept"},
+            {"notch_depths", depths},
+            {"noise_scale", noise_scale},
+            {"pixel_format", pixel_format.name()},
+            {"color", color.to_json()},
+        });
+        curve.configuration = json::object({
             {"codec", to_string(options.codec)},
             {"metric", to_string(options.metric)},
             {"error", options.metric == Metric::Psnr ? error_key(options.metric, options.planes)
                                                      : "1 - " + error_key(options.metric, options.planes)},
             {"planes", to_string(options.planes)},
-            {"alpha", frame.pixel_format().has_alpha() && !pixel_format.has_alpha() ? "dropped" : "kept"},
             {"parameters", parameters},
             {"quality_scale", quality_scale},
-            {"notch_depths", depths},
-            {"noise_scale", noise_scale},
-            {"pixel_format", pixel_format.name()},
-            {"color", color.to_json()},
             {"encoder_options", json::to_object(options.encoder_options)},
         });
         record.duration_ms = clock.duration_ms();

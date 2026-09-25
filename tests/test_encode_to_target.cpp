@@ -63,7 +63,7 @@ namespace
         const json::Value& search = result.record.params.at("search");
         assert(search.at("attempts").size() == static_cast<std::size_t>(result.iterations));
         assert(search.at("converged").get<bool>());
-        assert(result.record.params.at("target").at("kind").get<std::string>() == "bpp");
+        assert(result.configuration.at("target").at("kind").get<std::string>() == "bpp");
         assert(result.record.encoder_settings.at("resolved").at("fixed_qscale").get<double>() ==
                result.quality_parameter);
     }

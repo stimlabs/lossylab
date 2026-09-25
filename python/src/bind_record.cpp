@@ -54,8 +54,25 @@ namespace lossylab::pybind
         nb::class_<ProcessingRecord>(m, "ProcessingRecord")
             .def(nb::init<>())
             .def(nb::init<std::string>(), "build_id"_a)
-            .def("append", &ProcessingRecord::append, "stage"_a)
+            .def(
+                "append",
+                [](ProcessingRecord& self, StageRecord stage, nb::object configuration)
+                {
+                    self.append(std::move(stage),
+                                configuration.is_none() ? json::Value::object() : to_json(configuration));
+                },
+                "stage"_a, "configuration"_a = nb::none())
             .def("stages", &ProcessingRecord::stages)
+            .def("configurations",
+                 [](const ProcessingRecord& self)
+                 {
+                     nb::list configurations;
+                     for (const json::Value& configuration : self.configurations())
+                     {
+                         configurations.append(to_python(configuration));
+                     }
+                     return configurations;
+                 })
             .def("empty", &ProcessingRecord::empty)
             .def("__len__", &ProcessingRecord::size)
             .def_prop_rw("build_id", &ProcessingRecord::build_id, &ProcessingRecord::set_build_id)
@@ -70,6 +87,9 @@ namespace lossylab::pybind
             .def_static("from_dict",
                         [](nb::dict value) { return ProcessingRecord::from_json(to_json(value)); });
 
-        nb::class_<FrameResult>(m, "FrameResult").def_rw("frame", &FrameResult::frame).def_rw("record", &FrameResult::record);
+        nb::class_<FrameResult>(m, "FrameResult")
+            .def_rw("frame", &FrameResult::frame)
+            .def_rw("record", &FrameResult::record)
+            .def_prop_ro("configuration", [](const FrameResult& self) { return to_python(self.configuration); });
     }
 }

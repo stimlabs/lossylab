@@ -76,6 +76,9 @@ namespace lossylab
         Frame frame;
         StageRecord record;
 
+        /// The options the decode ran with (see `FrameResult::configuration`).
+        json::Value configuration;
+
         /// The stream that was decoded; for a tile grid, its first tile's.
         [[nodiscard]] const StreamInfo& stream() const;
 
@@ -90,7 +93,7 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
     };
 
-    LOSSYLAB_REFLECT(DecodedImage, probe, frame, record);
+    LOSSYLAB_REFLECT(DecodedImage, probe, frame, record, configuration);
 
     /// Decodes a still image.
     ///

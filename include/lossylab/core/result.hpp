@@ -14,22 +14,30 @@ namespace lossylab
     /// choice, and an unrecorded transformation is the thing this library is
     /// built to prevent.
 
+    /// Each result also returns the options the operation ran with, as
+    /// `configuration`, kept apart from `record` because it is the same for
+    /// every file of a run. `ProcessingRecord::append(record, configuration)`
+    /// stores it once per stage.
+
     struct FrameResult
     {
         Frame frame;
         StageRecord record;
+        json::Value configuration;
     };
 
     struct FramesResult
     {
         std::vector<Frame> frames;
         StageRecord record;
+        json::Value configuration;
     };
 
     struct EncodedResult
     {
         std::vector<std::uint8_t> bytes;
         StageRecord record;
+        json::Value configuration;
 
         /// Bits per pixel achieved, from the coded size and frame geometry.
         [[nodiscard]] double bits_per_pixel() const noexcept;

@@ -42,6 +42,7 @@ namespace lossylab::pybind
             .def_ro("frames", &MeasureResult::frames)
             .def_ro("pooled", &MeasureResult::pooled)
             .def_ro("record", &MeasureResult::record)
+            .def_prop_ro("configuration", [](const MeasureResult& self) { return to_python(self.configuration); })
             .def("to_dict", [](const MeasureResult& self) { return to_python(self.to_json()); });
 
         m.def("measure",
@@ -58,6 +59,7 @@ namespace lossylab::pybind
             .def_ro("frames", &CompareResult::frames)
             .def_ro("pooled", &CompareResult::pooled)
             .def_ro("record", &CompareResult::record)
+            .def_prop_ro("configuration", [](const CompareResult& self) { return to_python(self.configuration); })
             .def("to_dict", [](const CompareResult& self) { return to_python(self.to_json()); });
 
         m.def("compare",

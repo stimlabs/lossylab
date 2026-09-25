@@ -288,9 +288,9 @@ namespace
 
         // 4:4:4 RGB to 4:2:0 shrinks chroma, so the downsampling kernel applies and
         // the record has to say which one actually ran.
-        assert(result.record.params.at("kernel_role").get<std::string>() ==
+        assert(result.configuration.at("kernel_role").get<std::string>() ==
               std::string("chroma_down"));
-        assert(result.record.params.at("kernel").at("kernel").get<std::string>() ==
+        assert(result.configuration.at("kernel").at("kernel").get<std::string>() ==
               std::string("lanczos"));
     }
 
@@ -381,7 +381,7 @@ namespace
         // Reporting only the endpoints would hide that anything happened, since
         // the frame comes back in the format it started in.
         assert(result.record.conversions.size() >= 2);
-        assert(result.record.params.at("intermediate_pix_fmt").get<std::string>() ==
+        assert(result.configuration.at("intermediate_pix_fmt").get<std::string>() ==
               std::string("yuv420p"));
     }
 
@@ -429,7 +429,7 @@ namespace
         // Not one sample may differ: this models a lost or misread tag, not a
         // conversion.
         assert(std::abs(plane_difference(yuv, result.frame) - 0.0) < 1e-12);
-        assert(!result.record.params.at("samples_modified").get<bool>());
+        assert(!result.configuration.at("samples_modified").get<bool>());
     }
 
     void test_reinterpret_records_every_field_it_relabeled()

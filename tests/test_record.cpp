@@ -300,10 +300,56 @@ namespace
         {
         }
     }
+
+    void test_configuration_is_kept_once_per_stage_beside_the_stages()
+    {
+        StageRecord analysis = resize_stage(64, 64, 64, 64);
+        analysis.kind = StageKind::Measure;
+        analysis.modifies_state = false;
+        analysis.params = json::object({{"measured_as", "gbrp"}});
+
+        ProcessingRecord record("build");
+        record.append(resize_stage(64, 64, 64, 64), json::object({{"kernel", "lanczos"}}));
+        record.append(analysis, json::object({{"strict", "refuse"}}));
+
+        assert(record.configurations().size() == record.stages().size());
+        assert(record.configurations()[0].at("kernel") == "lanczos");
+        assert(record.configurations()[1].at("strict") == "refuse");
+        assert(record.stages()[0].modifies_state);
+        assert(!record.stages()[1].modifies_state);
+
+        const json::Value document = record.to_json();
+        assert(document.at("configurations").size() == 2);
+        assert(!document.at("stages").at(1).contains("configuration"));
+        assert(document.at("stages").at(1).at("modifies_state") == false);
+
+        const ProcessingRecord parsed = ProcessingRecord::from_json(document);
+        assert(parsed.configurations()[1] == record.configurations()[1]);
+        assert(!parsed.stages()[1].modifies_state);
+        assert(parsed.to_json().dump() == document.dump());
+    }
+
+    void test_a_record_with_mismatched_configurations_is_refused()
+    {
+        ProcessingRecord record;
+        record.append(resize_stage(64, 64, 32, 32));
+        json::Value document = record.to_json();
+        document["configurations"] = json::Value::array();
+        try
+        {
+            static_cast<void>(ProcessingRecord::from_json(document));
+            assert(false && "expected throw");
+        }
+        catch (const ConfigError&)
+        {
+        }
+    }
 }
 
 int main()
 {
+    test_configuration_is_kept_once_per_stage_beside_the_stages();
+    test_a_record_with_mismatched_configurations_is_refused();
     test_an_empty_record_is_the_identity();
     test_transforms_compose_across_stages();
     test_an_output_crop_traces_back_to_the_source();

@@ -335,7 +335,7 @@ namespace
         assert(!history.recompression_curves.empty());
         for (const RecompressionCurve& curve : history.recompression_curves)
         {
-            assert(curve.record.params.at("codec").get<std::string>() == to_string(ImageCodec::Mjpeg));
+            assert(curve.configuration.at("codec").get<std::string>() == to_string(ImageCodec::Mjpeg));
         }
         const json::Value& skipped_after_jpeg = history.record.params.at("recompression").at("skipped_after_jpeg");
         if (capabilities().supports(ImageCodec::WebP))
@@ -547,7 +547,7 @@ namespace
         luma_only.planes = RecompressionPlanes::Luma;
         const RecompressionCurve from_gray = recompression_curve(gray, luma_only);
         assert(from_gray.record.output.pixel_format.name() == "yuvj444p");
-        assert(from_gray.record.params.at("error").get<std::string>() == "mse_y");
+        assert(from_gray.configuration.at("error").get<std::string>() == "mse_y");
 
         if (capabilities().supports(ImageCodec::WebP))
         {

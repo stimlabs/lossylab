@@ -585,6 +585,7 @@ namespace lossylab
         VideoReaderOptions options;
         StreamInfo stream;
         StageRecord record;
+        json::Value configuration;
     };
 
     VideoReader::VideoReader(const Source& source, const VideoReaderOptions& options)
@@ -819,15 +820,17 @@ namespace lossylab
             {"source", m_impl->source.describe()},
             {"codec", decoder_name},
             {"stream_index", stream_index},
+            {"tagged_color", stream_info.color.to_json()},
+            {"color_fully_tagged", stream_info.color_fully_tagged},
+            {"frames_decoded", decoded_count},
+            {"frames_selected", selected_count},
+        });
+        m_impl->configuration = json::object({
             {"selector", select.to_json()},
             {"thread_count", options.thread_count},
             {"export_qp_maps", options.export_qp_maps},
             {"export_motion_vectors", options.export_motion_vectors},
-            {"tagged_color", stream_info.color.to_json()},
-            {"color_fully_tagged", stream_info.color_fully_tagged},
             {"assumed_color", options.assumed_color.to_json()},
-            {"frames_decoded", decoded_count},
-            {"frames_selected", selected_count},
         });
         record.duration_ms = clock.duration_ms();
         record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
@@ -837,5 +840,10 @@ namespace lossylab
     const StageRecord& VideoReader::record() const noexcept
     {
         return m_impl->record;
+    }
+
+    const json::Value& VideoReader::configuration() const noexcept
+    {
+        return m_impl->configuration;
     }
 }

@@ -129,9 +129,17 @@ namespace lossylab
         /// The concrete implementation, e.g. "swscale", "zscale", "libx264".
         std::string implementation;
 
-        /// Parameters after defaults and randomization were resolved, never as
-        /// the caller passed them. Replaying these reproduces the stage.
+        /// Per-file evidence: values this stage resolved from the file it
+        /// processed (what was measured as, what was detected, which stream was
+        /// read). The options the stage ran with are not here; they are the
+        /// same for every file and live in `ProcessingRecord::configurations()`.
         json::Value params;
+
+        /// True when this stage's output is the input of the next stage, so
+        /// replaying the chain has to run it. False for a stage that only
+        /// analyzes: any conversion in its `conversions` was applied to a copy
+        /// the stage discarded.
+        bool modifies_state = true;
 
         FormatDescription input;
         FormatDescription output;
@@ -177,8 +185,9 @@ namespace lossylab
         static StageRecord from_json(const json::Value& value);
     };
 
-    LOSSYLAB_REFLECT(StageRecord, kind, implementation, params, input, output, conversions, transform, block_grid,
-                      frames, encoder_settings, achieved_bpp, seed, reproducible, duration_ms, ffmpeg_duration_ms);
+    LOSSYLAB_REFLECT(StageRecord, kind, implementation, params, modifies_state, input, output, conversions, transform,
+                      block_grid, frames, encoder_settings, achieved_bpp, seed, reproducible, duration_ms,
+                      ffmpeg_duration_ms);
 
     /// The processing history of a frame or clip: every stage, in order.
     ///
@@ -190,9 +199,19 @@ namespace lossylab
         ProcessingRecord() = default;
         explicit ProcessingRecord(std::string build_id);
 
-        void append(StageRecord stage);
+        /// Adds a stage together with the options it ran with (`Strict` mode,
+        /// kernels, thresholds, encoder options, after defaults and
+        /// randomization were resolved). The options are static for the whole
+        /// record: a run with other options, another build or other external
+        /// dependencies is a new record.
+        void append(StageRecord stage, json::Value configuration = json::Value::object());
 
         [[nodiscard]] const std::vector<StageRecord>& stages() const noexcept { return m_stages; }
+
+        /// The options of each stage, at the same position as in `stages()`.
+        /// Replaying stage `i` is `configurations()[i]` plus `stages()[i].params`,
+        /// applied to the output of every earlier stage that modifies state.
+        [[nodiscard]] const std::vector<json::Value>& configurations() const noexcept { return m_configurations; }
         [[nodiscard]] bool empty() const noexcept { return m_stages.empty(); }
         [[nodiscard]] std::size_t size() const noexcept { return m_stages.size(); }
 
@@ -242,5 +261,6 @@ namespace lossylab
         std::string m_build_id;
         std::optional<ProbeResult> m_origin;
         std::vector<StageRecord> m_stages;
+        std::vector<json::Value> m_configurations;
     };
 }

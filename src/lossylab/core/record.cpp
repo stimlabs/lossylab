@@ -157,6 +157,7 @@ namespace lossylab
             {"kind", to_string(kind)},
             {"implementation", implementation},
             {"params", params},
+            {"modifies_state", modifies_state},
             {"input", input.to_json()},
             {"output", output.to_json()},
             {"conversions", json::to_array(conversions)},
@@ -178,6 +179,7 @@ namespace lossylab
         record.kind = stage_kind_from_string(value.at("kind").get<std::string>());
         record.implementation = json::string_or(value, "implementation", "");
         record.params = json::member(value, "params");
+        record.modifies_state = json::bool_or(value, "modifies_state", true);
         record.input = FormatDescription::from_json(value.at("input"));
         record.output = FormatDescription::from_json(value.at("output"));
 
@@ -207,9 +209,10 @@ namespace lossylab
 
     ProcessingRecord::ProcessingRecord(std::string build_id) : m_build_id(std::move(build_id)) {}
 
-    void ProcessingRecord::append(StageRecord stage)
+    void ProcessingRecord::append(StageRecord stage, json::Value configuration)
     {
         m_stages.push_back(std::move(stage));
+        m_configurations.push_back(std::move(configuration));
     }
 
     void ProcessingRecord::set_build_id(std::string build_id)
@@ -316,6 +319,7 @@ namespace lossylab
             {"schema_version", schema_version},
             {"build_id", m_build_id},
             {"origin", m_origin.has_value() ? reflect::to_json(*m_origin) : json::Value()},
+            {"configurations", json::Value(m_configurations)},
             {"stages", json::to_array(m_stages)},
         });
     }
@@ -328,9 +332,16 @@ namespace lossylab
         {
             record.set_origin(ProbeResult::from_json(origin));
         }
-        for (StageRecord& stage : json::from_array<StageRecord>(value.at("stages")))
+        std::vector<StageRecord> stages = json::from_array<StageRecord>(value.at("stages"));
+        const json::Value& configurations = value.at("configurations");
+        if (configurations.size() != stages.size())
         {
-            record.append(std::move(stage));
+            throw ConfigError("processing record has " + std::to_string(stages.size()) + " stages but " +
+                              std::to_string(configurations.size()) + " configurations");
+        }
+        for (std::size_t i = 0; i < stages.size(); ++i)
+        {
+            record.append(std::move(stages[i]), configurations[i]);
         }
         return record;
     }

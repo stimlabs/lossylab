@@ -90,7 +90,7 @@ namespace
         assert(record.implementation == "h264");
         assert(record.transform.is_identity());
         assert(record.frames.size() == std::size_t{3});
-        assert(record.params.at("selector") == select.to_json());
+        assert(reader.configuration().at("selector") == select.to_json());
         assert(record.params.at("frames_selected") == 3);
         assert(record.input == record.output);
         assert(record.input.pixel_format == PixelFormat::from_name("yuv420p"));

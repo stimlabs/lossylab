@@ -408,7 +408,7 @@ namespace
 
         assert(result.record.kind == StageKind::Measure);
         assert(result.record.conversions.empty());
-        assert(result.record.params.at("analyzers").size() == 5);
+        assert(result.configuration.at("analyzers").size() == 5);
         const FrameMeasurement& measurement = result.frames.front();
         assert(measurement.signal_levels.has_value());
         assert(measurement.blockiness.has_value());

@@ -226,7 +226,8 @@ namespace lossylab
         output.copy_embedded_from(frame);
 
         record.output = output.describe();
-        record.params = json::object({
+        record.params = json::Value::object();
+        json::Value configuration = json::object({
             {"pix_fmt", options.pixel_format.name()},
             {"color", options.color.to_json()},
             {"kernel", kernel.to_json()},
@@ -239,7 +240,7 @@ namespace lossylab
         record.duration_ms = clock.duration_ms();
         record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
 
-        return FrameResult{std::move(output), std::move(record)};
+        return FrameResult{std::move(output), std::move(record), std::move(configuration)};
     }
 
     FrameResult convert(const Frame& frame, const PixelFormat pixel_format,
@@ -312,7 +313,8 @@ namespace lossylab
         record.conversions.insert(record.conversions.end(), back.record.conversions.begin(),
                                   back.record.conversions.end());
 
-        record.params = json::object({
+        record.params = json::Value::object();
+        json::Value configuration = json::object({
             {"subsampling", to_string(options.subsampling)},
             {"intermediate_pix_fmt", intermediate.name()},
             {"color", options.color.to_json()},
@@ -324,7 +326,7 @@ namespace lossylab
         record.duration_ms = clock.duration_ms();
         record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
 
-        return FrameResult{std::move(back.frame), std::move(record)};
+        return FrameResult{std::move(back.frame), std::move(record), std::move(configuration)};
     }
 
     FrameResult reinterpret(const Frame& frame, const ColorSpec& as_color)
@@ -375,11 +377,12 @@ namespace lossylab
         }
 
         record.output = output.describe();
-        record.params = json::object({
+        record.params = json::Value::object();
+        json::Value configuration = json::object({
             {"as_color", as_color.to_json()},
             {"samples_modified", false},
         });
 
-        return FrameResult{std::move(output), std::move(record)};
+        return FrameResult{std::move(output), std::move(record), std::move(configuration)};
     }
 }

@@ -1378,7 +1378,7 @@ namespace lossylab
         }
 
         void add_recompression(const Frame& frame, const CompressionHistoryOptions& options,
-                               CompressionHistory& history, json::Value& params)
+                               CompressionHistory& history, json::Value& params, json::Value& configuration)
         {
             json::Value skipped = json::Value::array();
             json::Value skipped_after_jpeg = json::Value::array();
@@ -1449,8 +1449,8 @@ namespace lossylab
                     std::optional<double> quality = deepest_notch(coarse);
                     const double confidence = coarse.confidence;
                     const PixelFormat encoded_as = coarse.record.output.pixel_format;
-                    const std::string quality_scale = coarse.record.params.at("quality_scale").is_string()
-                                                          ? coarse.record.params.at("quality_scale").get<std::string>()
+                    const std::string quality_scale = coarse.configuration.at("quality_scale").is_string()
+                                                          ? coarse.configuration.at("quality_scale").get<std::string>()
                                                           : std::string();
 
                     // A notch is never at either end, so it has two coarse
@@ -1500,15 +1500,17 @@ namespace lossylab
                 }
             }
 
-            params["recompression"] = json::object({
+            configuration["recompression"] = json::object({
                 {"codecs", json::to_array(options.recompression_codecs,
                                           [](const ImageCodec codec) { return to_string(codec); })},
-                {"crop", crop},
                 {"planes", "luma, or all for JPEG XL and JPEG 2000 in RGB"},
                 {"min_refine_confidence", refine_confidence},
                 {"min_trace_pixels", min_recompression_trace_pixels},
                 {"skipped", skipped},
                 {"min_jpeg_only_grid_score", min_jpeg_only_grid_score},
+            });
+            params["recompression"] = json::object({
+                {"crop", crop},
                 {"skipped_after_jpeg", skipped_after_jpeg},
                 {"skipped_for_chroma", skipped_for_chroma},
                 {"errors", errors},
@@ -1672,7 +1674,7 @@ namespace lossylab
             {
                 return unused("its orientation was applied");
             }
-            if (decode_params.contains("converted"))
+            if (image.configuration.contains("converted"))
             {
                 return unused("it was converted on decode");
             }
@@ -1846,6 +1848,9 @@ namespace lossylab
                 {"jpeg_tables", header.evidence.has_value() ? "header" : "pixels"},
                 {"jpeg_header_unused", header.evidence.has_value() ? json::Value() : json::Value(header.unused_because)},
                 {"jpeg_pixel_check", pixel_check},
+                {"jpeg_quantization", json::object({{"luma_grid_scores", luma_grid_scores}})},
+            });
+            json::Value configuration = json::object({
                 {"jpeg_quantization", json::object({
                                           {"dct", "8x8 orthonormal DCT-II of YCbCr - 128, as JPEG's"},
                                           {"grid_score", "mean of the 5 best AC lattice fits, each less two "
@@ -1863,7 +1868,6 @@ namespace lossylab
                                           {"min_determined_steps", min_determined_steps},
                                           {"min_tie_breaking_match", min_tie_breaking_match},
                                           {"min_quality_match", min_quality_match},
-                                          {"luma_grid_scores", luma_grid_scores},
                                       })},
                 {"chroma_subsampling", json::object({
                                            {"upsamplings", json::array({"triangle", "replicate"})},
@@ -1876,8 +1880,10 @@ namespace lossylab
                                        })},
                 {"min_confidence", options.min_confidence},
             });
-            add_recompression(frame, options, history, params);
+            add_recompression(frame, options, history, params, configuration);
             record.params = std::move(params);
+            history.configuration = std::move(configuration);
+            record.modifies_state = false;
 
             std::stable_sort(history.traces.begin(), history.traces.end(),
                              [](const CompressionTrace& left, const CompressionTrace& right)
@@ -1988,6 +1994,7 @@ namespace lossylab
             {"chroma", json::optional_or_null(chroma)},
             {"recompression_curves", json::to_array(recompression_curves)},
             {"record", record.to_json()},
+            {"configuration", configuration},
         });
     }
 

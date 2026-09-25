@@ -293,6 +293,7 @@ namespace lossylab
     {
         std::vector<std::uint8_t> bytes;
         StageRecord record;
+        json::Value configuration;
 
         /// The quality parameter the search settled on.
         double quality_parameter = 0.0;

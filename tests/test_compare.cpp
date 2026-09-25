@@ -176,7 +176,7 @@ namespace
     {
         const json::Value document = compare(flat_frame(100), flat_frame(104), {Metric::Psnr}).to_json();
         assert(document.contains("record"));
-        assert(document.at("record").at("params").at("metrics").at(0).get<std::string>() == "psnr");
+        assert(document.at("configuration").at("metrics").at(0).get<std::string>() == "psnr");
         assert(document.at("pooled").contains("psnr_mean"));
     }
 }

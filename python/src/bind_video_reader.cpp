@@ -44,6 +44,7 @@ namespace lossylab::pybind
             .def("for_each", &VideoReader::for_each, "select"_a, "callback"_a,
                  nb::call_guard<nb::gil_scoped_release>(),
                  "The callback runs with the GIL held, once per selected frame, and returns False to stop.")
-            .def("record", &VideoReader::record, nb::rv_policy::reference_internal);
+            .def("record", &VideoReader::record, nb::rv_policy::reference_internal)
+            .def("configuration", [](const VideoReader& self) { return to_python(self.configuration()); });
     }
 }

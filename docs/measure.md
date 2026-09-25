@@ -27,6 +27,7 @@ result.pooled["blockiness"].mean  # summarized across frames; pooled is empty fo
 - **`frames[i]`:** one typed result per analyzer, listed in the table below. An analyzer that was not run leaves its result `None`.
 - **`pooled`:** every number in the frames' results, summarized across the frames that have it. It is a dict keyed by the dotted path of the field, such as `"signal_levels.luma.mean"` or `"blockiness"`, and each value is a `Summary` with `count`, `mean`, `std`, `median`, `minimum` and `maximum`. `std` is the sample standard deviation (n − 1). `count` is the number of frames the number covers, which is fewer than the frame count when some frames have no value. The frame `index` is not pooled. `pooled` is empty for a single frame, whose own values are in `frames[0]`. Report a mean together with its `std`.
 - **`record`:** how the numbers were produced. `params["measured_as"]` gives the format each analyzer measured, and `conversions` lists any conversion applied.
+- **`configuration`:** the options the run used (analyzers, methods, `Strict` mode), the same for every file. See [output.md](output.md).
 - **`to_dict()`:** everything as plain dicts, ready to store as JSON.
 
 A value can be `None` or NaN when there is nothing to measure: a frame without edges has `blurriness` `None`, while a frame without content has `blockiness` NaN. A NaN also reaches `pooled`, where it makes the mean, `std`, `median`, `minimum` and `maximum` NaN. Check for both before using a value.
@@ -121,4 +122,4 @@ On six test images, a Gaussian blur of radius 1.5 raised blurriness by 2.5–3.5
 **Comparing:**
 - Compare sources with similar content. Portraits and screenshots differ by nature.
 - Pool per source, then compare classes, so one big source doesn't dominate.
-- Merge runs only when `schema_version` and `record.params["methods"]` match. Store the full `to_dict()`.
+- Merge runs only when `schema_version` and `configuration["methods"]` match. Store the full `to_dict()`.

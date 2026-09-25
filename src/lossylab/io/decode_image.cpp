@@ -609,7 +609,7 @@ namespace lossylab
     {
         ProcessingRecord history(build_info().build_id);
         history.set_origin(probe);
-        history.append(record);
+        history.append(record, configuration);
         return history;
     }
 
@@ -619,6 +619,7 @@ namespace lossylab
             {"probe", probe.to_json()},
             {"frame", frame.describe().to_json()},
             {"record", record.to_json()},
+            {"configuration", configuration},
         });
     }
 
@@ -700,8 +701,10 @@ namespace lossylab
             {"source", source.describe()},
             {"stream_index", decoded.stream_index},
             {"tile_grid_id", json::optional_or_null(decoded.tile_grid_id)},
-            {"assumed_color", options.assumed_color.to_json()},
             {"orientation_handling", orientation_handling},
+        });
+        json::Value configuration = json::object({
+            {"assumed_color", options.assumed_color.to_json()},
         });
 
         // An explicit target means one conversion, run through the same code
@@ -720,14 +723,15 @@ namespace lossylab
                                       converted.record.conversions.begin(),
                                       converted.record.conversions.end());
             record.output = converted.frame.describe();
-            record.params["converted"] = converted.record.params;
+            configuration["converted"] = converted.configuration;
             record.duration_ms = clock.duration_ms();
             record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
-            return DecodedImage{std::move(probed), std::move(converted.frame), std::move(record)};
+            return DecodedImage{std::move(probed), std::move(converted.frame), std::move(record),
+                                std::move(configuration)};
         }
 
         record.duration_ms = clock.duration_ms();
         record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
-        return DecodedImage{std::move(probed), std::move(frame), std::move(record)};
+        return DecodedImage{std::move(probed), std::move(frame), std::move(record), std::move(configuration)};
     }
 }

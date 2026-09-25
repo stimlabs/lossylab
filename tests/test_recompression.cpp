@@ -87,7 +87,7 @@ namespace
         options.metric = Metric::Ssim;
         const RecompressionCurve curve = recompression_curve(compressed_once(6), options);
         assert(curve.estimated_prior_parameter == 6.0);
-        assert(curve.record.params.at("error").get<std::string>() == "1 - ssim");
+        assert(curve.configuration.at("error").get<std::string>() == "1 - ssim");
     }
 
     void test_the_sweep_is_sorted_and_recorded()
@@ -103,7 +103,7 @@ namespace
         assert(record.kind == StageKind::RecompressionCurve);
         assert(record.implementation == "mjpeg+mjpeg");
         assert(record.params.at("notch_depths").size() == 3);
-        assert(record.params.at("quality_scale").get<std::string>().starts_with("qscale"));
+        assert(curve.configuration.at("quality_scale").get<std::string>().starts_with("qscale"));
         assert(curve.to_json().contains("record"));
 
         // Duplicates collapse, which can leave too few points.

@@ -181,6 +181,9 @@ namespace lossylab
 
         StageRecord record;
 
+        /// The options the measurement ran with (see `FrameResult::configuration`).
+        json::Value configuration;
+
         [[nodiscard]] json::Value to_json() const;
     };
 
@@ -231,6 +234,9 @@ namespace lossylab
         std::map<std::string, double> pooled;
 
         StageRecord record;
+
+        /// The options the comparison ran with (see `FrameResult::configuration`).
+        json::Value configuration;
 
         [[nodiscard]] json::Value to_json() const;
     };
@@ -306,10 +312,13 @@ namespace lossylab
 
         StageRecord record;
 
+        /// The options the sweep ran with (see `FrameResult::configuration`).
+        json::Value configuration;
+
         [[nodiscard]] json::Value to_json() const;
     };
 
-    LOSSYLAB_REFLECT(RecompressionCurve, points, estimated_prior_parameter, confidence, record);
+    LOSSYLAB_REFLECT(RecompressionCurve, points, estimated_prior_parameter, confidence, record, configuration);
 
     /// Which planes a recompression point's error covers.
     enum class RecompressionPlanes

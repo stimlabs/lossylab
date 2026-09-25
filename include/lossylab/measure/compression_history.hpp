@@ -314,10 +314,14 @@ namespace lossylab
 
         StageRecord record;
 
+        /// The options and thresholds the analysis ran with (see `FrameResult::configuration`).
+        json::Value configuration;
+
         [[nodiscard]] json::Value to_json() const;
     };
 
-    LOSSYLAB_REFLECT(CompressionHistory, traces, jpeg, jpeg_pixel_check, chroma, recompression_curves, record);
+    LOSSYLAB_REFLECT(CompressionHistory, traces, jpeg, jpeg_pixel_check, chroma, recompression_curves, record,
+                     configuration);
 
     /// Looks for every trace of earlier lossy compression in a decoded still
     /// image: which codec, roughly what quality, and which chroma

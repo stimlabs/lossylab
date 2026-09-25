@@ -527,6 +527,14 @@ namespace lossylab
             return record;
         }
 
+        json::Value roundtrip_configuration(const json::Value& encoded, const json::Value& decoded)
+        {
+            return json::object({
+                {"encode", encoded},
+                {"decode", decoded},
+            });
+        }
+
         /// Decodes an encoded image, assuming the encoded color for whatever
         /// the file leaves untagged.
         FrameResult decode_encoded(const EncodedResult& encoded, const DecodeSpec& decode_spec)
@@ -538,7 +546,7 @@ namespace lossylab
             options.strict = decode_spec.strict;
             const std::string extension = encoded.record.params.at("extension").get<std::string>();
             DecodedImage decoded = decode_image(Source::from_memory(encoded.bytes, extension), options);
-            return FrameResult{std::move(decoded.frame), std::move(decoded.record)};
+            return FrameResult{std::move(decoded.frame), std::move(decoded.record), std::move(decoded.configuration)};
         }
 
         /// Decodes an encoded clip, which must give back `frame_count` frames.
@@ -572,6 +580,7 @@ namespace lossylab
                 result.frames.push_back(std::move(frame.frame));
             }
             result.record = reader.record();
+            result.configuration = reader.configuration();
             return result;
         }
     }
@@ -629,14 +638,16 @@ namespace lossylab
         record.encoder_settings["gop"] = options.gop.to_json();
         record.achieved_bpp = bits_per_pixel(bytes.size(), record.output, encoded_frames.size());
         record.params = json::object({
-            {"codec", to_string(options.codec)},
-            {"backend", to_string(options.backend)},
             {"container", plan.muxer},
             {"extension", plan.extension},
             {"frame_count", encoded_frames.size()},
+            {"color", first.color().to_json()},
+        });
+        json::Value configuration = json::object({
+            {"codec", to_string(options.codec)},
+            {"backend", to_string(options.backend)},
             {"frame_rate", options.frame_rate.to_json()},
             {"pixel_format", options.pixel_format.name()},
-            {"color", first.color().to_json()},
             {"rate_control", options.rate_control.to_json()},
             {"gop", options.gop.to_json()},
             {"encoder_options", json::to_object(options.encoder_options)},
@@ -645,7 +656,7 @@ namespace lossylab
         });
         record.duration_ms = clock.duration_ms();
         record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
-        return EncodedResult{std::move(bytes), std::move(record)};
+        return EncodedResult{std::move(bytes), std::move(record), std::move(configuration)};
     }
 
     EncodedResult encode_image(const Frame& frame, const EncodeImageOptions& options)
@@ -702,11 +713,13 @@ namespace lossylab
         record.encoder_settings["lossless"] = options.lossless;
         record.achieved_bpp = bits_per_pixel(bytes.size(), record.output, 1);
         record.params = json::object({
-            {"codec", to_string(options.codec)},
             {"container", plan.muxer.empty() ? json::Value() : json::Value(plan.muxer)},
             {"extension", plan.extension},
-            {"pixel_format", options.pixel_format.name()},
             {"color", encoded_frame.color().to_json()},
+        });
+        json::Value configuration = json::object({
+            {"codec", to_string(options.codec)},
+            {"pixel_format", options.pixel_format.name()},
             {"lossless", options.lossless},
             {"rate_control", rate_control},
             {"encoder_options", json::to_object(options.encoder_options)},
@@ -715,7 +728,7 @@ namespace lossylab
         });
         record.duration_ms = clock.duration_ms();
         record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
-        return EncodedResult{std::move(bytes), std::move(record)};
+        return EncodedResult{std::move(bytes), std::move(record), std::move(configuration)};
     }
 
     FramesResult roundtrip(const std::vector<Frame>& frames,
@@ -730,6 +743,7 @@ namespace lossylab
         const EncodedResult encoded = encode_video(frames, encode_spec);
         FramesResult decoded = decode_encoded(encoded, decode_spec, frames.size());
         decoded.record = roundtrip_record(encoded.record, decoded.record);
+        decoded.configuration = roundtrip_configuration(encoded.configuration, decoded.configuration);
         return decoded;
     }
 
@@ -744,6 +758,7 @@ namespace lossylab
         const EncodedResult encoded = encode_image(frame, encode_spec);
         FrameResult decoded = decode_encoded(encoded, decode_spec);
         decoded.record = roundtrip_record(encoded.record, decoded.record);
+        decoded.configuration = roundtrip_configuration(encoded.configuration, decoded.configuration);
         return decoded;
     }
 
@@ -814,6 +829,7 @@ namespace lossylab
                     closest_distance = distance;
                     result.bytes = std::move(encoded.bytes);
                     result.record = std::move(encoded.record);
+                    result.configuration = std::move(encoded.configuration);
                     result.quality_parameter = parameter;
                     result.achieved = achieved;
                 }
@@ -825,9 +841,11 @@ namespace lossylab
                 (achieved < target.value ? low : high) = position;
             }
 
-            result.record.params["target"] = target.to_json();
-            result.record.params["search"] = json::object({
+            result.configuration["target"] = target.to_json();
+            result.configuration["search"] = json::object({
                 {"method", "bisection over the encoder's quality range, from its worst quality to its best"},
+            });
+            result.record.params["search"] = json::object({
                 {"attempts", attempts},
                 {"converged", result.converged},
             });

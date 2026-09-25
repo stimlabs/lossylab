@@ -29,6 +29,7 @@ namespace lossylab::pybind
         {
             std::vector<VideoFrame> frames;
             StageRecord record;
+            json::Value configuration;
         };
 
         template <typename T>
@@ -72,7 +73,9 @@ namespace lossylab::pybind
 
         nb::class_<VideoFramesResult>(m, "VideoFramesResult")
             .def_ro("frames", &VideoFramesResult::frames)
-            .def_ro("record", &VideoFramesResult::record);
+            .def_ro("record", &VideoFramesResult::record)
+            .def_prop_ro("configuration",
+                         [](const VideoFramesResult& self) { return to_python(self.configuration); });
         bind_file_result<VideoFramesResult>(m, "VideoFramesFileResult");
         bind_file_result<MeasureResult>(m, "MeasureFileResult")
             .def("to_dict", [](const FileResult<MeasureResult>& self) { return to_python(self.to_json()); });
@@ -106,7 +109,7 @@ namespace lossylab::pybind
                                {
                                    VideoReader reader(source, options);
                                    std::vector<VideoFrame> frames = reader.frames(select);
-                                   return VideoFramesResult{std::move(frames), reader.record()};
+                                   return VideoFramesResult{std::move(frames), reader.record(), reader.configuration()};
                                });
             },
             "source"_a, "select"_a, "options"_a = VideoReaderOptions{}, nb::call_guard<nb::gil_scoped_release>(),

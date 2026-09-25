@@ -1,15 +1,20 @@
 """Pilot audit: probe every file under a directory, and decode, measure and trace the compression history of the still
 images among them.
 
-Writes one JSON line per file to the output file. Each line has the file's "path", its "group", and, per stage that
-ran, an entry of the form {"ok": ..., "value" or "error": ..., "log": [...]}, where "log" is what FFmpeg logged during
-that stage:
-  - probe: container, streams, color, JPEG markers, ICC profile, encoder fingerprints
-  - decode: the decode's record (still images only); the image is decoded as the file tags its color
-  - measure: signal levels, blockiness, blurriness, noise, letterbox
-  - compression_history: traces of earlier lossy compression (compression_history() with its defaults): JPEG
-    quantization tables, from a JPEG file's header or read off the pixels of any other file, with the libjpeg quality
-    and chroma subsampling they imply; chroma upsampled from 4:2:0, 4:2:2 or 4:4:0; and a WebP recompression curve
+Writes one JSON line per file to the output file. Each line has the file's "path" and its "group", and:
+  - "probe": the probe's outcome as {"ok": ..., "value" or "error": ..., "log": [...]}, where "log" is what FFmpeg
+    logged. Present when the file has no "record" (the probe failed, the file is not a still image, or its decode
+    failed); otherwise the probe is the record's "origin".
+  - "record": for a still image that decoded, its ProcessingRecord, holding the stages that succeeded, in order:
+      - decode: the image is decoded as the file tags its color
+      - measure: signal levels, blockiness, blurriness, noise, letterbox
+      - compression_history: traces of earlier lossy compression (compression_history() with its defaults): JPEG
+        quantization tables, from a JPEG file's header or read off the pixels of any other file, with the libjpeg
+        quality and chroma subsampling they imply; chroma upsampled from 4:2:0, 4:2:2 or 4:4:0; and a WebP
+        recompression curve
+    The record's "configurations" hold the options each stage ran with, once per stage.
+  - "error": present when a stage failed, as {"stage": ..., "error": ..., "log": [...]}. The stages after it did not
+    run, so "record" holds only what came before it, and is absent when the decode itself failed.
 
 Run as:
 
@@ -61,8 +66,6 @@ from pathlib import Path
 import lossylab
 
 logger = logging.getLogger("pilot_audit")
-
-STAGES = ("probe", "decode", "measure", "compression_history")
 
 ANALYZERS = [
     lossylab.Analyzer.SignalLevels,
@@ -197,14 +200,15 @@ def select_files(
 
 
 def audit_file(path: Path, group: str) -> dict:
-    """The probe of one file and, for a still image, its decode, measurement and compression history."""
+    """The probe of one file and, for a still image, the record of its decode, measurement and compression history."""
     source = lossylab.Source.from_path(str(path))
     line: dict = {"path": str(path), "group": group}
 
     probe_result = lossylab.capture_probe(source)
-    line["probe"] = probe_result.to_dict()
     if probe_result and is_still_image(probe_result.value()):
         audit_still_image(source, line)
+    if "record" not in line:
+        line["probe"] = probe_result.to_dict()
     return line
 
 
@@ -221,49 +225,68 @@ def is_still_image(probe: lossylab.ProbeResult) -> bool:
 
 
 def audit_still_image(source: lossylab.Source, line: dict) -> None:
-    """Adds the decode, measurement and compression history of a still image to its line."""
+    """Adds the record of a still image's decode, measurement and compression history to its line, and the error of
+    the first stage that failed."""
     decode_result = lossylab.capture_decode_image(source)
-    line["decode"] = decode_result_to_dict(decode_result)
     if not decode_result:
+        line["error"] = stage_error("decode", decode_result)
         return
     decoded_image = decode_result.value()
+    processing_record = decoded_image.processing_record()
 
     measure_options = lossylab.MeasureOptions()
     measure_options.strict = lossylab.Strict.AllowRecorded
-    measure_result = lossylab.capture_measure(source, [decoded_image.frame], ANALYZERS, measure_options)
-    line["measure"] = measure_result.to_dict()
+    later_stages = (
+        ("measure", lambda: lossylab.capture_measure(source, [decoded_image.frame], ANALYZERS, measure_options)),
+        ("compression_history", lambda: lossylab.capture_compression_history(source, decoded_image)),
+    )
+    for stage_name, run_stage in later_stages:
+        stage_result = run_stage()
+        if not stage_result:
+            line["error"] = stage_error(stage_name, stage_result)
+            break
+        processing_record.append(stage_result.value().record, stage_result.value().configuration)
+    line["record"] = processing_record.to_dict()
 
-    compression_history_result = lossylab.capture_compression_history(source, decoded_image)
-    line["compression_history"] = compression_history_result.to_dict()
 
-
-def decode_result_to_dict(decode_result: lossylab.DecodeImageFileResult) -> dict:
-    """A decode's outcome in the shape of FileResult.to_dict(), with the decode's record as its value."""
-    if decode_result:
-        entry = {"ok": True, "value": decode_result.value().record.to_dict()}
-    else:
-        entry = {"ok": False, "error": decode_result.error().to_dict()}
-    entry["log"] = [message.to_dict() for message in decode_result.log()]
-    return entry
+def stage_error(stage_name: str, failed_result) -> dict:
+    """A failed stage's FileError and FFmpeg log, named by the stage."""
+    return {
+        "stage": stage_name,
+        "error": failed_result.error().to_dict(),
+        "log": [message.to_dict() for message in failed_result.log()],
+    }
 
 
 def outcomes(line: dict) -> list[str]:
-    """One label per stage that ran, such as "probe: ok" or "decode: FFmpeg"."""
+    """One label per stage that ran, such as "probe: ok" or "measure: FFmpeg"."""
     labels = []
-    for stage in STAGES:
-        if stage in line:
-            entry = line[stage]
-            labels.append(f"{stage}: " + ("ok" if entry["ok"] else entry["error"]["kind"]))
+    if "record" in line:
+        labels.append("probe: ok")
+        labels.extend(f"{stage['kind']}: ok" for stage in line["record"]["stages"])
+    elif "probe" in line:
+        probe_entry = line["probe"]
+        labels.append("probe: " + ("ok" if probe_entry["ok"] else probe_entry["error"]["kind"]))
+    if "error" in line:
+        labels.append(f"{line['error']['stage']}: {line['error']['error']['kind']}")
     return labels
 
 
 def log_failures(line: dict) -> None:
-    for stage in STAGES:
-        entry = line.get(stage)
-        if entry is not None and not entry["ok"]:
-            logger.warning(
-                "%s: %s failed (%s): %s", line["path"], stage, entry["error"]["kind"], entry["error"]["message"]
-            )
+    probe_entry = line.get("probe")
+    if probe_entry is not None and not probe_entry["ok"]:
+        logger.warning(
+            "%s: probe failed (%s): %s", line["path"], probe_entry["error"]["kind"], probe_entry["error"]["message"]
+        )
+    failure = line.get("error")
+    if failure is not None:
+        logger.warning(
+            "%s: %s failed (%s): %s",
+            line["path"],
+            failure["stage"],
+            failure["error"]["kind"],
+            failure["error"]["message"],
+        )
 
 
 def positive_int(text: str) -> int:
