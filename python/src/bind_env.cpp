@@ -33,11 +33,22 @@ namespace lossylab::pybind
             .def("to_string", &LibraryVersion::to_string)
             .def("matches_compiled", &LibraryVersion::matches_compiled);
 
-        bind_reflected<BuildInfo>(m, "BuildInfo")
-            .def("is_consistent", &BuildInfo::is_consistent)
-            .def("has_external_library", &BuildInfo::has_external_library, "name"_a);
+        bind_reflected<LossylabBuild>(m, "LossylabBuild");
+
+        bind_reflected<FfmpegBuild>(m, "FfmpegBuild").def("is_consistent", &FfmpegBuild::is_consistent);
+
+        bind_reflected<BuildInfo>(m, "BuildInfo");
 
         m.def("build_info", &build_info, nb::rv_policy::reference);
+
+        bind_reflected<Diagnostics>(m, "Diagnostics");
+
+        m.def("diagnostics", &diagnostics, nb::rv_policy::reference);
+
+        m.def(
+            "build_diff", [](nb::dict a, nb::dict b) { return to_python(build_diff(to_json(a), to_json(b))); },
+            "a"_a, "b"_a,
+            "Every leaf that differs between two builds' to_dict(), keyed by its dotted path, as [in_a, in_b].");
 
         // ---- capabilities.hpp --------------------------------------------------
         bind_reflected<OptionSchema>(m, "OptionSchema");

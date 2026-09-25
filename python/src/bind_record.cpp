@@ -53,7 +53,7 @@ namespace lossylab::pybind
 
         nb::class_<ProcessingRecord>(m, "ProcessingRecord")
             .def(nb::init<>())
-            .def(nb::init<std::string>(), "build_id"_a)
+            .def_static("for_this_build", &ProcessingRecord::for_this_build)
             .def(
                 "append",
                 [](ProcessingRecord& self, StageRecord stage, nb::object configuration)
@@ -75,7 +75,8 @@ namespace lossylab::pybind
                  })
             .def("empty", &ProcessingRecord::empty)
             .def("__len__", &ProcessingRecord::size)
-            .def_prop_rw("build_id", &ProcessingRecord::build_id, &ProcessingRecord::set_build_id)
+            .def_prop_ro("build", [](const ProcessingRecord& self) { return to_python(self.build()); })
+            .def_prop_ro("diagnostics", [](const ProcessingRecord& self) { return to_python(self.diagnostics()); })
             .def_prop_rw("origin", &ProcessingRecord::origin, &ProcessingRecord::set_origin, nb::arg("origin").none())
             .def("end_to_end_transform", &ProcessingRecord::end_to_end_transform)
             .def("effective_block_grid", &ProcessingRecord::effective_block_grid)

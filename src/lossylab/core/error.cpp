@@ -8,9 +8,9 @@ namespace lossylab
     {
         std::string unsupported_message(const std::string& kind,
                                         const std::string& name,
-                                        const std::string& build_id)
+                                        const std::string& identity_hash)
         {
-            return kind + " '" + name + "' is not available in this FFmpeg build (" + build_id + ")";
+            return kind + " '" + name + "' is not available in this FFmpeg build (" + identity_hash + ")";
         }
 
         std::string refused_message(const std::string& from,
@@ -24,11 +24,11 @@ namespace lossylab
 
     UnsupportedCapability::UnsupportedCapability(std::string kind,
                                                  std::string name,
-                                                 std::string build_id)
-        : Error(unsupported_message(kind, name, build_id)),
+                                                 std::string identity_hash)
+        : Error(unsupported_message(kind, name, identity_hash)),
           m_kind(std::move(kind)),
           m_name(std::move(name)),
-          m_build_id(std::move(build_id))
+          m_identity_hash(std::move(identity_hash))
     {
     }
 

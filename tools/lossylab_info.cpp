@@ -31,11 +31,17 @@ namespace
 
     void print_build()
     {
-        const BuildInfo& info = build_info();
+        const BuildInfo& build = build_info();
+        const FfmpegBuild& info = build.ffmpeg;
 
         print_heading("Build");
-        std::cout << std::left << std::setw(label_width) << "  FFmpeg" << info.version << '\n'
-                  << std::setw(label_width) << "  build id" << info.build_id << '\n'
+        std::cout << std::left << std::setw(label_width) << "  lossylab" << build.lossylab.commit
+                  << (build.lossylab.dirty ? " (modified)" : "") << '\n'
+                  << std::setw(label_width) << "  compiler" << build.lossylab.compiler << ' '
+                  << build.lossylab.build_type << '\n'
+                  << std::setw(label_width) << "  FFmpeg" << info.version << '\n'
+                  << std::setw(label_width) << "  configure" << info.configure_hash << '\n'
+                  << std::setw(label_width) << "  identity" << build.identity_hash << '\n'
                   << std::setw(label_width) << "  license" << to_string(info.license);
         if (!permits_proprietary_distribution(info.license))
         {
@@ -60,16 +66,6 @@ namespace
                           << library.compiled_minor << '.' << library.compiled_micro;
             }
             std::cout << '\n';
-        }
-
-        print_heading("External libraries");
-        if (info.external_libraries.empty())
-        {
-            std::cout << "  (none)\n";
-        }
-        for (const std::string& name : info.external_libraries)
-        {
-            std::cout << "  " << name << '\n';
         }
     }
 

@@ -607,7 +607,7 @@ namespace lossylab
 
     ProcessingRecord DecodedImage::processing_record() const
     {
-        ProcessingRecord history(build_info().build_id);
+        ProcessingRecord history = ProcessingRecord::for_this_build();
         history.set_origin(probe);
         history.append(record, configuration);
         return history;

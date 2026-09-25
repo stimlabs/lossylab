@@ -164,7 +164,7 @@ namespace
         assert(error.kind == FileErrorKind::UnsupportedCapability);
         assert(error.details.at("capability_kind") == "decoder");
         assert(error.details.at("name") == "libdav1d");
-        assert(error.details.at("build_id") == "build-1");
+        assert(error.details.at("identity_hash") == "build-1");
     }
 
     void test_conversion_refused_keeps_its_fields()

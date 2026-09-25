@@ -126,7 +126,7 @@ namespace lossylab
                         throw UnsupportedCapability(
                             "resize backend", to_string(backend) + " (pipeline stage " +
                                                   std::to_string(index) + ")",
-                            build_info().build_id);
+                            build_info().identity_hash);
                     }
                 }
                 break;
@@ -156,7 +156,7 @@ namespace lossylab
                     throw UnsupportedCapability(
                         "video encoder", to_string(codec) + " (" + to_string(backend) +
                                              ", pipeline stage " + std::to_string(index) + ")",
-                        build_info().build_id);
+                        build_info().identity_hash);
                 }
                 validate_pixel_format(index, stage, "pix_fmt");
                 break;
@@ -171,7 +171,7 @@ namespace lossylab
                     throw UnsupportedCapability(
                         "image encoder",
                         to_string(codec) + " (pipeline stage " + std::to_string(index) + ")",
-                        build_info().build_id);
+                        build_info().identity_hash);
                 }
                 validate_pixel_format(index, stage, "pix_fmt");
                 break;
@@ -189,7 +189,7 @@ namespace lossylab
                         throw UnsupportedCapability(
                             "metric", to_string(metric) + " (pipeline stage " +
                                           std::to_string(index) + ")",
-                            build_info().build_id);
+                            build_info().identity_hash);
                     }
                 }
                 break;

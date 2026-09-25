@@ -197,26 +197,33 @@ namespace lossylab
     {
     public:
         ProcessingRecord() = default;
-        explicit ProcessingRecord(std::string build_id);
+
+        /// A record for processing done by this build: it carries this build's
+        /// identity (see `build_info()`) and the machine (see `diagnostics()`).
+        [[nodiscard]] static ProcessingRecord for_this_build();
 
         /// Adds a stage together with the options it ran with (`Strict` mode,
         /// kernels, thresholds, encoder options, after defaults and
         /// randomization were resolved). The options are static for the whole
-        /// record: a run with other options, another build or other external
-        /// dependencies is a new record.
+        /// record: a run with other options or another build is a new record.
         void append(StageRecord stage, json::Value configuration = json::Value::object());
 
         [[nodiscard]] const std::vector<StageRecord>& stages() const noexcept { return m_stages; }
 
         /// The options of each stage, at the same position as in `stages()`.
-        /// Replaying stage `i` is `configurations()[i]` plus `stages()[i].params`,
-        /// applied to the output of every earlier stage that modifies state.
+        /// Replaying stage `i` is applying `configurations()[i]` to the output
+        /// of every earlier stage that modifies state.
         [[nodiscard]] const std::vector<json::Value>& configurations() const noexcept { return m_configurations; }
         [[nodiscard]] bool empty() const noexcept { return m_stages.empty(); }
         [[nodiscard]] std::size_t size() const noexcept { return m_stages.size(); }
 
-        [[nodiscard]] const std::string& build_id() const noexcept { return m_build_id; }
-        void set_build_id(std::string build_id);
+        /// The identity of the build that produced the record (`BuildInfo::to_json()`),
+        /// or null for a record that was not made by a build. Two records of the
+        /// same input that disagree can be traced with `build_diff()` of the two.
+        [[nodiscard]] const json::Value& build() const noexcept { return m_build; }
+
+        /// The machine it was produced on (`Diagnostics::to_json()`), or null.
+        [[nodiscard]] const json::Value& diagnostics() const noexcept { return m_diagnostics; }
 
         /// What probe() reports for the file the first stage decoded, when the
         /// history starts from one (see `DecodedImage::processing_record()`):
@@ -258,7 +265,8 @@ namespace lossylab
         static ProcessingRecord from_json(const json::Value& value);
 
     private:
-        std::string m_build_id;
+        json::Value m_build;
+        json::Value m_diagnostics;
         std::optional<ProbeResult> m_origin;
         std::vector<StageRecord> m_stages;
         std::vector<json::Value> m_configurations;

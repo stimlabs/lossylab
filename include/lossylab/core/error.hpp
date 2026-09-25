@@ -21,22 +21,22 @@ namespace lossylab
     };
 
     /// A codec, filter, backend or hardware device the request needs is absent
-    /// from the FFmpeg build in use. Carries the build id so a record or a bug
-    /// report identifies which build refused.
+    /// from the FFmpeg build in use. Carries the build's identity hash so a
+    /// record or a bug report identifies which build refused.
     class UnsupportedCapability : public Error
     {
     public:
-        UnsupportedCapability(std::string kind, std::string name, std::string build_id);
+        UnsupportedCapability(std::string kind, std::string name, std::string identity_hash);
 
         /// "encoder", "decoder", "filter", "hwaccel", "backend", "muxer".
         [[nodiscard]] const std::string& kind() const noexcept { return m_kind; }
         [[nodiscard]] const std::string& name() const noexcept { return m_name; }
-        [[nodiscard]] const std::string& build_id() const noexcept { return m_build_id; }
+        [[nodiscard]] const std::string& identity_hash() const noexcept { return m_identity_hash; }
 
     private:
         std::string m_kind;
         std::string m_name;
-        std::string m_build_id;
+        std::string m_identity_hash;
     };
 
     /// Strict mode refused an implicit conversion. This is the type that

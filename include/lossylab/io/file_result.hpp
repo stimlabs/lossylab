@@ -71,7 +71,7 @@ namespace lossylab
 
         /// The fields the exception carries beyond its message, keyed by
         /// kind:
-        ///  - UnsupportedCapability: "capability_kind", "name", "build_id"
+        ///  - UnsupportedCapability: "capability_kind", "name", "identity_hash"
         ///  - ConversionRefused: "from", "to", "context"
         ///  - FFmpeg: "averror", "call"
         ///  - NotImplemented: "symbol"

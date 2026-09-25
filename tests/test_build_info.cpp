@@ -8,10 +8,10 @@ namespace
 {
     void test_build_info_reports_a_version_and_libraries()
     {
-        const BuildInfo& info = build_info();
+        const FfmpegBuild& info = build_info().ffmpeg;
 
         assert(!info.version.empty());
-        assert(!info.configuration.empty());
+        assert(info.configure_hash.starts_with("sha256:"));
         assert(info.libraries.size() == std::size_t{6});
 
         for (const LibraryVersion& library : info.libraries)
@@ -26,7 +26,7 @@ namespace
         // A mismatch means the library was built against one FFmpeg and is running
         // against another. Everything downstream would still appear to work while
         // producing subtly different output, so it is worth an explicit check.
-        const BuildInfo& info = build_info();
+        const FfmpegBuild& info = build_info().ffmpeg;
         for (const LibraryVersion& library : info.libraries)
         {
             assert(library.matches_compiled());
@@ -34,18 +34,49 @@ namespace
         assert(info.is_consistent());
     }
 
-    void test_the_build_id_is_stable_and_non_empty()
+    void test_the_identity_names_the_commit_and_hashes_everything()
     {
         const BuildInfo& info = build_info();
-        assert(info.build_id.size() == std::size_t{16});
 
-        // Every record carries this, so two calls must agree.
-        assert(build_info().build_id == info.build_id);
+        // From git at build time: a full SHA-1 commit, never a placeholder.
+        assert(info.lossylab.commit.size() == std::size_t{40});
+        assert(!info.lossylab.compiler.empty());
+
+        // "sha256:" and 64 hex characters. Every record carries this, so two
+        // calls must agree.
+        assert(info.identity_hash.size() == std::string_view("sha256:").size() + 64);
+        assert(info.identity_hash.starts_with("sha256:"));
+        assert(build_info().identity_hash == info.identity_hash);
+    }
+
+    void test_build_diff_names_what_differs()
+    {
+        const json::Value a = build_info().to_json();
+        assert(build_diff(a, a).empty());
+
+        json::Value other = a;
+        other["lossylab"]["commit"] = "0000";
+        other["ffmpeg"]["libraries"]["libavcodec"] = "0.0.0";
+        other["ffmpeg"]["extra"] = 1;
+
+        const json::Value differences = build_diff(a, other);
+        assert(differences.size() == std::size_t{3});
+        assert(differences.at("lossylab.commit").at(1) == "0000");
+        assert(differences.at("ffmpeg.libraries.libavcodec").at(1) == "0.0.0");
+        assert(differences.at("ffmpeg.extra").at(0).is_null());
+    }
+
+    void test_diagnostics_describe_the_machine()
+    {
+        const Diagnostics& machine = diagnostics();
+        assert(!machine.architecture.empty());
+        assert(!machine.os.empty());
+        assert(machine.to_json().at("architecture") == machine.architecture);
     }
 
     void test_the_license_is_identified()
     {
-        const BuildInfo& info = build_info();
+        const FfmpegBuild& info = build_info().ffmpeg;
 
         // Whatever this build is, it must not come back as Unknown: the license
         // decides whether the library can be redistributed, and guessing is worse
@@ -61,35 +92,21 @@ namespace
         }
     }
 
-    void test_external_libraries_are_parsed_from_the_configure_line()
-    {
-        const BuildInfo& info = build_info();
-
-        // Whichever external libraries this build has, each name is parsed out
-        // whole rather than left with the --enable- prefix attached.
-        for (const std::string& name : info.external_libraries)
-        {
-            assert(name.find("--") == std::string::npos);
-            assert(!name.empty());
-        }
-
-        // The parse has to agree with the configure line it came from.
-        for (const std::string& name : info.external_libraries)
-        {
-            assert(info.configuration.find("--enable-" + name) != std::string::npos);
-            assert(info.has_external_library(name));
-        }
-
-        assert(!info.has_external_library("lib-that-does-not-exist"));
-    }
-
-    void test_build_info_serializes()
+    void test_build_info_serializes_compactly()
     {
         const json::Value document = build_info().to_json();
 
-        assert(document.at("build_id").get<std::string>() == build_info().build_id);
-        assert(document.at("libraries").size() == 6);
-        assert(!document.at("license").get<std::string>().empty());
+        assert(document.at("identity_hash").get<std::string>() == build_info().identity_hash);
+        assert(!document.at("ffmpeg").at("license").get<std::string>().empty());
+
+        // Library versions are one string each, and the configure line is only
+        // a hash.
+        const json::Value& libraries = document.at("ffmpeg").at("libraries");
+        assert(libraries.size() == 6);
+        assert(libraries.at("libavcodec").is_string());
+        assert(document.at("ffmpeg").at("configure_hash").get<std::string>() == build_info().ffmpeg.configure_hash);
+        assert(!document.at("ffmpeg").contains("configuration"));
+        assert(document.at("lossylab").at("commit").get<std::string>() == build_info().lossylab.commit);
 
         // Round-trips through the library's own serializer.
         assert(json::parse(document.dump()) == document);
@@ -100,8 +117,9 @@ int main()
 {
     test_build_info_reports_a_version_and_libraries();
     test_runtime_libraries_match_the_headers_we_compiled_against();
-    test_the_build_id_is_stable_and_non_empty();
+    test_the_identity_names_the_commit_and_hashes_everything();
+    test_build_diff_names_what_differs();
+    test_diagnostics_describe_the_machine();
     test_the_license_is_identified();
-    test_external_libraries_are_parsed_from_the_configure_line();
-    test_build_info_serializes();
+    test_build_info_serializes_compactly();
 }

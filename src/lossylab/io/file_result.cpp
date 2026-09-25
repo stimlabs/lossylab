@@ -54,7 +54,7 @@ namespace lossylab
             error.details = json::object({
                 {"capability_kind", exception.kind()},
                 {"name", exception.name()},
-                {"build_id", exception.build_id()},
+                {"identity_hash", exception.identity_hash()},
             });
         }
         catch (const ConversionRefused& exception)

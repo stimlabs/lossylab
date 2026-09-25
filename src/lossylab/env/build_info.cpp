@@ -1,16 +1,20 @@
 #include "lossylab/env/build_info.hpp"
 
+#include "lossylab/core/error.hpp"
 #include "lossylab/core/json_io.hpp"
 
+#include "lossylab_build_config.hpp"
+
+#include <algorithm>
 #include <array>
-#include <cstdio>
-#include <sstream>
+#include <cstdint>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavfilter/avfilter.h>
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
+#include <libavutil/hash.h>
 #include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
 }
@@ -44,67 +48,30 @@ namespace lossylab
             return License::Unknown;
         }
 
-        /// Pulls the enabled external libraries out of the configure line. They
-        /// are what decides which codecs exist, so they belong in the record
-        /// even though FFmpeg does not expose them as structured data.
-        std::vector<std::string> parse_external_libraries(const std::string& configuration)
+        /// "sha256:" and the hex SHA-256 of `material`, from FFmpeg's own
+        /// implementation of the algorithm.
+        std::string sha256(const std::string& material)
         {
-            std::vector<std::string> libraries;
-            std::istringstream stream(configuration);
-            std::string flag;
-            while (stream >> flag)
+            AVHashContext* context = nullptr;
+            if (av_hash_alloc(&context, "SHA256") < 0)
             {
-                constexpr std::string_view enable = "--enable-";
-                if (flag.compare(0, enable.size(), enable) != 0)
-                {
-                    continue;
-                }
-                const std::string name = flag.substr(enable.size());
-
-                // External codec libraries, plus the hardware backends, which
-                // decide what encoders exist just as much as the libraries do.
-                if (name.compare(0, 3, "lib") == 0 || name == "vaapi" || name == "nvenc" ||
-                    name == "cuda" || name == "cuvid" || name == "qsv" ||
-                    name == "videotoolbox" || name == "vulkan")
-                {
-                    libraries.push_back(name);
-                }
+                throw Error("FFmpeg has no SHA256 hash");
             }
-            return libraries;
+            av_hash_init(context);
+            av_hash_update(context, reinterpret_cast<const std::uint8_t*>(material.data()), material.size());
+            std::array<char, 2 * AV_HASH_MAX_SIZE + 1> hex{};
+            av_hash_final_hex(context, reinterpret_cast<std::uint8_t*>(hex.data()), static_cast<int>(hex.size()));
+            av_hash_freep(&context);
+            return std::string("sha256:") + hex.data();
         }
 
-        /// FNV-1a over the fields that can change an output byte. Short enough
-        /// to read in a filename, wide enough not to collide in practice.
-        std::string compute_build_id(const BuildInfo& info)
+        FfmpegBuild compute_ffmpeg_build()
         {
-            std::string material = info.version + '\n' + info.configuration + '\n';
-            for (const LibraryVersion& library : info.libraries)
-            {
-                material += library.to_string() + '\n';
-            }
-
-            std::uint64_t hash = 1469598103934665603ULL;
-            for (const char character : material)
-            {
-                hash ^= static_cast<unsigned char>(character);
-                hash *= 1099511628211ULL;
-            }
-
-            std::array<char, 32> buffer{};
-            std::snprintf(buffer.data(), buffer.size(), "%016llx",
-                          static_cast<unsigned long long>(hash));
-            return buffer.data();
-        }
-
-        BuildInfo compute_build_info()
-        {
-            BuildInfo info;
+            FfmpegBuild info;
             info.version = av_version_info() != nullptr ? av_version_info() : "unknown";
-            info.configuration =
-                avcodec_configuration() != nullptr ? avcodec_configuration() : "";
+            info.configure_hash = sha256(avcodec_configuration() != nullptr ? avcodec_configuration() : "");
             info.license =
                 parse_license(avcodec_license() != nullptr ? avcodec_license() : "");
-            info.external_libraries = parse_external_libraries(info.configuration);
 
             info.libraries = {
                 make_version("libavutil", avutil_version(), LIBAVUTIL_VERSION_INT),
@@ -115,7 +82,22 @@ namespace lossylab
                 make_version("libswresample", swresample_version(), LIBSWRESAMPLE_VERSION_INT),
             };
 
-            info.build_id = compute_build_id(info);
+            return info;
+        }
+
+        BuildInfo compute_build_info()
+        {
+            BuildInfo info;
+            info.lossylab.commit = LOSSYLAB_GIT_COMMIT;
+            info.lossylab.dirty = LOSSYLAB_GIT_DIRTY != 0;
+            info.lossylab.compiler = LOSSYLAB_COMPILER;
+            info.lossylab.build_type = LOSSYLAB_BUILD_TYPE;
+            info.ffmpeg = compute_ffmpeg_build();
+            info.identity_hash = sha256(json::object({
+                                                {"lossylab", info.lossylab.to_json()},
+                                                {"ffmpeg", info.ffmpeg.to_json()},
+                                            })
+                                            .dump());
             return info;
         }
     }
@@ -176,7 +158,7 @@ namespace lossylab
         });
     }
 
-    bool BuildInfo::is_consistent() const noexcept
+    bool FfmpegBuild::is_consistent() const noexcept
     {
         for (const LibraryVersion& library : libraries)
         {
@@ -188,29 +170,39 @@ namespace lossylab
         return true;
     }
 
-    bool BuildInfo::has_external_library(const std::string_view name) const noexcept
+    json::Value LossylabBuild::to_json() const
     {
-        for (const std::string& library : external_libraries)
+        return json::object({
+            {"commit", commit},
+            {"dirty", dirty},
+            {"compiler", compiler},
+            {"build_type", build_type},
+        });
+    }
+
+    json::Value FfmpegBuild::to_json() const
+    {
+        json::Value library_versions = json::Value::object();
+        for (const LibraryVersion& library : libraries)
         {
-            if (library == name)
-            {
-                return true;
-            }
+            library_versions[library.name] =
+                std::to_string(library.major) + '.' + std::to_string(library.minor) + '.' +
+                std::to_string(library.micro);
         }
-        return false;
+        return json::object({
+            {"version", version},
+            {"configure_hash", configure_hash},
+            {"license", lossylab::to_string(license)},
+            {"libraries", library_versions},
+        });
     }
 
     json::Value BuildInfo::to_json() const
     {
         return json::object({
-            {"build_id", build_id},
-            {"version", version},
-            {"license", lossylab::to_string(license)},
-            {"permits_proprietary_distribution", permits_proprietary_distribution(license)},
-            {"consistent", is_consistent()},
-            {"libraries", json::to_array(libraries)},
-            {"external_libraries", json::to_array(external_libraries)},
-            {"configuration", configuration},
+            {"lossylab", lossylab.to_json()},
+            {"ffmpeg", ffmpeg.to_json()},
+            {"identity_hash", identity_hash},
         });
     }
 
@@ -221,5 +213,85 @@ namespace lossylab
         // FFmpeg state, so a forked dataloader worker inherits it safely.
         static const BuildInfo info = compute_build_info();
         return info;
+    }
+
+    json::Value Diagnostics::to_json() const
+    {
+        return json::object({
+            {"architecture", architecture},
+            {"os", os},
+            {"avx2", avx2},
+        });
+    }
+
+    const Diagnostics& diagnostics()
+    {
+        static const Diagnostics info = []
+        {
+            Diagnostics result;
+#if defined(__x86_64__) || defined(_M_X64)
+            result.architecture = "x86_64";
+            result.avx2 = __builtin_cpu_supports("avx2");
+#elif defined(__aarch64__) || defined(_M_ARM64)
+            result.architecture = "aarch64";
+#else
+            result.architecture = "unknown";
+#endif
+#if defined(__linux__)
+            result.os = "linux";
+#elif defined(__APPLE__)
+            result.os = "macos";
+#elif defined(_WIN32)
+            result.os = "windows";
+#else
+            result.os = "unknown";
+#endif
+            return result;
+        }();
+        return info;
+    }
+
+    namespace
+    {
+        void collect_differences(const json::Value& a, const json::Value& b, const std::string& path,
+                                 json::Value& differences)
+        {
+            const auto child_path = [&path](const std::string& name)
+            { return path.empty() ? name : path + '.' + name; };
+            if (a.is_object() && b.is_object())
+            {
+                for (const auto& [key, value] : a.items())
+                {
+                    collect_differences(value, json::member(b, key), child_path(key), differences);
+                }
+                for (const auto& [key, value] : b.items())
+                {
+                    if (!a.contains(key))
+                    {
+                        collect_differences(json::Value(), value, child_path(key), differences);
+                    }
+                }
+            }
+            else if (a.is_array() && b.is_array())
+            {
+                for (std::size_t index = 0; index < std::max(a.size(), b.size()); ++index)
+                {
+                    collect_differences(index < a.size() ? a[index] : json::Value(),
+                                        index < b.size() ? b[index] : json::Value(), child_path(std::to_string(index)),
+                                        differences);
+                }
+            }
+            else if (a != b)
+            {
+                differences[path] = json::array({a, b});
+            }
+        }
+    }
+
+    json::Value build_diff(const json::Value& a, const json::Value& b)
+    {
+        json::Value differences = json::Value::object();
+        collect_differences(a, b, "", differences);
+        return differences;
     }
 }

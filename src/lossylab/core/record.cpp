@@ -3,6 +3,7 @@
 #include "lossylab/core/error.hpp"
 #include "lossylab/core/json_io.hpp"
 #include "lossylab/core/schema_version.hpp"
+#include "lossylab/env/build_info.hpp"
 
 #include <utility>
 
@@ -207,17 +208,18 @@ namespace lossylab
     // ProcessingRecord
     // -----------------------------------------------------------------------
 
-    ProcessingRecord::ProcessingRecord(std::string build_id) : m_build_id(std::move(build_id)) {}
+    ProcessingRecord ProcessingRecord::for_this_build()
+    {
+        ProcessingRecord record;
+        record.m_build = build_info().to_json();
+        record.m_diagnostics = lossylab::diagnostics().to_json();
+        return record;
+    }
 
     void ProcessingRecord::append(StageRecord stage, json::Value configuration)
     {
         m_stages.push_back(std::move(stage));
         m_configurations.push_back(std::move(configuration));
-    }
-
-    void ProcessingRecord::set_build_id(std::string build_id)
-    {
-        m_build_id = std::move(build_id);
     }
 
     void ProcessingRecord::set_origin(std::optional<ProbeResult> origin)
@@ -317,7 +319,8 @@ namespace lossylab
         // The origin inside carries no schema version of its own.
         return json::object({
             {"schema_version", schema_version},
-            {"build_id", m_build_id},
+            {"build", m_build},
+            {"diagnostics", m_diagnostics},
             {"origin", m_origin.has_value() ? reflect::to_json(*m_origin) : json::Value()},
             {"configurations", json::Value(m_configurations)},
             {"stages", json::to_array(m_stages)},
@@ -326,7 +329,9 @@ namespace lossylab
 
     ProcessingRecord ProcessingRecord::from_json(const json::Value& value)
     {
-        ProcessingRecord record(json::string_or(value, "build_id", ""));
+        ProcessingRecord record;
+        record.m_build = json::member(value, "build");
+        record.m_diagnostics = json::member(value, "diagnostics");
         const json::Value& origin = value.at("origin");
         if (!origin.is_null())
         {

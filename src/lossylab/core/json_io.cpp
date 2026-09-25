@@ -51,7 +51,10 @@ namespace lossylab::json
     // Write-only by design: these describe a build, a file or a measurement
     // run, so there is a reader for them but never a parser.
     static_assert(Writable<LibraryVersion>);
+    static_assert(Writable<LossylabBuild>);
+    static_assert(Writable<FfmpegBuild>);
     static_assert(Writable<BuildInfo>);
+    static_assert(Writable<Diagnostics>);
     static_assert(Writable<OptionSchema>);
     static_assert(Writable<CodecInfo>);
     static_assert(Writable<FilterInfo>);

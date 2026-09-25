@@ -318,7 +318,7 @@ namespace lossylab
         {
             return *found;
         }
-        throw UnsupportedCapability("image encoder", to_string(codec), build_info().build_id);
+        throw UnsupportedCapability("image encoder", to_string(codec), build_info().identity_hash);
     }
 
     const CodecInfo& Capabilities::require_encoder(const VideoCodec codec,
@@ -330,7 +330,7 @@ namespace lossylab
         }
         throw UnsupportedCapability("video encoder",
                                     to_string(codec) + " (" + to_string(backend) + ")",
-                                    build_info().build_id);
+                                    build_info().identity_hash);
     }
 
     const CodecInfo& Capabilities::require_decoder(const ImageCodec codec) const
@@ -339,7 +339,7 @@ namespace lossylab
         {
             return *found;
         }
-        throw UnsupportedCapability("image decoder", to_string(codec), build_info().build_id);
+        throw UnsupportedCapability("image decoder", to_string(codec), build_info().identity_hash);
     }
 
     const CodecInfo& Capabilities::require_decoder(const VideoCodec codec) const
@@ -348,7 +348,7 @@ namespace lossylab
         {
             return *found;
         }
-        throw UnsupportedCapability("video decoder", to_string(codec), build_info().build_id);
+        throw UnsupportedCapability("video decoder", to_string(codec), build_info().identity_hash);
     }
 
     const FilterInfo& Capabilities::require_filter(const std::string_view name) const
@@ -357,7 +357,7 @@ namespace lossylab
         {
             return *found;
         }
-        throw UnsupportedCapability("filter", std::string(name), build_info().build_id);
+        throw UnsupportedCapability("filter", std::string(name), build_info().identity_hash);
     }
 
     void Capabilities::require_resize_backend(const ResizeBackend backend) const
@@ -370,7 +370,7 @@ namespace lossylab
     {
         if (!supports(metric))
         {
-            throw UnsupportedCapability("metric", to_string(metric), build_info().build_id);
+            throw UnsupportedCapability("metric", to_string(metric), build_info().identity_hash);
         }
     }
 

@@ -89,10 +89,27 @@ add_library(lossylab STATIC
 )
 add_library(lossylab::lossylab ALIAS lossylab)
 
+# The commit the library is built from, regenerated on every build.
+set(LOSSYLAB_BUILD_CONFIG_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/lossylab_build_config.hpp")
+add_custom_target(lossylab_build_config
+        COMMAND ${CMAKE_COMMAND}
+                -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+                -DOUTPUT_FILE=${LOSSYLAB_BUILD_CONFIG_HEADER}
+                -DTEMPLATE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/build_config.hpp.in
+                "-DCOMPILER=${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}"
+                -DBUILD_TYPE=${CMAKE_BUILD_TYPE}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateBuildConfig.cmake
+        BYPRODUCTS ${LOSSYLAB_BUILD_CONFIG_HEADER}
+        COMMENT "Recording the git commit"
+        VERBATIM
+)
+add_dependencies(lossylab lossylab_build_config)
+
 target_include_directories(lossylab
         PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external>
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+        PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
 
 # FFmpeg is an implementation detail: no public header includes libav*.

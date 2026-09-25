@@ -418,7 +418,7 @@ namespace lossylab
             if (codec == nullptr)
             {
                 const char* name = avcodec_get_name(stream.codecpar->codec_id);
-                throw UnsupportedCapability("decoder", name != nullptr ? name : "unknown", build_info().build_id);
+                throw UnsupportedCapability("decoder", name != nullptr ? name : "unknown", build_info().identity_hash);
             }
 
             detail::CodecContextPtr context(LL_FF_ALLOC(avcodec_alloc_context3(codec)));

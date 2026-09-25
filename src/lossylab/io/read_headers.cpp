@@ -616,7 +616,7 @@ namespace lossylab
             const AVBitStreamFilter* filter = av_bsf_get_by_name("trace_headers");
             if (filter == nullptr)
             {
-                throw UnsupportedCapability("bitstream filter", "trace_headers", build_info().build_id);
+                throw UnsupportedCapability("bitstream filter", "trace_headers", build_info().identity_hash);
             }
 
             AVBSFContext* allocated = nullptr;
@@ -652,7 +652,7 @@ namespace lossylab
         info.codec_name = codec_name != nullptr ? codec_name : "unknown";
         if (!is_interpreted(codec_id))
         {
-            throw UnsupportedCapability("bitstream parser", info.codec_name, build_info().build_id);
+            throw UnsupportedCapability("bitstream parser", info.codec_name, build_info().identity_hash);
         }
 
         for (unsigned int index = 0; index < format.nb_streams; ++index)

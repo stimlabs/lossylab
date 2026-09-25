@@ -21,12 +21,12 @@ def test_select_encoder_returns_none_when_absent_rather_than_substituting():
 
 def test_require_encoder_raises_unsupported_capability_naming_the_build():
     caps = lossylab.capabilities()
-    build_id = lossylab.build_info().build_id
+    identity_hash = lossylab.build_info().identity_hash
     with pytest.raises(lossylab.UnsupportedCapability) as excinfo:
         caps.require_encoder(lossylab.VideoCodec.Av1, lossylab.EncoderBackend.Nvenc)
     error = excinfo.value
-    assert error.build_id == build_id
-    assert build_id in str(error)
+    assert error.identity_hash == identity_hash
+    assert identity_hash in str(error)
 
 
 def test_to_dict_round_trips():

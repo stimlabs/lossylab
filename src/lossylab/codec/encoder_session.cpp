@@ -96,7 +96,7 @@ namespace lossylab::detail
         const AVCodec* codec = avcodec_find_encoder_by_name(setup.encoder_name.c_str());
         if (codec == nullptr)
         {
-            throw UnsupportedCapability("encoder", setup.encoder_name, build_info().build_id);
+            throw UnsupportedCapability("encoder", setup.encoder_name, build_info().identity_hash);
         }
 
         m_context.reset(LL_FF_ALLOC(avcodec_alloc_context3(codec)));
@@ -334,7 +334,7 @@ namespace lossylab::detail
         const AVOutputFormat* muxer = av_guess_format(muxer_name.c_str(), nullptr, nullptr);
         if (muxer == nullptr)
         {
-            throw UnsupportedCapability("muxer", muxer_name, build_info().build_id);
+            throw UnsupportedCapability("muxer", muxer_name, build_info().identity_hash);
         }
 
         AVFormatContext* raw_format = nullptr;

@@ -125,9 +125,9 @@ namespace
         {
             assert(e.name().find(to_string(absent.codec)) != std::string::npos);
             assert(e.name().find(to_string(absent.backend)) != std::string::npos);
-            assert(e.build_id() == build_info().build_id);
+            assert(e.identity_hash() == build_info().identity_hash);
             // The message has to stand alone in a log.
-            assert(std::string(e.what()).find(build_info().build_id) != std::string::npos);
+            assert(std::string(e.what()).find(build_info().identity_hash) != std::string::npos);
         }
     }
 

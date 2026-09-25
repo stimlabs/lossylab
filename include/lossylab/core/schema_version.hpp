@@ -7,9 +7,9 @@ namespace lossylab
     /// changes meaning, in a way a stored-output consumer would need to know
     /// about.
     ///
-    /// Independent of `BuildInfo::build_id` (see `env/build_info.hpp`), which
-    /// identifies the linked FFmpeg build and changes with it; this constant
-    /// identifies the shape of this library's own output and changes only
-    /// with a release of this library.
-    constexpr int schema_version = 9;
+    /// Independent of `BuildInfo::identity_hash` (see `env/build_info.hpp`),
+    /// which identifies the code and the FFmpeg build that produced a result
+    /// and changes with either; this constant identifies the shape of this
+    /// library's own output and changes only when that shape does.
+    constexpr int schema_version = 10;
 }

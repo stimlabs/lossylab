@@ -1062,7 +1062,7 @@ namespace
     {
         // Included below rather than at the top so that this file also proves the
         // individual headers are self-contained.
-        assert(!build_info().build_id.empty());
+        assert(!build_info().identity_hash.empty());
     }
 }
 

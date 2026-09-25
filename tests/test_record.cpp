@@ -1,5 +1,6 @@
 #include "lossylab/core/error.hpp"
 #include "lossylab/core/record.hpp"
+#include "lossylab/env/build_info.hpp"
 
 #include <cassert>
 #include <cmath>
@@ -58,7 +59,7 @@ namespace
 
     void test_transforms_compose_across_stages()
     {
-        ProcessingRecord record("test-build");
+        ProcessingRecord record;
         record.append(resize_stage(1920, 1080, 960, 540));
         record.append(resize_stage(960, 540, 480, 270));
 
@@ -70,7 +71,7 @@ namespace
 
     void test_an_output_crop_traces_back_to_the_source()
     {
-        ProcessingRecord record("test-build");
+        ProcessingRecord record;
         record.append(resize_stage(800, 800, 400, 400));
 
         const Point source = record.end_to_end_transform().map_inverse({0.0, 0.0});
@@ -80,7 +81,7 @@ namespace
 
     void test_an_encode_establishes_a_block_grid()
     {
-        ProcessingRecord record("test-build");
+        ProcessingRecord record;
         record.append(encode_stage(640, 480, BlockGridKind::Macroblock16));
 
         const std::optional<BlockGrid> grid = record.effective_block_grid();
@@ -92,7 +93,7 @@ namespace
     void test_a_later_resize_destroys_the_grid()
     {
         // The requirement stated in the design, expressed end to end.
-        ProcessingRecord record("test-build");
+        ProcessingRecord record;
         record.append(encode_stage(640, 480, BlockGridKind::Macroblock16));
         record.append(resize_stage(640, 480, 320, 240));
 
@@ -105,7 +106,7 @@ namespace
     {
         // What survives a multi-generation chain is the newest grid, not the
         // oldest: the second encode quantizes on its own block boundaries.
-        ProcessingRecord record("test-build");
+        ProcessingRecord record;
         record.append(encode_stage(640, 480, BlockGridKind::Macroblock16));
         record.append(resize_stage(640, 480, 320, 240));
         record.append(encode_stage(320, 240, BlockGridKind::Ctu64));
@@ -118,7 +119,7 @@ namespace
 
     void test_compression_generations_are_counted()
     {
-        ProcessingRecord record("test-build");
+        ProcessingRecord record;
         record.append(encode_stage(640, 480, BlockGridKind::Macroblock16));
         record.append(resize_stage(640, 480, 320, 240));
         record.append(encode_stage(320, 240, BlockGridKind::Dct8));
@@ -128,7 +129,7 @@ namespace
 
     void test_one_hardware_stage_makes_the_whole_record_irreproducible()
     {
-        ProcessingRecord record("test-build");
+        ProcessingRecord record;
         record.append(resize_stage(64, 64, 32, 32));
         assert(record.is_reproducible());
 
@@ -142,7 +143,7 @@ namespace
 
     void test_conversions_are_collected_across_stages()
     {
-        ProcessingRecord record("test-build");
+        ProcessingRecord record;
 
         StageRecord first = resize_stage(64, 64, 32, 32);
         first.conversions.push_back(
@@ -162,7 +163,7 @@ namespace
 
     void test_continuity_catches_a_conversion_outside_the_record()
     {
-        ProcessingRecord record("test-build");
+        ProcessingRecord record;
         record.append(resize_stage(64, 64, 32, 32));
         record.validate_continuity();
 
@@ -177,7 +178,7 @@ namespace
 
     void test_continuity_catches_a_size_mismatch()
     {
-        ProcessingRecord record("test-build");
+        ProcessingRecord record;
         record.append(resize_stage(64, 64, 32, 32));
         record.append(resize_stage(64, 64, 16, 16));  // should have started at 32x32
 
@@ -209,7 +210,9 @@ namespace
 
     void test_a_full_record_round_trips_through_json()
     {
-        ProcessingRecord record("ffmpeg-n8.0.1-abc123");
+        ProcessingRecord record = ProcessingRecord::for_this_build();
+        assert(record.build().at("identity_hash") == build_info().identity_hash);
+        assert(record.diagnostics().at("architecture") == diagnostics().architecture);
 
         StageRecord stage = encode_stage(1920, 1080, BlockGridKind::Ctu64);
         stage.params = json::object({{"crf", 23}, {"preset", "medium"}});
@@ -232,7 +235,8 @@ namespace
 
         const ProcessingRecord parsed = ProcessingRecord::from_json(record.to_json());
 
-        assert(parsed.build_id() == record.build_id());
+        assert(parsed.build() == record.build());
+        assert(parsed.diagnostics() == record.diagnostics());
         assert(parsed.size() == record.size());
         assert(parsed.compression_generations() == record.compression_generations());
         assert(parsed.end_to_end_transform() == record.end_to_end_transform());
@@ -308,7 +312,7 @@ namespace
         analysis.modifies_state = false;
         analysis.params = json::object({{"measured_as", "gbrp"}});
 
-        ProcessingRecord record("build");
+        ProcessingRecord record;
         record.append(resize_stage(64, 64, 64, 64), json::object({{"kernel", "lanczos"}}));
         record.append(analysis, json::object({{"strict", "refuse"}}));
 

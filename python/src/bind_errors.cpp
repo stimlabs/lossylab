@@ -15,7 +15,7 @@ namespace lossylab::pybind
         /// Constructs an instance of a Python exception type carrying extra
         /// attributes beyond the message, and raises it. Plain nb::exception<T>
         /// only forwards what(), which loses e.g. UnsupportedCapability's
-        /// kind()/name()/build_id() — those fields are the point of catching
+        /// kind()/name()/identity_hash() — those fields are the point of catching
         /// the specific type rather than the base Error.
         template <typename ExceptionT>
         void raise_with_fields(const nb::handle& type, const ExceptionT& error,
@@ -58,7 +58,7 @@ namespace lossylab::pybind
                 catch (const lossylab::UnsupportedCapability& e)
                 {
                     raise_with_fields(capability_type, e,
-                                       {{"kind", e.kind()}, {"name", e.name()}, {"build_id", e.build_id()}});
+                                       {{"kind", e.kind()}, {"name", e.name()}, {"identity_hash", e.identity_hash()}});
                 }
             },
             nullptr);

@@ -263,7 +263,7 @@ namespace lossylab::detail
             break;
 
         case ImageCodec::Heif:
-            throw UnsupportedCapability("image muxer", "heif", build_info().build_id);
+            throw UnsupportedCapability("image muxer", "heif", build_info().identity_hash);
         }
 
         add_caller_options(plan, options.encoder_options);
@@ -455,7 +455,7 @@ namespace lossylab::detail
         const AVOutputFormat* muxer = av_guess_format(plan.muxer.c_str(), nullptr, nullptr);
         if (muxer == nullptr)
         {
-            throw UnsupportedCapability("muxer", plan.muxer, build_info().build_id);
+            throw UnsupportedCapability("muxer", plan.muxer, build_info().identity_hash);
         }
         const std::string extensions = muxer->extensions != nullptr ? muxer->extensions : "";
         plan.extension = extensions.empty() ? plan.muxer : extensions.substr(0, extensions.find(','));
