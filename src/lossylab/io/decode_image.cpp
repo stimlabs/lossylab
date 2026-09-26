@@ -698,7 +698,7 @@ namespace lossylab
 
         record.output = frame.describe();
         record.params = json::object({
-            {"source", source.describe()},
+            {"source_sha256", source.sha256()},
             {"stream_index", decoded.stream_index},
             {"tile_grid_id", json::optional_or_null(decoded.tile_grid_id)},
             {"orientation_handling", orientation_handling},

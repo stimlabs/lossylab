@@ -11,5 +11,5 @@ namespace lossylab
     /// which identifies the code and the FFmpeg build that produced a result
     /// and changes with either; this constant identifies the shape of this
     /// library's own output and changes only when that shape does.
-    constexpr int schema_version = 10;
+    constexpr int schema_version = 11;
 }

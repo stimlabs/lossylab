@@ -67,4 +67,32 @@ namespace lossylab::detail
         LL_FF_CHECK(av_frame_ref(copy.get(), source));
         return copy;
     }
+
+    Sha256Stream::Sha256Stream()
+    {
+        AVHashContext* context = nullptr;
+        LL_FF_CHECK(av_hash_alloc(&context, "SHA256"));
+        m_context.reset(context);
+        av_hash_init(m_context.get());
+    }
+
+    void Sha256Stream::feed(const std::span<const std::uint8_t> chunk)
+    {
+        av_hash_update(m_context.get(), chunk.data(), chunk.size());
+    }
+
+    std::string Sha256Stream::finish() const
+    {
+        std::array<char, 2 * AV_HASH_MAX_SIZE + 1> hex{};
+        av_hash_final_hex(m_context.get(), reinterpret_cast<std::uint8_t*>(hex.data()),
+                          static_cast<int>(hex.size()));
+        return std::string("sha256:") + hex.data();
+    }
+
+    std::string sha256_hex(const std::span<const std::uint8_t> bytes)
+    {
+        Sha256Stream stream;
+        stream.feed(bytes);
+        return stream.finish();
+    }
 }

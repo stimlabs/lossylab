@@ -15,10 +15,14 @@ extern "C" {
 #include <libavutil/avutil.h>
 #include <libavutil/dict.h>
 #include <libavutil/frame.h>
+#include <libavutil/hash.h>
 #include <libswscale/swscale.h>
 }
 
+#include <cstdint>
 #include <memory>
+#include <span>
+#include <string>
 
 namespace lossylab::detail
 {
@@ -94,6 +98,11 @@ namespace lossylab::detail
         void operator()(AVBSFContext* pointer) const noexcept { av_bsf_free(&pointer); }
     };
 
+    struct HashContextDeleter
+    {
+        void operator()(AVHashContext* pointer) const noexcept { av_hash_freep(&pointer); }
+    };
+
     struct AvIoContextDeleter
     {
         void operator()(AVIOContext* pointer) const noexcept
@@ -128,6 +137,7 @@ namespace lossylab::detail
     using BsfContextPtr = std::unique_ptr<AVBSFContext, BsfContextDeleter>;
     using AvIoContextPtr = std::unique_ptr<AVIOContext, AvIoContextDeleter>;
     using AvBufferPtr = std::unique_ptr<void, AvFreeDeleter>;
+    using HashContextPtr = std::unique_ptr<AVHashContext, HashContextDeleter>;
 
     /// Allocating constructors. Each throws FFmpegError on allocation failure,
     /// so callers never have to null-check.
@@ -141,4 +151,26 @@ namespace lossylab::detail
     /// A new reference to the same underlying buffers: cheap, and the basis of
     /// Frame's copy semantics.
     [[nodiscard]] FramePtr ref_frame(const AVFrame* source);
+
+    /// "sha256:" and the lowercase hex SHA-256 of `bytes`, computed through
+    /// FFmpeg's own hash implementation.
+    [[nodiscard]] std::string sha256_hex(std::span<const std::uint8_t> bytes);
+
+    /// Incremental SHA-256, for hashing input too large to hold in memory at
+    /// once, such as a file read a chunk at a time.
+    class Sha256Stream
+    {
+    public:
+        Sha256Stream();
+
+        /// Adds `chunk` to the hash. May be called any number of times before
+        /// `finish()`.
+        void feed(std::span<const std::uint8_t> chunk);
+
+        /// "sha256:" and the lowercase hex digest of everything fed so far.
+        [[nodiscard]] std::string finish() const;
+
+    private:
+        HashContextPtr m_context;
+    };
 }

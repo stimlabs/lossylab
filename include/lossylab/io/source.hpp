@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include <vector>
@@ -46,14 +48,37 @@ namespace lossylab
         /// available.
         [[nodiscard]] std::string claimed_extension() const;
 
-        /// A short label for error messages and records: the path, or a note of
-        /// the buffer's size. Never the buffer contents.
+        /// A short label for error messages: the path, or a note of the
+        /// buffer's size. Never the buffer contents, and never stored in a
+        /// record: a record identifies this source by `sha256()`, not by
+        /// this label, so that replay does not depend on where the bytes
+        /// happened to live.
         [[nodiscard]] std::string describe() const;
 
+        /// "sha256:" and the lowercase hex SHA-256 of this source's bytes: the
+        /// file's contents for a path source, or the buffer itself for a
+        /// memory source. Computed once and cached, since this runs once per
+        /// file in an audit and per sample in a dataloader; safe to call from
+        /// several threads on the same Source.
+        [[nodiscard]] std::string sha256() const;
+
     private:
+        [[nodiscard]] std::string compute_sha256() const;
+
         std::string m_path;
         std::string m_extension_hint;
         std::vector<std::uint8_t> m_owned_bytes;
         std::span<const std::uint8_t> m_borrowed_bytes;
+
+        struct HashCache
+        {
+            std::once_flag once;
+            std::string value;
+        };
+
+        /// Behind a shared_ptr, rather than a direct member, so Source stays
+        /// movable and copyable despite std::once_flag being neither: moving
+        /// or copying a Source carries the cache along with its bytes.
+        mutable std::shared_ptr<HashCache> m_hash_cache = std::make_shared<HashCache>();
     };
 }

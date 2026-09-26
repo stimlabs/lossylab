@@ -48,7 +48,10 @@ namespace lossylab::pybind
                 "whole lifetime, so it need not be kept alive separately.")
             .def("is_path", &Source::is_path)
             .def("path", &Source::path)
-            .def("describe", &Source::describe);
+            .def("describe", &Source::describe)
+            .def("sha256", &Source::sha256,
+                "\"sha256:\" and the lowercase hex SHA-256 of this source's bytes. Identifies the "
+                "source for a stored record, in place of its path.");
 
         // ---- icc_profile.hpp --------------------------------------------------
         bind_reflected<Chromaticity>(m, "Chromaticity");

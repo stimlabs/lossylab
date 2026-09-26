@@ -817,7 +817,7 @@ namespace lossylab
             record.output = record.input;
         }
         record.params = json::object({
-            {"source", m_impl->source.describe()},
+            {"source_sha256", m_impl->source.sha256()},
             {"codec", decoder_name},
             {"stream_index", stream_index},
             {"tagged_color", stream_info.color.to_json()},

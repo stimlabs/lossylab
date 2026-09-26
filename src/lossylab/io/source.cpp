@@ -1,9 +1,12 @@
 #include "lossylab/io/source.hpp"
 
 #include "lossylab/core/error.hpp"
+#include "lossylab/detail/ff_ptr.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <fstream>
 #include <utility>
 
 namespace lossylab
@@ -80,5 +83,43 @@ namespace lossylab
             return m_path;
         }
         return "<" + std::to_string(bytes().size()) + " bytes in memory>";
+    }
+
+    std::string Source::sha256() const
+    {
+        std::call_once(m_hash_cache->once, [this] { m_hash_cache->value = compute_sha256(); });
+        return m_hash_cache->value;
+    }
+
+    std::string Source::compute_sha256() const
+    {
+        if (!is_path())
+        {
+            return detail::sha256_hex(bytes());
+        }
+
+        std::ifstream file(m_path, std::ios::binary);
+        if (!file)
+        {
+            throw ConfigError("cannot open " + m_path + " to hash it");
+        }
+
+        detail::Sha256Stream stream;
+        std::array<char, 1 << 16> buffer{};
+        for (;;)
+        {
+            file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+            const auto bytes_read = static_cast<std::size_t>(file.gcount());
+            if (bytes_read > 0)
+            {
+                stream.feed(std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(buffer.data()),
+                                                           bytes_read));
+            }
+            if (!file)
+            {
+                break;
+            }
+        }
+        return stream.finish();
     }
 }

@@ -1,20 +1,19 @@
 #include "lossylab/env/build_info.hpp"
 
-#include "lossylab/core/error.hpp"
 #include "lossylab/core/json_io.hpp"
+#include "lossylab/detail/ff_ptr.hpp"
 
 #include "lossylab_build_config.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cstdint>
+#include <span>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavfilter/avfilter.h>
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
-#include <libavutil/hash.h>
 #include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
 }
@@ -48,21 +47,12 @@ namespace lossylab
             return License::Unknown;
         }
 
-        /// "sha256:" and the hex SHA-256 of `material`, from FFmpeg's own
-        /// implementation of the algorithm.
+        /// "sha256:" and the hex SHA-256 of `material`.
         std::string sha256(const std::string& material)
         {
-            AVHashContext* context = nullptr;
-            if (av_hash_alloc(&context, "SHA256") < 0)
-            {
-                throw Error("FFmpeg has no SHA256 hash");
-            }
-            av_hash_init(context);
-            av_hash_update(context, reinterpret_cast<const std::uint8_t*>(material.data()), material.size());
-            std::array<char, 2 * AV_HASH_MAX_SIZE + 1> hex{};
-            av_hash_final_hex(context, reinterpret_cast<std::uint8_t*>(hex.data()), static_cast<int>(hex.size()));
-            av_hash_freep(&context);
-            return std::string("sha256:") + hex.data();
+            return detail::sha256_hex(
+                std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(material.data()),
+                                              material.size()));
         }
 
         FfmpegBuild compute_ffmpeg_build()
