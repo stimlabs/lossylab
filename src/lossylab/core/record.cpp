@@ -167,8 +167,6 @@ namespace lossylab
             {"transform", transform.to_json()},
             {"block_grid", json::optional_or_null(block_grid)},
             {"frames", json::to_array(frames)},
-            {"encoder_settings", encoder_settings},
-            {"achieved_bpp", json::optional_or_null(achieved_bpp)},
             {"seed", json::optional_or_null(seed)},
             {"reproducible", reproducible},
             {"duration_ms", duration_ms},
@@ -190,9 +188,6 @@ namespace lossylab
         record.transform = CoordinateTransform::from_json(value.at("transform"));
         record.block_grid = json::optional_object<BlockGrid>(json::member(value, "block_grid"));
         record.frames = json::from_array<FrameStats>(value.at("frames"));
-
-        record.encoder_settings = json::member(value, "encoder_settings");
-        record.achieved_bpp = json::optional_double(json::member(value, "achieved_bpp"));
 
         const std::optional<std::int64_t> seed = json::optional_int(json::member(value, "seed"));
         if (seed.has_value())

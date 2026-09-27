@@ -82,7 +82,9 @@ namespace lossylab
 
         /// Quantizer statistics, where the codec exposes them. These are the
         /// per-frame compression strength an audit reports and a crop-level
-        /// severity estimate is built from.
+        /// severity estimate is built from. In the encoder's own units: MJPEG's
+        /// qscale (1 to 31), the H.264 or HEVC QP, VP9's quantizer (0 to 63),
+        /// or the SVT-AV1 QP (0 to 63).
         std::optional<double> qp_min;
         std::optional<double> qp_max;
         std::optional<double> qp_mean;
@@ -132,15 +134,6 @@ namespace lossylab
 
         std::vector<FrameStats> frames;
 
-        /// Encoder configuration as resolved, including rate control and GOP
-        /// structure. Separate from `evidence` because it is the part that has to
-        /// match across classes for an equalization to be honest.
-        json::Value encoder_settings;
-
-        /// Achieved bits per pixel, for compression stages. The unit that makes
-        /// severity comparable between codecs.
-        std::optional<double> achieved_bpp;
-
         /// The seed this stage drew from, when it was stochastic.
         std::optional<std::uint64_t> seed;
 
@@ -164,8 +157,7 @@ namespace lossylab
     };
 
     LOSSYLAB_REFLECT(StageRecord, implementation, evidence, modifies_state, input, output, conversions, transform,
-                      block_grid, frames, encoder_settings, achieved_bpp, seed, reproducible, duration_ms,
-                      ffmpeg_duration_ms);
+                      block_grid, frames, seed, reproducible, duration_ms, ffmpeg_duration_ms);
 
     /// The processing history of a frame or clip: every stage, in order.
     ///

@@ -66,8 +66,8 @@ namespace
         // settled on, so replaying it needs no search.
         const EncodeImageOptions& configuration = std::get<EncodeImageOptions>(result.configuration);
         assert(configuration.rate_control.quality_parameter() == search.quality_parameter);
-        assert(result.record.encoder_settings.at("resolved").at("fixed_qscale").get<double>() ==
-               search.quality_parameter);
+        assert(std::get<EncodeImageEvidence>(result.record.evidence).resolved.fixed_qscale ==
+               static_cast<int>(search.quality_parameter));
     }
 
     void test_an_image_is_driven_to_a_psnr_target()

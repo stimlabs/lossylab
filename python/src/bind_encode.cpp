@@ -64,6 +64,7 @@ namespace lossylab::pybind
 
         bind_reflected<EncodeAttempt>(m, "EncodeAttempt");
         bind_reflected<EncodeSearch>(m, "EncodeSearch");
+        bind_reflected<EncoderResolution>(m, "EncoderResolution");
         bind_reflected<EncodeImageEvidence>(m, "EncodeImageEvidence");
         bind_reflected<EncodeVideoEvidence>(m, "EncodeVideoEvidence");
         bind_reflected<RoundtripImageConfiguration>(m, "RoundtripImageConfiguration");

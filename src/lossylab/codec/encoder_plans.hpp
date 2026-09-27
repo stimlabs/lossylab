@@ -37,9 +37,8 @@ namespace lossylab::detail
         std::optional<BlockGrid> block_grid;
 
         /// Whether the encoder's per-packet quality statistics hold its
-        /// quantizer, and in which units.
+        /// quantizer.
         bool reports_qp = false;
-        std::string qp_scale;
 
         /// The muxer that makes the packets a file, or empty when an image
         /// encoder's single packet is the file already.

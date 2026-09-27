@@ -41,13 +41,17 @@ namespace
     StageRecord encode_stage(const int width, const int height, const BlockGridKind grid_kind)
     {
         StageRecord stage;
-        stage.evidence = EncodeVideoEvidence{"", "h264", 1, ColorSpec::bt709_limited(), std::nullopt};
+        EncodeVideoEvidence evidence;
+        evidence.extension = "h264";
+        evidence.frame_count = 1;
+        evidence.color = ColorSpec::bt709_limited();
+        evidence.achieved_bpp = 0.25;
+        stage.evidence = evidence;
         stage.implementation = "libx264";
         stage.input = format(width, height, "yuv420p", ColorSpec::bt709_limited());
         stage.output = stage.input;
         stage.transform = CoordinateTransform::identity();
         stage.block_grid = BlockGrid::for_kind(grid_kind);
-        stage.achieved_bpp = 0.25;
         return stage;
     }
 
@@ -236,7 +240,10 @@ namespace
         assert(record.diagnostics().at("architecture") == diagnostics().architecture);
 
         StageRecord stage = encode_stage(1920, 1080, BlockGridKind::Ctu64);
-        stage.encoder_settings = json::object({{"rate_control", "crf"}, {"gop", 250}});
+        EncodeVideoEvidence& evidence = std::get<EncodeVideoEvidence>(stage.evidence);
+        evidence.resolved.gop_size = 250;
+        evidence.resolved.fixed_qscale = 4;
+        evidence.resolved.options = {{"crf", "23.000000"}};
         stage.seed = std::uint64_t{0xDEADBEEF};
         stage.duration_ms = 12.5;
         stage.ffmpeg_duration_ms = 9.25;

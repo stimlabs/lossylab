@@ -3,6 +3,7 @@
 /// Driving one FFmpeg encoder and muxing its packets in memory. Internal
 /// header.
 
+#include "lossylab/codec/encode_types.hpp"
 #include "lossylab/core/color_spec.hpp"
 #include "lossylab/core/frame.hpp"
 #include "lossylab/core/json.hpp"
@@ -75,7 +76,7 @@ namespace lossylab::detail
 
         /// The context fields and private options as the encoder resolved
         /// them after opening.
-        [[nodiscard]] json::Value resolved_settings() const;
+        [[nodiscard]] EncoderResolution resolved_settings() const;
 
     private:
         void drain();

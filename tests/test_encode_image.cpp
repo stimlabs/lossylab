@@ -94,9 +94,10 @@ namespace
         assert(record.frames.front().picture_type == PictureType::I);
         assert(record.frames.front().size_bytes == static_cast<std::int64_t>(encoded.bytes.size()));
         assert(record.block_grid.has_value() && record.block_grid->kind == BlockGridKind::Dct8);
-        assert(record.encoder_settings.at("resolved").at("fixed_qscale").get<int>() == 5);
-        assert(record.encoder_settings.at("resolved").at("bitexact").get<bool>());
-        assert(record.achieved_bpp.has_value() && std::abs(*record.achieved_bpp - encoded.bits_per_pixel()) < 1e-9);
+        const EncodeImageEvidence& evidence = std::get<EncodeImageEvidence>(record.evidence);
+        assert(evidence.resolved.fixed_qscale == 5);
+        assert(evidence.resolved.bitexact);
+        assert(std::abs(evidence.achieved_bpp - encoded.bits_per_pixel()) < 1e-9);
         assert(record.conversions.empty());
 
         // FFmpeg accounts for part of the stage's time, never more than all of it.
@@ -238,8 +239,7 @@ namespace
         const Frame source = rgb_source();
         const EncodeImageOptions options = image_options(ImageCodec::Jxl, "rgb24", 1.0);
         const EncodedResult encoded = encode_image(source, options);
-        assert(encoded.record.encoder_settings.at("resolved").at("options").at("distance").get<std::string>() ==
-               "1.000000");
+        assert(std::get<EncodeImageEvidence>(encoded.record.evidence).resolved.options.at("distance") == "1.000000");
 
         DecodeSpec decode_spec;
         decode_spec.pixel_format = source.pixel_format();
@@ -259,9 +259,7 @@ namespace
         const EncodeImageOptions options = image_options(ImageCodec::Jpeg2000, "rgb24", 8);
         const EncodedResult encoded = encode_image(source, options);
         assert(starts_with(encoded.bytes, 4, "jP  "));
-        assert(encoded.record.encoder_settings.at("resolved").at("options").at("layer_rates").get<std::string>() ==
-               "8");
-        assert(encoded.record.encoder_settings.at("quality_scale").get<std::string>().starts_with("a nominal"));
+        assert(std::get<EncodeImageEvidence>(encoded.record.evidence).resolved.options.at("layer_rates") == "8");
 
         const auto coarser = encode_image(source, image_options(ImageCodec::Jpeg2000, "rgb24", 32)).bytes.size();
         assert(coarser < encoded.bytes.size());

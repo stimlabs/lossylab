@@ -21,11 +21,6 @@ namespace lossylab::detail
 {
     namespace
     {
-        std::string rational_text(const AVRational value)
-        {
-            return std::to_string(value.num) + "/" + std::to_string(value.den);
-        }
-
         PictureType picture_type_of(const int av_picture_type)
         {
             switch (av_picture_type)
@@ -272,44 +267,38 @@ namespace lossylab::detail
         }
     }
 
-    json::Value EncoderSession::resolved_settings() const
+    EncoderResolution EncoderSession::resolved_settings() const
     {
         const AVCodecContext& context = *m_context;
-        json::Value options = json::Value::object();
+        EncoderResolution resolution;
         for (const std::string& name : m_option_names)
         {
             std::uint8_t* value = nullptr;
             if (av_opt_get(context.priv_data, name.c_str(), 0, &value) >= 0 && value != nullptr)
             {
-                options[name] = std::string(reinterpret_cast<const char*>(value));
+                resolution.options[name] = std::string(reinterpret_cast<const char*>(value));
             }
             av_free(value);
         }
 
-        const char* pixel_format = av_get_pix_fmt_name(context.pix_fmt);
-        return json::object({
-            {"encoder", context.codec->name},
-            {"pixel_format", pixel_format != nullptr ? pixel_format : ""},
-            {"width", context.width},
-            {"height", context.height},
-            {"time_base", rational_text(context.time_base)},
-            {"thread_count", context.thread_count},
-            {"bitexact", (context.flags & AV_CODEC_FLAG_BITEXACT) != 0},
-            {"fixed_qscale", (context.flags & AV_CODEC_FLAG_QSCALE) != 0
-                                 ? json::Value(context.global_quality / FF_QP2LAMBDA)
-                                 : json::Value()},
-            {"qmin", context.qmin},
-            {"qmax", context.qmax},
-            {"bit_rate", context.bit_rate},
-            {"max_rate", context.rc_max_rate},
-            {"buffer_size", context.rc_buffer_size},
-            {"gop_size", context.gop_size},
-            {"keyint_min", context.keyint_min},
-            {"max_b_frames", context.max_b_frames},
-            {"closed_gop", (static_cast<unsigned int>(context.flags) & AV_CODEC_FLAG_CLOSED_GOP) != 0},
-            {"global_header", m_global_header},
-            {"options", options},
-        });
+        resolution.time_base = Rational{context.time_base.num, context.time_base.den};
+        resolution.thread_count = context.thread_count;
+        resolution.bitexact = (context.flags & AV_CODEC_FLAG_BITEXACT) != 0;
+        if ((context.flags & AV_CODEC_FLAG_QSCALE) != 0)
+        {
+            resolution.fixed_qscale = context.global_quality / FF_QP2LAMBDA;
+        }
+        resolution.qmin = context.qmin;
+        resolution.qmax = context.qmax;
+        resolution.bit_rate = context.bit_rate;
+        resolution.max_rate = context.rc_max_rate;
+        resolution.buffer_size = context.rc_buffer_size;
+        resolution.gop_size = context.gop_size;
+        resolution.keyint_min = context.keyint_min;
+        resolution.max_b_frames = context.max_b_frames;
+        resolution.closed_gop = (static_cast<unsigned int>(context.flags) & AV_CODEC_FLAG_CLOSED_GOP) != 0;
+        resolution.global_header = m_global_header;
+        return resolution;
     }
 
     std::vector<std::uint8_t> concatenate_packets(const std::vector<PacketPtr>& packets)

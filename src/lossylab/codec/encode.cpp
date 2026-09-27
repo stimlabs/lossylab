@@ -484,17 +484,6 @@ namespace lossylab
             return frames;
         }
 
-        json::Value encoder_settings(const detail::EncoderPlan& plan, const detail::EncoderSession& session,
-                                     const json::Value& rate_control)
-        {
-            return json::object({
-                {"rate_control", rate_control},
-                {"quality_scale", plan.quality_scale.empty() ? json::Value() : json::Value(plan.quality_scale)},
-                {"qp_scale", plan.reports_qp ? json::Value(plan.qp_scale) : json::Value()},
-                {"resolved", session.resolved_settings()},
-            });
-        }
-
         double bits_per_pixel(const std::size_t bytes, const FormatDescription& format, const std::size_t frames)
         {
             return static_cast<double>(bytes) * 8.0 /
@@ -515,8 +504,6 @@ namespace lossylab
             record.transform = CoordinateTransform::identity();
             record.block_grid = encoded.block_grid;
             record.frames = encoded.frames;
-            record.encoder_settings = encoded.encoder_settings;
-            record.achieved_bpp = encoded.achieved_bpp;
             record.reproducible = encoded.reproducible && decoded.reproducible;
             record.duration_ms = encoded.duration_ms + decoded.duration_ms;
             record.ffmpeg_duration_ms = encoded.ffmpeg_duration_ms + decoded.ffmpeg_duration_ms;
@@ -621,11 +608,13 @@ namespace lossylab
         record.output = first.describe();
         account_for_embedded(first, bytes, plan.extension, encoder.name, options.strict, record, "encode_video()");
         record.block_grid = plan.block_grid;
-        record.encoder_settings = encoder_settings(plan, session, options.rate_control.to_json());
-        record.encoder_settings["gop"] = options.gop.to_json();
-        record.achieved_bpp = bits_per_pixel(bytes.size(), record.output, encoded_frames.size());
-        record.evidence = EncodeVideoEvidence{plan.muxer, plan.extension, static_cast<int>(encoded_frames.size()),
-                                              first.color(), std::nullopt};
+        record.evidence = EncodeVideoEvidence{plan.muxer,
+                                              plan.extension,
+                                              static_cast<int>(encoded_frames.size()),
+                                              first.color(),
+                                              session.resolved_settings(),
+                                              bits_per_pixel(bytes.size(), record.output, encoded_frames.size()),
+                                              std::nullopt};
         record.duration_ms = clock.duration_ms();
         record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
         return EncodedResult{std::move(bytes), std::move(record), options};
@@ -672,20 +661,17 @@ namespace lossylab
                                               ? detail::concatenate_packets(session.packets())
                                               : detail::mux_packets(plan.muxer, session.context(), session.packets());
 
-        // PNG, and JPEG XL without loss, have no quality parameter to state.
-        const bool uses_rate_control = !plan.quality_scale.empty();
-        const json::Value rate_control = uses_rate_control ? options.rate_control.to_json() : json::Value();
-
         record.output = encoded_frame.describe();
         account_for_embedded(encoded_frame, bytes, plan.extension, encoder.name, options.strict, record,
                              "encode_image()");
         record.block_grid = plan.block_grid;
-        record.encoder_settings = encoder_settings(plan, session, rate_control);
-        record.encoder_settings["lossless"] = options.lossless;
-        record.achieved_bpp = bits_per_pixel(bytes.size(), record.output, 1);
         record.evidence = EncodeImageEvidence{
-            plan.muxer.empty() ? std::nullopt : std::optional<std::string>(plan.muxer), plan.extension,
-            encoded_frame.color(), std::nullopt};
+            plan.muxer.empty() ? std::nullopt : std::optional<std::string>(plan.muxer),
+            plan.extension,
+            encoded_frame.color(),
+            session.resolved_settings(),
+            bits_per_pixel(bytes.size(), record.output, 1),
+            std::nullopt};
         record.duration_ms = clock.duration_ms();
         record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
         return EncodedResult{std::move(bytes), std::move(record), options};
@@ -902,7 +888,7 @@ namespace lossylab
             {
                 if (target.kind == EncodeTarget::Kind::BitsPerPixel)
                 {
-                    return *encoded.record.achieved_bpp;
+                    return encoded.bits_per_pixel();
                 }
                 return pooled_metric(frames, decode_encoded(encoded, decode_spec, frames.size()).frames, target.kind);
             });
@@ -946,7 +932,7 @@ namespace lossylab
             {
                 if (target.kind == EncodeTarget::Kind::BitsPerPixel)
                 {
-                    return *encoded.record.achieved_bpp;
+                    return encoded.bits_per_pixel();
                 }
                 return pooled_metric({frame}, {decode_encoded(encoded, decode_spec).frame}, target.kind);
             });

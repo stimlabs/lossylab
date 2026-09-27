@@ -123,9 +123,9 @@ namespace
             assert(record.frames[index].picture_type != PictureType::B);
         }
         assert(record.block_grid->kind == BlockGridKind::Macroblock16);
-        assert(record.encoder_settings.at("qp_scale").get<std::string>() == "H.264 QP");
-        assert(record.encoder_settings.at("resolved").at("options").at("crf").get<std::string>() == "23.000000");
-        assert(std::abs(*record.achieved_bpp - encoded.bits_per_pixel()) < 1e-9);
+        const EncodeVideoEvidence& evidence = std::get<EncodeVideoEvidence>(record.evidence);
+        assert(evidence.resolved.options.at("crf") == "23.000000");
+        assert(std::abs(evidence.achieved_bpp - encoded.bits_per_pixel()) < 1e-9);
 
         assert(encode_video(clip, options).bytes == encoded.bytes);
         check_roundtrip(clip, options, 30.0);
@@ -174,7 +174,7 @@ namespace
         options.container = "mp4";
         const EncodedResult encoded = encode_video(clip, options);
         assert(starts_with(encoded.bytes, 4, "ftyp"));
-        assert(encoded.record.encoder_settings.at("resolved").at("global_header").get<bool>());
+        assert(std::get<EncodeVideoEvidence>(encoded.record.evidence).resolved.global_header);
         assert(probe(Source::from_memory(encoded.bytes)).streams.front().codec_name == "h264");
         check_roundtrip(clip, options, 30.0);
 
@@ -232,10 +232,10 @@ namespace
         const std::vector<Frame> clip = moving_clip(10);
         const RateControl constrained = RateControl::constrained(200000, 300000, 400000);
         const StageRecord record = encode_video(clip, video_options(VideoCodec::H264, constrained)).record;
-        const json::Value& resolved = record.encoder_settings.at("resolved");
-        assert(resolved.at("bit_rate").get<std::int64_t>() == 200000);
-        assert(resolved.at("max_rate").get<std::int64_t>() == 300000);
-        assert(resolved.at("buffer_size").get<std::int64_t>() == 400000);
+        const EncoderResolution& resolved = std::get<EncodeVideoEvidence>(record.evidence).resolved;
+        assert(resolved.bit_rate == 200000);
+        assert(resolved.max_rate == 300000);
+        assert(resolved.buffer_size == 400000);
     }
 }
 

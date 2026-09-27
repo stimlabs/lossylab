@@ -1356,8 +1356,8 @@ namespace lossylab
             const std::map<std::string, double>& values = compared.evidence().frames.front();
             const double measured = values.at(error_key(options.metric, options.planes));
             const double error = options.metric == Metric::Psnr ? measured : 1.0 - measured;
-            evidence.points.push_back(
-                RecompressionPoint{parameter, error, decoded.record.achieved_bpp.value_or(0.0)});
+            const double achieved_bpp = std::get<RoundtripImageEvidence>(decoded.record.evidence).encode.achieved_bpp;
+            evidence.points.push_back(RecompressionPoint{parameter, error, achieved_bpp});
 
             // Every point converts the same way, so the first one speaks for all.
             if (evidence.points.size() == 1)

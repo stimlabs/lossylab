@@ -49,8 +49,9 @@ namespace lossylab
         /// (0 to 100, higher is better; for lossless WebP an effort), JPEG
         /// XL's Butteraugli distance (0.01 to 15, lower is better), and for
         /// AVIF the crf of libaom-av1 (0 to 63) or libsvtav1 (1 to 63) or
-        /// the quantizer of librav1e (0 to 255), lower is better. The record's
-        /// encoder settings state the scale under "quality_scale".
+        /// the quantizer of librav1e (0 to 255), lower is better. JPEG 2000
+        /// takes a nominal compression ratio (FFmpeg's layer_rates, 1 to
+        /// 1000, lower is better).
         static RateControl quality(double value);
 
         enum class Mode
@@ -276,6 +277,34 @@ namespace lossylab
 
     LOSSYLAB_REFLECT(EncodeSearch, target, attempts, converged, quality_parameter, achieved);
 
+    /// The settings the encoder ended up with, read back from it once it was
+    /// opened: the options as translated, and FFmpeg's defaults for the rest.
+    struct EncoderResolution
+    {
+        Rational time_base{1, 25};
+        int thread_count = 0;
+        bool bitexact = false;
+
+        /// The fixed quantizer, for an encoder run at a constant qscale.
+        std::optional<int> fixed_qscale;
+        int qmin = 0;
+        int qmax = 0;
+        std::int64_t bit_rate = 0;
+        std::int64_t max_rate = 0;
+        int buffer_size = 0;
+        int gop_size = 0;
+        int keyint_min = 0;
+        int max_b_frames = 0;
+        bool closed_gop = false;
+        bool global_header = false;
+
+        /// The encoder's own options, by name, as it reports their values.
+        std::map<std::string, std::string> options;
+    };
+
+    LOSSYLAB_REFLECT(EncoderResolution, time_base, thread_count, bitexact, fixed_qscale, qmin, qmax, bit_rate,
+                     max_rate, buffer_size, gop_size, keyint_min, max_b_frames, closed_gop, global_header, options);
+
     /// What an image encode produced.
     struct EncodeImageEvidence
     {
@@ -289,11 +318,16 @@ namespace lossylab
         /// The color the frame was encoded in.
         ColorSpec color;
 
+        EncoderResolution resolved;
+
+        /// Bits per pixel of the encoded bytes.
+        double achieved_bpp = 0.0;
+
         /// Set by encode_to_target().
         std::optional<EncodeSearch> search;
     };
 
-    LOSSYLAB_REFLECT(EncodeImageEvidence, container, extension, color, search);
+    LOSSYLAB_REFLECT(EncodeImageEvidence, container, extension, color, resolved, achieved_bpp, search);
 
     /// What a video encode produced.
     struct EncodeVideoEvidence
@@ -309,11 +343,16 @@ namespace lossylab
         /// The color the frames were encoded in.
         ColorSpec color;
 
+        EncoderResolution resolved;
+
+        /// Bits per pixel of the encoded bytes, over all frames.
+        double achieved_bpp = 0.0;
+
         /// Set by encode_to_target().
         std::optional<EncodeSearch> search;
     };
 
-    LOSSYLAB_REFLECT(EncodeVideoEvidence, container, extension, frame_count, color, search);
+    LOSSYLAB_REFLECT(EncodeVideoEvidence, container, extension, frame_count, color, resolved, achieved_bpp, search);
 
     /// An image encode and the decode of its output.
     struct RoundtripImageConfiguration

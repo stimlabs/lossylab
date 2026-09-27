@@ -119,7 +119,6 @@ namespace lossylab::detail
                 const QualityScale scale{1, 63, true, "crf, an integer from 1 to 63, lower is better"};
                 plan.setup.options["crf"] = number_text(scaled_value(rate_control, encoder_name, scale, plan));
                 plan.reports_qp = true;
-                plan.qp_scale = "SVT-AV1 QP, 0 to 63";
             }
             else if (encoder_name == "librav1e")
             {
@@ -178,7 +177,6 @@ namespace lossylab::detail
             plan.setup.qmax = qscale;
             plan.block_grid = BlockGrid::for_kind(BlockGridKind::Dct8);
             plan.reports_qp = true;
-            plan.qp_scale = "MJPEG qscale, 1 to 31";
             plan.extension = "jpg";
             break;
         }
@@ -353,7 +351,6 @@ namespace lossylab::detail
                 setup.options["b-pyramid"] = gop.b_pyramid ? "normal" : "none";
                 setup.options["sc_threshold"] = gop.scene_change_detection ? "40" : "0";
                 plan.block_grid = BlockGrid::for_kind(BlockGridKind::Macroblock16);
-                plan.qp_scale = "H.264 QP";
             }
             else
             {
@@ -369,7 +366,6 @@ namespace lossylab::detail
                 // CTUs are 32 or 64 pixels depending on the preset, so block
                 // edges fall on every multiple of 64 either way.
                 plan.block_grid = BlockGrid::for_kind(BlockGridKind::Ctu64);
-                plan.qp_scale = "HEVC QP";
             }
         }
         else if (encoder_name == "libvpx-vp9" || encoder_name == "libaom-av1")
@@ -400,7 +396,6 @@ namespace lossylab::detail
             {
                 plan.block_grid = BlockGrid::for_kind(BlockGridKind::Ctu64);
                 plan.reports_qp = true;
-                plan.qp_scale = "VP9 quantizer, 0 to 63";
             }
         }
         else if (encoder_name == "libsvtav1")
@@ -428,7 +423,6 @@ namespace lossylab::detail
             // mini-GOPs, B-frames in all but name.
             setup.options["svtav1-params"] = "pred-struct=1:scd=0";
             plan.reports_qp = true;
-            plan.qp_scale = "SVT-AV1 QP, 0 to 63";
         }
         else if (encoder_name == "librav1e")
         {
