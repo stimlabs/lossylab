@@ -1363,8 +1363,6 @@ namespace lossylab
             if (evidence.points.size() == 1)
             {
                 record.implementation = decoded.record.implementation;
-                const json::Value& quality_scale = decoded.record.encoder_settings.at("quality_scale");
-                evidence.quality_scale = quality_scale.is_string() ? quality_scale.get<std::string>() : "";
                 for (const ConversionList* conversions : {&decoded.record.conversions, &compared.record.conversions})
                 {
                     record.conversions.insert(record.conversions.end(), conversions->begin(), conversions->end());

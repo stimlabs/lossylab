@@ -661,6 +661,7 @@ namespace lossylab
         // applied: first the embedded ICC profile, when it names a pair the
         // tags can express, then the caller's assumption.
         const ColorSpec tagged = frame.color();
+        record.input = frame.describe();
         const ColorSpec with_codec = color_implied_by_codec(tagged, decoded.decoder_name, frame.pixel_format(),
                                                             record.conversions);
         const ColorSpec with_profile = color_with_icc_profile(with_codec, icc_profile, record.conversions);
@@ -677,7 +678,6 @@ namespace lossylab
             frame.set_color(resolved);
             frame.sync_color_to_av_frame();
         }
-        record.input = frame.describe();
 
         // libjxl turns a JPEG XL image upright itself and FFmpeg removes the
         // orientation it applied, so there is nothing left to apply.

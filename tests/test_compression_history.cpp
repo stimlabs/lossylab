@@ -468,7 +468,6 @@ namespace
             // the ratio is only nominal: after ratio 8 in RGB, ratios 2 to 10
             // all re-encode it unchanged, and the notch is at 10.
             assert(trace->quality.has_value() && std::abs(*trace->quality / compressed.ratio - 1.0) <= 0.3);
-            assert(trace->quality_scale.starts_with("a nominal compression ratio"));
         }
 
         for (const Frame* source : {&pristine, &gray_pristine})

@@ -242,12 +242,11 @@ namespace lossylab
         /// for chroma subsampling, which many codecs share.
         std::optional<ImageCodec> codec;
 
-        /// The quality it was compressed at, in `quality_scale`'s units.
-        /// Absent for a JPEG whose tables are not libjpeg's (an
+        /// The quality it was compressed at, in the units of `codec`'s
+        /// quality parameter (see RateControl::quality). Absent for a JPEG whose tables are not libjpeg's (an
         /// `ijg_match` below 0.8), whose libjpeg quality would only be the
         /// nearest equivalent; JpegQuantizationEvidence still has it.
         std::optional<double> quality;
-        std::string quality_scale;
 
         std::optional<Subsampling> subsampling;
 
@@ -259,7 +258,7 @@ namespace lossylab
         [[nodiscard]] json::Value to_json() const;
     };
 
-    LOSSYLAB_REFLECT(CompressionTrace, evidence, codec, quality, quality_scale, subsampling, confidence);
+    LOSSYLAB_REFLECT(CompressionTrace, evidence, codec, quality, subsampling, confidence);
 
     struct CompressionHistoryOptions
     {

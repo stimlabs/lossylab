@@ -103,7 +103,6 @@ namespace
         assert(record.kind() == StageKind::RecompressionCurve);
         assert(record.implementation == "mjpeg+mjpeg");
         assert(curve.evidence().notch_depths.size() == 3);
-        assert(curve.evidence().quality_scale.starts_with("qscale"));
         assert(curve.to_json().contains("record"));
 
         // The configuration is what the sweep ran with: sorted without

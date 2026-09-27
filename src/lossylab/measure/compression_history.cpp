@@ -1443,7 +1443,6 @@ namespace lossylab
                     std::optional<double> quality = deepest_notch(coarse.evidence());
                     const double confidence = coarse.evidence().confidence;
                     const PixelFormat encoded_as = coarse.record.output.pixel_format;
-                    const std::string quality_scale = coarse.evidence().quality_scale;
 
                     // A notch is never at either end, so it has two coarse
                     // neighbors; the fine sweep runs between them.
@@ -1480,7 +1479,6 @@ namespace lossylab
                         trace.evidence = TraceEvidence::Recompression;
                         trace.codec = codec;
                         trace.quality = quality;
-                        trace.quality_scale = quality_scale;
                         trace.subsampling = encoded_as.subsampling();
                         trace.confidence = confidence;
                         history.traces.push_back(std::move(trace));
@@ -1520,7 +1518,6 @@ namespace lossylab
             {
                 trace.quality = *evidence.ijg_quality;
             }
-            trace.quality_scale = "libjpeg quality, an integer from 1 to 100, higher is better";
             trace.subsampling = evidence.chroma_subsampling;
             trace.confidence = confidence;
             return trace;
@@ -1918,7 +1915,6 @@ namespace lossylab
             {"evidence", to_string(evidence)},
             {"codec", enum_or_null(codec)},
             {"quality", json::optional_or_null(quality)},
-            {"quality_scale", quality_scale},
             {"subsampling", enum_or_null(subsampling)},
             {"confidence", confidence},
         });

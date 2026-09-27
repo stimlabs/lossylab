@@ -459,6 +459,21 @@ namespace
         assert(result.record.transform.is_identity());
     }
 
+    void test_the_decode_input_is_the_color_the_file_tags()
+    {
+        // The JPEG tags matrix and range only; the rest is assumed.
+        const DecodedImage assumed = decode("testsrc_64x48.jpg", OrientationHandling::Report);
+        assert(assumed.record.input.color == assumed.stream().color);
+        assert(assumed.record.input.color.primaries == ColorPrimaries::Unspecified);
+        assert(assumed.record.output.color.primaries == ColorPrimaries::Bt709);
+        assert(assumed.record.conversions.front().from == assumed.record.input.color.describe());
+
+        // The profile names the primaries, but the file's tags do not.
+        const DecodedImage profiled = decode("testsrc_64x48_p3_orientation6.jpg", OrientationHandling::Report);
+        assert(profiled.record.input.color.primaries == ColorPrimaries::Unspecified);
+        assert(profiled.record.output.color.primaries == ColorPrimaries::Smpte432);
+    }
+
     void test_decoding_completes_what_probe_cannot_read()
     {
         const StreamInfo& probed = probe_stream("testsrc_64x48.tif");
@@ -496,6 +511,7 @@ int main()
     test_relabeling_the_primaries_drops_the_profile();
     test_the_decoded_frame_carries_the_embedded_data();
     test_a_file_without_embedded_data_records_its_absence();
+    test_the_decode_input_is_the_color_the_file_tags();
     test_decoding_completes_what_probe_cannot_read();
     std::puts("test_icc_orientation: all passed");
     return 0;

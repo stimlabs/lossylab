@@ -375,11 +375,8 @@ namespace lossylab
         /// "dropped" when the frame had alpha the re-encoding format has not,
         /// else "kept".
         std::string alpha;
-
-        /// The unit of the quality parameters, as the encoder settings name it.
-        std::string quality_scale;
     };
 
     LOSSYLAB_REFLECT(RecompressionCurveEvidence, points, estimated_prior_parameter, confidence, notch_depths,
-                      noise_scale, alpha, quality_scale);
+                      noise_scale, alpha);
 }
