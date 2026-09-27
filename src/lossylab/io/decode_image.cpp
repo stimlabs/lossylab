@@ -577,7 +577,7 @@ namespace lossylab
 
     const StreamInfo& DecodedImage::stream() const
     {
-        const int index = record.params.at("stream_index").get<int>();
+        const int index = evidence().stream_index;
         for (const StreamInfo& candidate : probe.streams)
         {
             if (candidate.index == index)
@@ -590,14 +590,14 @@ namespace lossylab
 
     const TileGrid* DecodedImage::tile_grid() const
     {
-        const json::Value& id = record.params.at("tile_grid_id");
-        if (id.is_null())
+        const std::optional<std::int64_t>& id = evidence().tile_grid_id;
+        if (!id.has_value())
         {
             return nullptr;
         }
         for (const TileGrid& candidate : probe.tile_grids)
         {
-            if (candidate.id == id.get<std::int64_t>())
+            if (candidate.id == *id)
             {
                 return &candidate;
             }
@@ -619,7 +619,7 @@ namespace lossylab
             {"probe", probe.to_json()},
             {"frame", frame.describe().to_json()},
             {"record", record.to_json()},
-            {"configuration", configuration},
+            {"configuration", reflect::to_json(configuration)},
         });
     }
 
@@ -653,7 +653,6 @@ namespace lossylab
         frame.set_sample_aspect_ratio(find_stream(probed, decoded.stream_index).sample_aspect_ratio);
 
         StageRecord record;
-        record.kind = StageKind::Decode;
         record.implementation = decoded.decoder_name;
         record.transform = CoordinateTransform::identity();
 
@@ -697,15 +696,8 @@ namespace lossylab
         }
 
         record.output = frame.describe();
-        record.params = json::object({
-            {"source_sha256", source.sha256()},
-            {"stream_index", decoded.stream_index},
-            {"tile_grid_id", json::optional_or_null(decoded.tile_grid_id)},
-            {"orientation_handling", orientation_handling},
-        });
-        json::Value configuration = json::object({
-            {"assumed_color", options.assumed_color.to_json()},
-        });
+        record.evidence = DecodeImageEvidence{source.sha256(), decoded.stream_index, decoded.tile_grid_id,
+                                              orientation_handling};
 
         // An explicit target means one conversion, run through the same code
         // path everything else uses, so its record is the same shape.
@@ -723,15 +715,13 @@ namespace lossylab
                                       converted.record.conversions.begin(),
                                       converted.record.conversions.end());
             record.output = converted.frame.describe();
-            configuration["converted"] = converted.configuration;
             record.duration_ms = clock.duration_ms();
             record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
-            return DecodedImage{std::move(probed), std::move(converted.frame), std::move(record),
-                                std::move(configuration)};
+            return DecodedImage{std::move(probed), std::move(converted.frame), std::move(record), options};
         }
 
         record.duration_ms = clock.duration_ms();
         record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
-        return DecodedImage{std::move(probed), std::move(frame), std::move(record), std::move(configuration)};
+        return DecodedImage{std::move(probed), std::move(frame), std::move(record), options};
     }
 }

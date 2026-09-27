@@ -57,8 +57,12 @@ def test_encode_image_returns_a_file_and_its_record():
 def test_an_image_roundtrip_is_one_record():
     source = jpeg_ready_frame()
     result = lossylab.roundtrip(source, mjpeg_options(5))
-    assert result.record.kind == lossylab.StageKind.Roundtrip
-    psnr = lossylab.compare(source, result.frame, [lossylab.Metric.Psnr]).frames[0]["psnr"]
+    assert result.record.kind == lossylab.StageKind.RoundtripImage
+    assert isinstance(result.record.evidence, lossylab.RoundtripImageEvidence)
+    assert result.record.evidence.encode.extension == "jpg"
+    assert isinstance(result.configuration, lossylab.RoundtripImageConfiguration)
+    assert result.configuration.encode.codec == lossylab.ImageCodec.Mjpeg
+    psnr = lossylab.compare(source, result.frame, [lossylab.Metric.Psnr]).evidence.frames[0]["psnr"]
     assert 25 < psnr < 60
 
 
@@ -76,7 +80,9 @@ def test_a_clip_encodes_and_roundtrips():
 
     result = lossylab.roundtrip(clip, options)
     assert len(result.frames) == len(clip)
-    assert lossylab.compare(clip, result.frames, [lossylab.Metric.Psnr]).pooled["psnr_mean"] > 30
+    assert lossylab.compare(clip, result.frames, [lossylab.Metric.Psnr]).evidence.pooled["psnr_mean"] > 30
+    assert result.record.kind == lossylab.StageKind.RoundtripVideo
+    assert result.configuration.decode.frame_indices == list(range(len(clip)))
 
 
 def test_encode_to_target_reaches_a_bits_per_pixel_target():
@@ -85,9 +91,10 @@ def test_encode_to_target_reaches_a_bits_per_pixel_target():
     target.value = 3.0
     target.tolerance = 0.15
     result = lossylab.encode_to_target(jpeg_ready_frame(), mjpeg_options(10), target)
-    assert result.converged
-    assert result.achieved == pytest.approx(3.0, abs=0.15)
-    assert len(result.record.params["search"]["attempts"]) == result.iterations
+    assert result.search.converged
+    assert result.search.achieved == pytest.approx(3.0, abs=0.15)
+    assert result.search.quality_parameter in [attempt.quality_parameter for attempt in result.search.attempts]
+    assert result.configuration.rate_control.quality_parameter() == result.search.quality_parameter
 
 
 def test_rate_control_round_trips_through_a_dict():

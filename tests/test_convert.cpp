@@ -88,7 +88,7 @@ namespace
 
         assert(result.record.input == source.describe());
         assert(result.record.output == result.frame.describe());
-        assert(result.record.kind == StageKind::Convert);
+        assert(result.record.kind() == StageKind::Convert);
         assert(result.record.implementation == std::string("swscale"));
     }
 
@@ -288,10 +288,8 @@ namespace
 
         // 4:4:4 RGB to 4:2:0 shrinks chroma, so the downsampling kernel applies and
         // the record has to say which one actually ran.
-        assert(result.configuration.at("kernel_role").get<std::string>() ==
-              std::string("chroma_down"));
-        assert(result.configuration.at("kernel").at("kernel").get<std::string>() ==
-              std::string("lanczos"));
+        assert(std::get<ConvertEvidence>(result.record.evidence).kernel_role == "chroma_down");
+        assert(std::get<ConvertOptions>(result.configuration).chroma_down.kernel == Kernel::Lanczos);
     }
 
     void test_different_chroma_kernels_give_different_results()
@@ -335,7 +333,7 @@ namespace
         assert(result.frame.pixel_format() == source.pixel_format());
         assert(result.frame.color() == source.color());
         assert(result.frame.width() == source.width());
-        assert(result.record.kind == StageKind::ChromaRoundtrip);
+        assert(result.record.kind() == StageKind::ChromaRoundtrip);
     }
 
     void test_a_chroma_roundtrip_actually_loses_chroma()
@@ -381,8 +379,9 @@ namespace
         // Reporting only the endpoints would hide that anything happened, since
         // the frame comes back in the format it started in.
         assert(result.record.conversions.size() >= 2);
-        assert(result.configuration.at("intermediate_pix_fmt").get<std::string>() ==
-              std::string("yuv420p"));
+        assert(std::get<ChromaRoundtripEvidence>(result.record.evidence).intermediate_pixel_format.name() ==
+               "yuv420p");
+        assert(std::get<ChromaRoundtripOptions>(result.configuration).intermediate_bit_depth == 8);
     }
 
     void test_a_roundtrip_needs_a_chroma_bearing_subsampling()
@@ -429,7 +428,7 @@ namespace
         // Not one sample may differ: this models a lost or misread tag, not a
         // conversion.
         assert(std::abs(plane_difference(yuv, result.frame) - 0.0) < 1e-12);
-        assert(!result.configuration.at("samples_modified").get<bool>());
+        assert(std::holds_alternative<ReinterpretEvidence>(result.record.evidence));
     }
 
     void test_reinterpret_records_every_field_it_relabeled()
@@ -443,7 +442,8 @@ namespace
         // Lossless is not the same as invisible: every downstream stage reads these
         // samples differently now, so the relabeling has to be in the record.
         assert(has_conversion(result.record.conversions, "color_matrix"));
-        assert(result.record.kind == StageKind::Reinterpret);
+        assert(result.record.kind() == StageKind::Reinterpret);
+        assert(std::get<ReinterpretOptions>(result.configuration).as_color == result.frame.color());
     }
 
     void test_reinterpret_is_reversible()

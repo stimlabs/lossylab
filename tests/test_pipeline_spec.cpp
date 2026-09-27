@@ -222,7 +222,7 @@ namespace
         PipelineSpec spec;
         spec.add(StageKind::Reinterpret, json::object({{"as_color", "bt601"}}))
             .add(StageKind::AnimateStill, json::object({{"frame_count", 25}}))
-            .add(StageKind::Probe, json::Value());
+            .add(StageKind::DecodeImage, json::Value());
 
         spec.validate();
     }

@@ -416,7 +416,7 @@ namespace
     void test_decoding_a_single_image_records_no_tile_grid()
     {
         const DecodedImage result = decode_image(Source::from_path(data_path(png_fixture)));
-        assert(result.record.params.at("tile_grid_id").is_null());
+        assert(!result.evidence().tile_grid_id.has_value());
         assert(result.tile_grid() == nullptr);
         assert(&result.stream() == &result.probe.streams.front());
     }
@@ -683,12 +683,13 @@ namespace
         ProcessingRecord history = decoded.processing_record();
         assert(history.origin().has_value());
         assert(history.origin()->to_json() == decoded.probe.to_json());
-        assert(history.size() == 1 && history.stages().front().kind == StageKind::Decode);
+        assert(history.size() == 1 && history.stages().front().kind() == StageKind::DecodeImage);
 
         ConvertOptions options;
         options.pixel_format = PixelFormat::from_name("yuv444p");
         options.color = decoded.frame.color();
-        history.append(convert(decoded.frame, options).record);
+        const FrameResult converted = convert(decoded.frame, options);
+        history.append(converted.record, converted.configuration);
         history.validate_continuity();
 
         const ProcessingRecord read_back = ProcessingRecord::from_json(history.to_json());
@@ -728,7 +729,7 @@ namespace
 
         // Native format by default: an audit wants the planes as the encoder wrote
         // them, not an RGB rendering chosen on its behalf.
-        assert(result.record.kind == StageKind::Decode);
+        assert(result.record.kind() == StageKind::DecodeImage);
         assert(result.record.implementation == std::string("png"));
         assert(result.record.transform.is_identity());
     }

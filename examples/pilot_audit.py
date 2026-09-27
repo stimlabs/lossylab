@@ -12,7 +12,9 @@ Writes one JSON line per file to the output file. Each line has the file's "path
         quantization tables, from a JPEG file's header or read off the pixels of any other file, with the libjpeg
         quality and chroma subsampling they imply; chroma upsampled from 4:2:0, 4:2:2 or 4:4:0; and a WebP
         recompression curve
-    The record's "configurations" hold the options each stage ran with, once per stage.
+    Each stage's "evidence" holds what it found: the source's hash for decode, the measurements for measure, and the
+    traces, JPEG tables and recompression curves for compression_history. The record's "configurations" hold the
+    options each stage ran with, once per stage.
   - "error": present when a stage failed, as {"stage": ..., "error": ..., "log": [...]}. The stages after it did not
     run, so "record" holds only what came before it, and is absent when the decode itself failed.
 
@@ -235,9 +237,10 @@ def audit_still_image(source: lossylab.Source, line: dict) -> None:
     processing_record = decoded_image.processing_record()
 
     measure_options = lossylab.MeasureOptions()
+    measure_options.analyzers = ANALYZERS
     measure_options.strict = lossylab.Strict.AllowRecorded
     later_stages = (
-        ("measure", lambda: lossylab.capture_measure(source, [decoded_image.frame], ANALYZERS, measure_options)),
+        ("measure", lambda: lossylab.capture_measure(source, [decoded_image.frame], measure_options)),
         ("compression_history", lambda: lossylab.capture_compression_history(source, decoded_image)),
     )
     for stage_name, run_stage in later_stages:

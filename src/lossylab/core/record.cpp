@@ -13,8 +13,8 @@ namespace lossylab
     {
         switch (kind)
         {
-        case StageKind::Decode: return "decode";
-        case StageKind::Probe: return "probe";
+        case StageKind::DecodeImage: return "decode_image";
+        case StageKind::DecodeVideo: return "decode_video";
         case StageKind::Convert: return "convert";
         case StageKind::ChromaRoundtrip: return "chroma_roundtrip";
         case StageKind::Reinterpret: return "reinterpret";
@@ -22,7 +22,8 @@ namespace lossylab
         case StageKind::Filter: return "filter";
         case StageKind::EncodeImage: return "encode_image";
         case StageKind::EncodeVideo: return "encode_video";
-        case StageKind::Roundtrip: return "roundtrip";
+        case StageKind::RoundtripImage: return "roundtrip_image";
+        case StageKind::RoundtripVideo: return "roundtrip_video";
         case StageKind::AnimateStill: return "animate_still";
         case StageKind::Measure: return "measure";
         case StageKind::Compare: return "compare";
@@ -34,8 +35,8 @@ namespace lossylab
 
     StageKind stage_kind_from_string(const std::string_view name)
     {
-        if (name == "decode") { return StageKind::Decode; }
-        if (name == "probe") { return StageKind::Probe; }
+        if (name == "decode_image") { return StageKind::DecodeImage; }
+        if (name == "decode_video") { return StageKind::DecodeVideo; }
         if (name == "convert") { return StageKind::Convert; }
         if (name == "chroma_roundtrip") { return StageKind::ChromaRoundtrip; }
         if (name == "reinterpret") { return StageKind::Reinterpret; }
@@ -43,7 +44,8 @@ namespace lossylab
         if (name == "filter") { return StageKind::Filter; }
         if (name == "encode_image") { return StageKind::EncodeImage; }
         if (name == "encode_video") { return StageKind::EncodeVideo; }
-        if (name == "roundtrip") { return StageKind::Roundtrip; }
+        if (name == "roundtrip_image") { return StageKind::RoundtripImage; }
+        if (name == "roundtrip_video") { return StageKind::RoundtripVideo; }
         if (name == "animate_still") { return StageKind::AnimateStill; }
         if (name == "measure") { return StageKind::Measure; }
         if (name == "compare") { return StageKind::Compare; }
@@ -155,9 +157,9 @@ namespace lossylab
     json::Value StageRecord::to_json() const
     {
         return json::object({
-            {"kind", to_string(kind)},
+            {"kind", to_string(kind())},
             {"implementation", implementation},
-            {"params", params},
+            {"evidence", evidence_to_json(evidence)},
             {"modifies_state", modifies_state},
             {"input", input.to_json()},
             {"output", output.to_json()},
@@ -177,9 +179,9 @@ namespace lossylab
     StageRecord StageRecord::from_json(const json::Value& value)
     {
         StageRecord record;
-        record.kind = stage_kind_from_string(value.at("kind").get<std::string>());
+        const StageKind kind = stage_kind_from_string(value.at("kind").get<std::string>());
         record.implementation = json::string_or(value, "implementation", "");
-        record.params = json::member(value, "params");
+        record.evidence = evidence_from_json(kind, value.at("evidence"));
         record.modifies_state = json::bool_or(value, "modifies_state", true);
         record.input = FormatDescription::from_json(value.at("input"));
         record.output = FormatDescription::from_json(value.at("output"));
@@ -216,8 +218,13 @@ namespace lossylab
         return record;
     }
 
-    void ProcessingRecord::append(StageRecord stage, json::Value configuration)
+    void ProcessingRecord::append(StageRecord stage, StageConfiguration configuration)
     {
+        if (stage_kind(configuration) != stage.kind())
+        {
+            throw ConfigError("a " + to_string(stage.kind()) + " stage cannot be appended with the configuration "
+                              "of a " + to_string(stage_kind(configuration)) + " stage");
+        }
         m_stages.push_back(std::move(stage));
         m_configurations.push_back(std::move(configuration));
     }
@@ -274,11 +281,12 @@ namespace lossylab
         int generations = 0;
         for (const StageRecord& stage : m_stages)
         {
-            switch (stage.kind)
+            switch (stage.kind())
             {
             case StageKind::EncodeImage:
             case StageKind::EncodeVideo:
-            case StageKind::Roundtrip:
+            case StageKind::RoundtripImage:
+            case StageKind::RoundtripVideo:
                 ++generations;
                 break;
             default:
@@ -308,8 +316,8 @@ namespace lossylab
             {
                 throw ConfigError(
                     "processing record is discontinuous between stage " + std::to_string(i - 1) +
-                    " (" + to_string(m_stages[i - 1].kind) + ") and stage " + std::to_string(i) +
-                    " (" + to_string(m_stages[i].kind) + "): a conversion happened outside the record");
+                    " (" + to_string(m_stages[i - 1].kind()) + ") and stage " + std::to_string(i) +
+                    " (" + to_string(m_stages[i].kind()) + "): a conversion happened outside the record");
             }
         }
     }
@@ -322,7 +330,7 @@ namespace lossylab
             {"build", m_build},
             {"diagnostics", m_diagnostics},
             {"origin", m_origin.has_value() ? reflect::to_json(*m_origin) : json::Value()},
-            {"configurations", json::Value(m_configurations)},
+            {"configurations", json::to_array(m_configurations, configuration_to_json)},
             {"stages", json::to_array(m_stages)},
         });
     }
@@ -346,7 +354,8 @@ namespace lossylab
         }
         for (std::size_t i = 0; i < stages.size(); ++i)
         {
-            record.append(std::move(stages[i]), configurations[i]);
+            StageConfiguration configuration = configuration_from_json(stages[i].kind(), configurations[i]);
+            record.append(std::move(stages[i]), std::move(configuration));
         }
         return record;
     }

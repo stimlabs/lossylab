@@ -282,7 +282,7 @@ namespace
         assert(result.record.transform.is_identity());
         assert(result.stream().orientation == 6);
         assert(result.stream().orientation_source == "exif");
-        assert(result.record.params.at("orientation_handling").get<std::string>() == "reported");
+        assert(result.evidence().orientation_handling == "reported");
     }
 
     void test_applying_matches_pillows_upright_rendering_for_every_orientation()
@@ -296,7 +296,7 @@ namespace
                        OrientationHandling::Report)
                     .frame;
             assert(planes_equal(applied.frame, upright));
-            assert(applied.record.params.at("orientation_handling").get<std::string>() == "applied");
+            assert(applied.evidence().orientation_handling == "applied");
             assert(applied.record.transform == CoordinateTransform::orientation(orientation, 64, 48));
             assert(applied.record.output.width == upright.width());
         }
@@ -455,7 +455,7 @@ namespace
         assert(result.stream().icc_profile_availability == Availability::NotPresent);
         assert(!result.stream().orientation.has_value());
         assert(result.stream().orientation_availability == Availability::NotPresent);
-        assert(result.record.params.at("orientation_handling").get<std::string>() == "reported");
+        assert(result.evidence().orientation_handling == "reported");
         assert(result.record.transform.is_identity());
     }
 

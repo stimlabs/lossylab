@@ -93,12 +93,14 @@ namespace
         decode_spec.pixel_format = clip.front().pixel_format();
         const FramesResult result = roundtrip(clip, options, decode_spec);
         assert(result.frames.size() == clip.size());
-        assert(result.record.kind == StageKind::Roundtrip);
+        assert(result.record.kind() == StageKind::RoundtripVideo);
+        const RoundtripVideoConfiguration& configuration = std::get<RoundtripVideoConfiguration>(result.configuration);
+        assert(configuration.decode.frame_indices.size() == clip.size());
         for (const Frame& frame : result.frames)
         {
             assert(frame.describe() == clip.front().describe());
         }
-        assert(compare(clip, result.frames, {Metric::Psnr}).pooled.at("psnr_mean") > min_psnr);
+        assert(compare(clip, result.frames, {Metric::Psnr}).evidence().pooled.at("psnr_mean") > min_psnr);
     }
 
     void test_h264_encodes_an_annex_b_stream_with_per_frame_statistics()
@@ -109,9 +111,9 @@ namespace
 
         assert(starts_with(encoded.bytes, 0, std::string_view("\0\0\0\1", 4)));
         const StageRecord& record = encoded.record;
-        assert(record.kind == StageKind::EncodeVideo);
+        assert(record.kind() == StageKind::EncodeVideo);
         assert(record.implementation == "libx264");
-        assert(record.params.at("container").get<std::string>() == "h264");
+        assert(std::get<EncodeVideoEvidence>(record.evidence).container == "h264");
         assert(record.frames.size() == clip.size());
         assert(record.frames.front().key_frame && record.frames.front().picture_type == PictureType::I);
         for (std::size_t index = 0; index < record.frames.size(); ++index)

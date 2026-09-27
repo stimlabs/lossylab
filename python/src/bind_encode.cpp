@@ -4,11 +4,6 @@
 
 #include "lossylab/codec/encode.hpp"
 
-#include <nanobind/stl/map.h>
-#include <nanobind/stl/optional.h>
-#include <nanobind/stl/string.h>
-#include <nanobind/stl/vector.h>
-
 namespace lossylab::pybind
 {
     using namespace nb::literals;
@@ -67,26 +62,32 @@ namespace lossylab::pybind
         target.def("describe", &EncodeTarget::describe)
             .def_static("from_dict", [](nb::dict value) { return EncodeTarget::from_json(to_json(value)); });
 
+        bind_reflected<EncodeAttempt>(m, "EncodeAttempt");
+        bind_reflected<EncodeSearch>(m, "EncodeSearch");
+        bind_reflected<EncodeImageEvidence>(m, "EncodeImageEvidence");
+        bind_reflected<EncodeVideoEvidence>(m, "EncodeVideoEvidence");
+        bind_reflected<RoundtripImageConfiguration>(m, "RoundtripImageConfiguration");
+        bind_reflected<RoundtripImageEvidence>(m, "RoundtripImageEvidence");
+        bind_reflected<RoundtripVideoConfiguration>(m, "RoundtripVideoConfiguration");
+        bind_reflected<RoundtripVideoEvidence>(m, "RoundtripVideoEvidence");
+
         nb::class_<EncodedResult>(m, "EncodedResult")
             .def_prop_ro("bytes", [](const EncodedResult& self) { return to_bytes(self.bytes); })
             .def_ro("record", &EncodedResult::record)
-            .def_prop_ro("configuration", [](const EncodedResult& self) { return to_python(self.configuration); })
+            .def_ro("configuration", &EncodedResult::configuration)
             .def("bits_per_pixel", &EncodedResult::bits_per_pixel);
 
         nb::class_<FramesResult>(m, "FramesResult")
             .def_ro("frames", &FramesResult::frames)
             .def_ro("record", &FramesResult::record)
-            .def_prop_ro("configuration", [](const FramesResult& self) { return to_python(self.configuration); });
+            .def_ro("configuration", &FramesResult::configuration);
 
         nb::class_<EncodeToTargetResult>(m, "EncodeToTargetResult")
             .def_prop_ro("bytes", [](const EncodeToTargetResult& self) { return to_bytes(self.bytes); })
             .def_ro("record", &EncodeToTargetResult::record)
-            .def_prop_ro("configuration",
-                         [](const EncodeToTargetResult& self) { return to_python(self.configuration); })
-            .def_ro("quality_parameter", &EncodeToTargetResult::quality_parameter)
-            .def_ro("achieved", &EncodeToTargetResult::achieved)
-            .def_ro("iterations", &EncodeToTargetResult::iterations)
-            .def_ro("converged", &EncodeToTargetResult::converged);
+            .def_ro("configuration", &EncodeToTargetResult::configuration)
+            .def_prop_ro("search", &EncodeToTargetResult::search, nb::rv_policy::reference_internal,
+                         "Every attempt, the quality settled on, what it achieved, and whether it converged.");
 
         m.def("encode_video", &encode_video, "frames"_a, "options"_a, nb::call_guard<nb::gil_scoped_release>());
         m.def("encode_image", &encode_image, "frame"_a, "options"_a, nb::call_guard<nb::gil_scoped_release>());

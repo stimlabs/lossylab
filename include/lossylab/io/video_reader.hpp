@@ -7,6 +7,7 @@
 #include "lossylab/core/result.hpp"
 #include "lossylab/io/probe.hpp"
 #include "lossylab/io/source.hpp"
+#include "lossylab/io/video_reader_types.hpp"
 
 #include <functional>
 #include <memory>
@@ -138,37 +139,6 @@ namespace lossylab
         std::shared_ptr<const Impl> m_impl;
     };
 
-    struct VideoReaderOptions
-    {
-        /// Which stream to read. Negative means the first video stream.
-        int stream_index = -1;
-
-        /// Format to deliver frames in. Unset means the decoder's native
-        /// format, which is what an audit wants.
-        std::optional<PixelFormat> pixel_format;
-        std::optional<ColorSpec> color;
-
-        /// Color to assume when the file tags none.
-        ColorSpec assumed_color = ColorSpec::bt709_limited();
-
-        /// Ask the decoder for per-block quantizers. Not all decoders can, and
-        /// it costs a little; off by default.
-        bool export_qp_maps = false;
-
-        /// Ask the decoder for motion vectors. Same caveats.
-        bool export_motion_vectors = false;
-
-        /// Pinned for reproducibility. Frame-threaded decoding can reorder
-        /// side data even where the pixels come out identical.
-        int thread_count = 1;
-
-        /// Applies to the conversion, when one was requested.
-        Strict strict = Strict::AllowRecorded;
-    };
-
-    LOSSYLAB_REFLECT(VideoReaderOptions, stream_index, pixel_format, color, assumed_color, export_qp_maps,
-                      export_motion_vectors, thread_count, strict);
-
     /// Reads frames from a clip.
     ///
     /// The entry point both for sampling training frames out of real video and
@@ -208,8 +178,10 @@ namespace lossylab
         /// selected frame.
         [[nodiscard]] const StageRecord& record() const noexcept;
 
-        /// The options of that read (see `FrameResult::configuration`).
-        [[nodiscard]] const json::Value& configuration() const noexcept;
+        /// What that read was told to do: the reader's options, with the
+        /// stream resolved, and the frames it delivered (see
+        /// `FrameResult::configuration`).
+        [[nodiscard]] const DecodeVideoConfiguration& configuration() const noexcept;
 
     private:
         struct Impl;

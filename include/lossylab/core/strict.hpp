@@ -26,6 +26,12 @@ namespace lossylab
     std::string to_string(Strict mode);
     Strict strict_from_string(std::string_view name);
 
+    /// For reflect::from_json().
+    inline void from_string(const std::string_view name, Strict& value)
+    {
+        value = strict_from_string(name);
+    }
+
     /// Why a conversion happened. Distinguishing these matters when auditing:
     /// a conversion the caller requested is part of the experiment, one a
     /// codec forced is a property of the codec.

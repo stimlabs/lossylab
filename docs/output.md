@@ -20,10 +20,12 @@ A `Source` goes in. Everything lossylab does with it is collected in **one `Proc
 ## Parts
 
 - `ProcessingRecord`: the history of one source: the build identity and diagnostics, the schema version, the probe of the file as its origin, the stages, and one configuration per stage.
-- **Configuration**: the input to replay, i.e. what each stage was told to do (`Strict` mode, kernels, thresholds, encoder options), as resolved after defaults and randomization, never as the caller passed it. In an audit it is the same for every file; in the degradation library it differs per sample.
-- `StageRecord`: one operation. Its `params` are **evidence**: what the stage observed or derived from this input (`measured_as`, `analyzed_as`, achieved bits per pixel), together with its formats, conversions, measurements and timing. Replaying a stage should reproduce its evidence, so evidence is also how a replay is checked.
+- **Configuration**: the input to replay, i.e. what each stage was told to do, as resolved after defaults and randomization, never as the caller passed it. It is the stage's own options struct (`MeasureOptions`, `EncodeImageOptions`, ...), with every option in it; a stage whose calls take input beyond its options wraps the two (the video reader's options and the frames it picked, a round trip's encode and decode options). Anything that is not an option, such as a threshold or a filter's arguments, is fixed by the build and not repeated here. In an audit it is the same for every file; in the degradation library it differs per sample.
+- `StageRecord`: one operation. Its `evidence` is what the stage found out about this input: what it measured and detected (`measured_as`, the measurements themselves, JPEG tables, traces), and what it derived (`analyzed_as`, the source's hash). Alongside it are the stage's formats, conversions, block grid, achieved bits per pixel and timing. Replaying a stage should reproduce its evidence, so evidence is also how a replay is checked.
 
-Every operation returns its `record` and its `configuration` side by side. `ProcessingRecord.append(record, configuration)` stores both, and `configurations()[i]` belongs to `stages()[i]`.
+Evidence and configuration have one type per kind of stage, and the type of the evidence is the stage's `kind`. In Python, `stage.evidence` is that type, so `isinstance(stage.evidence, lossylab.MeasureEvidence)` and `stage.kind == lossylab.StageKind.Measure` say the same.
+
+Every operation returns its `record` and its `configuration` side by side, and a result's own fields (`result.evidence`, `result.search`) read the record's evidence. `ProcessingRecord.append(record, configuration)` stores both, refuses a configuration of another kind of stage, and `configurations()[i]` belongs to `stages()[i]`.
 
 ## Use
 
@@ -50,6 +52,6 @@ When two records of the same input disagree, the record must say where to look:
 
 ## Rules
 
-- JSON field names are the C++ member names, never renamed.
+- JSON field names are the C++ member names, never renamed. A stage's `"kind"` is the one computed field: it is the type of its evidence.
 - Every record states its `schema_version`. A change to the layout bumps it.
 - Values are the resolved ones, never as the caller passed them.

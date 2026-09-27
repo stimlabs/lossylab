@@ -51,14 +51,14 @@ def test_applying_the_orientation_matches_pillows_exif_transpose():
     upright = np.asarray(Image.open(DATA_DIR / "testsrc_64x48_orientation6_upright.png").convert("RGB"))
     np.testing.assert_array_equal(np.asarray(result.frame.plane(0)), upright)
     assert result.record.transform == lossylab.CoordinateTransform.orientation(6, 64, 48)
-    assert result.record.to_dict()["params"]["orientation_handling"] == "applied"
+    assert result.evidence.orientation_handling == "applied"
 
 
 def test_reporting_leaves_the_pixels_as_stored():
     result = lossylab.decode_image(_source("testsrc_64x48_orientation6.png"))
     assert result.frame.width() == 64
     assert result.stream().orientation == 6
-    assert result.record.to_dict()["params"]["orientation_handling"] == "reported"
+    assert result.record.to_dict()["evidence"]["orientation_handling"] == "reported"
 
 
 def test_a_recognized_profile_stands_in_for_missing_tags():

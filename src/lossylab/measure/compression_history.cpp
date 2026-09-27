@@ -1285,7 +1285,7 @@ namespace lossylab
 
         /// The point of a curve at `parameter`, which must be one of its
         /// parameters.
-        const RecompressionPoint& point_at(const RecompressionCurve& curve, const double parameter)
+        const RecompressionPoint& point_at(const RecompressionCurveEvidence& curve, const double parameter)
         {
             return *std::find_if(curve.points.begin(), curve.points.end(),
                                  [&](const RecompressionPoint& point) { return point.quality_parameter == parameter; });
@@ -1293,14 +1293,13 @@ namespace lossylab
 
         /// The parameter at a curve's deepest interior notch, when its log
         /// error dips below its neighbors' anywhere.
-        std::optional<double> deepest_notch(const RecompressionCurve& curve)
+        std::optional<double> deepest_notch(const RecompressionCurveEvidence& curve)
         {
-            const json::Value& depths = curve.record.params.at("notch_depths");
             std::optional<double> parameter;
             double deepest = 0.0;
             for (std::size_t i = 1; i + 1 < curve.points.size(); ++i)
             {
-                const double depth = depths.at(i).get<double>();
+                const double depth = curve.notch_depths.at(i);
                 if (depth > deepest)
                 {
                     deepest = depth;
@@ -1347,7 +1346,7 @@ namespace lossylab
             return cropped;
         }
 
-        std::optional<Subsampling> known_subsampling(const CompressionHistory& history)
+        std::optional<Subsampling> known_subsampling(const CompressionHistoryEvidence& history)
         {
             if (history.jpeg.has_value() && history.jpeg->detected && history.jpeg->chroma_subsampling.has_value())
             {
@@ -1378,13 +1377,9 @@ namespace lossylab
         }
 
         void add_recompression(const Frame& frame, const CompressionHistoryOptions& options,
-                               CompressionHistory& history, json::Value& params, json::Value& configuration)
+                               CompressionHistoryEvidence& history)
         {
-            json::Value skipped = json::Value::array();
-            json::Value skipped_after_jpeg = json::Value::array();
-            json::Value skipped_for_chroma = json::Value::array();
-            json::Value errors = json::Value::object();
-            json::Value crop;
+            RecompressionOutcome& outcome = history.recompression;
 
             // Only a sweep whose confidence can list a trace is refined.
             const double refine_confidence = std::max(min_refine_confidence, options.min_confidence);
@@ -1408,26 +1403,25 @@ namespace lossylab
                 const int x = (frame.width() - width) / 2 / 16 * 16;
                 const int y = (frame.height() - height) / 2 / 16 * 16;
                 analyzed = crop_frame(frame, x, y, width, height);
-                crop = Rect{static_cast<double>(x), static_cast<double>(y), static_cast<double>(width),
-                            static_cast<double>(height)}
-                           .to_json();
+                outcome.crop = Rect{static_cast<double>(x), static_cast<double>(y), static_cast<double>(width),
+                                    static_cast<double>(height)};
             }
 
             for (const ImageCodec codec : options.recompression_codecs)
             {
                 if (!capabilities().supports(codec))
                 {
-                    skipped.push_back(to_string(codec));
+                    outcome.skipped.push_back(codec);
                     continue;
                 }
                 if (jpeg_only && codec != ImageCodec::Mjpeg)
                 {
-                    skipped_after_jpeg.push_back(to_string(codec));
+                    outcome.skipped_after_jpeg.push_back(codec);
                     continue;
                 }
                 if (full_resolution_chroma && codec == ImageCodec::WebP)
                 {
-                    skipped_for_chroma.push_back(to_string(codec));
+                    outcome.skipped_for_chroma.push_back(codec);
                     continue;
                 }
                 try
@@ -1445,20 +1439,18 @@ namespace lossylab
                                        ? RecompressionPlanes::All
                                        : RecompressionPlanes::Luma;
 
-                    RecompressionCurve coarse = recompression_curve(analyzed, sweep);
-                    std::optional<double> quality = deepest_notch(coarse);
-                    const double confidence = coarse.confidence;
+                    const RecompressionCurve coarse = recompression_curve(analyzed, sweep);
+                    std::optional<double> quality = deepest_notch(coarse.evidence());
+                    const double confidence = coarse.evidence().confidence;
                     const PixelFormat encoded_as = coarse.record.output.pixel_format;
-                    const std::string quality_scale = coarse.configuration.at("quality_scale").is_string()
-                                                          ? coarse.configuration.at("quality_scale").get<std::string>()
-                                                          : std::string();
+                    const std::string quality_scale = coarse.evidence().quality_scale;
 
                     // A notch is never at either end, so it has two coarse
                     // neighbors; the fine sweep runs between them.
                     std::vector<double> fine_parameters;
                     if (quality.has_value() && plan.fine_step > 0.0 && confidence >= refine_confidence)
                     {
-                        const RecompressionPoint* notch = &point_at(coarse, *quality);
+                        const RecompressionPoint* notch = &point_at(coarse.evidence(), *quality);
                         const double previous = (notch - 1)->quality_parameter;
                         const double next = (notch + 1)->quality_parameter;
                         const auto steps = static_cast<int>(std::lround((next - previous) / plan.fine_step));
@@ -1467,17 +1459,17 @@ namespace lossylab
                             fine_parameters.push_back(previous + i * plan.fine_step);
                         }
                     }
-                    history.recompression_curves.push_back(std::move(coarse));
+                    history.recompression_curves.push_back(RecompressionSweep{coarse.configuration, coarse.evidence()});
 
                     if (fine_parameters.size() >= 3)
                     {
                         sweep.parameter_range = std::move(fine_parameters);
-                        RecompressionCurve fine = recompression_curve(analyzed, sweep);
-                        if (const std::optional<double> refined = deepest_notch(fine))
+                        const RecompressionCurve fine = recompression_curve(analyzed, sweep);
+                        if (const std::optional<double> refined = deepest_notch(fine.evidence()))
                         {
                             quality = refined;
                         }
-                        history.recompression_curves.push_back(std::move(fine));
+                        history.recompression_curves.push_back(RecompressionSweep{fine.configuration, fine.evidence()});
                     }
 
                     const long analyzed_pixels = static_cast<long>(analyzed.width()) * analyzed.height();
@@ -1496,25 +1488,9 @@ namespace lossylab
                 }
                 catch (const Error& error)
                 {
-                    errors[to_string(codec)] = error.what();
+                    outcome.errors[to_string(codec)] = error.what();
                 }
             }
-
-            configuration["recompression"] = json::object({
-                {"codecs", json::to_array(options.recompression_codecs,
-                                          [](const ImageCodec codec) { return to_string(codec); })},
-                {"planes", "luma, or all for JPEG XL and JPEG 2000 in RGB"},
-                {"min_refine_confidence", refine_confidence},
-                {"min_trace_pixels", min_recompression_trace_pixels},
-                {"skipped", skipped},
-                {"min_jpeg_only_grid_score", min_jpeg_only_grid_score},
-            });
-            params["recompression"] = json::object({
-                {"crop", crop},
-                {"skipped_after_jpeg", skipped_after_jpeg},
-                {"skipped_for_chroma", skipped_for_chroma},
-                {"errors", errors},
-            });
         }
 
         /// The libjpeg quality `evidence`'s luma table agrees with best, the
@@ -1555,7 +1531,7 @@ namespace lossylab
         /// planes too small for an 8x8 grid.
         std::optional<JpegQuantizationEvidence> pixel_jpeg_evidence(
             const WorkingPlanes& planes, const std::optional<ChromaPairing>& pairing,
-            const std::optional<ChromaSubsamplingEvidence>& chroma, json::Value& luma_grid_scores)
+            const std::optional<ChromaSubsamplingEvidence>& chroma, std::vector<double>& luma_grid_scores)
         {
             if (planes.luma.width < 16 || planes.luma.height < 16)
             {
@@ -1668,13 +1644,11 @@ namespace lossylab
             {
                 return unused("not a JPEG file");
             }
-            const json::Value& decode_params = image.record.params;
-            if (!decode_params.contains("orientation_handling") ||
-                decode_params.at("orientation_handling").get<std::string>() != "reported")
+            if (image.evidence().orientation_handling != "reported")
             {
                 return unused("its orientation was applied");
             }
-            if (image.configuration.contains("converted"))
+            if (image.configuration.pixel_format.has_value() || image.configuration.color.has_value())
             {
                 return unused("it was converted on decode");
             }
@@ -1734,18 +1708,14 @@ namespace lossylab
         }
 
         /// How many of the steps the pixels determine equal the header's.
-        json::Value table_agreement(const QuantizationEstimate* pixels, const QuantizationEstimate* header)
+        JpegTableAgreement table_agreement(const QuantizationEstimate& pixels, const QuantizationEstimate& header)
         {
-            if (pixels == nullptr || header == nullptr)
-            {
-                return {};
-            }
             int matching = 0;
-            for (std::size_t index = 0; index < pixels->values.size(); ++index)
+            for (std::size_t index = 0; index < pixels.values.size(); ++index)
             {
-                matching += pixels->values[index] != 0 && pixels->values[index] == header->values[index];
+                matching += pixels.values[index] != 0 && pixels.values[index] == header.values[index];
             }
-            return json::object({{"determined", pixels->determined}, {"matching", matching}});
+            return JpegTableAgreement{pixels.determined, matching};
         }
 
         CompressionHistory analyze(const Frame& frame, const CompressionHistoryOptions& options,
@@ -1761,9 +1731,9 @@ namespace lossylab
                 throw ConfigError("compression_history() recompression_crop must not be negative");
             }
 
-            CompressionHistory history;
-            StageRecord& record = history.record;
-            record.kind = StageKind::CompressionHistory;
+            CompressionHistory result;
+            CompressionHistoryEvidence history;
+            StageRecord& record = result.record;
             record.implementation = "lossylab";
             record.input = frame.describe();
             record.output = record.input;
@@ -1789,8 +1759,6 @@ namespace lossylab
                 }
             }
 
-            json::Value luma_grid_scores;
-            json::Value pixel_check;
             if (header.evidence.has_value())
             {
                 history.jpeg = header.evidence;
@@ -1801,23 +1769,26 @@ namespace lossylab
                 }
                 if (options.jpeg_pixel_check)
                 {
-                    history.jpeg_pixel_check = pixel_jpeg_evidence(planes, pairing, history.chroma, luma_grid_scores);
+                    history.jpeg_pixel_check =
+                        pixel_jpeg_evidence(planes, pairing, history.chroma, history.luma_grid_scores);
                     if (history.jpeg_pixel_check.has_value())
                     {
                         const JpegQuantizationEvidence& pixels = *history.jpeg_pixel_check;
-                        pixel_check = json::object({
-                            {"detected", pixels.detected},
-                            {"ijg_quality_equal", pixels.ijg_quality == header.evidence->ijg_quality},
-                            {"luma", table_agreement(&pixels.luma, &header.evidence->luma)},
-                            {"chroma", table_agreement(pixels.chroma ? &*pixels.chroma : nullptr,
-                                                       header.evidence->chroma ? &*header.evidence->chroma : nullptr)},
-                        });
+                        JpegPixelAgreement agreement;
+                        agreement.detected = pixels.detected;
+                        agreement.ijg_quality_equal = pixels.ijg_quality == header.evidence->ijg_quality;
+                        agreement.luma = table_agreement(pixels.luma, header.evidence->luma);
+                        if (pixels.chroma.has_value() && header.evidence->chroma.has_value())
+                        {
+                            agreement.chroma = table_agreement(*pixels.chroma, *header.evidence->chroma);
+                        }
+                        history.jpeg_pixel_agreement = agreement;
                     }
                 }
             }
             else
             {
-                history.jpeg = pixel_jpeg_evidence(planes, pairing, history.chroma, luma_grid_scores);
+                history.jpeg = pixel_jpeg_evidence(planes, pairing, history.chroma, history.luma_grid_scores);
                 if (history.jpeg.has_value() && history.jpeg->detected)
                 {
                     CompressionTrace trace = jpeg_trace(*history.jpeg, TraceEvidence::JpegQuantization,
@@ -1840,57 +1811,26 @@ namespace lossylab
                 history.traces.push_back(std::move(trace));
             }
 
-            json::Value params = json::object({
-                {"analyzed_as", planes.analyzed_as},
-                {"chroma", planes.cb.empty()   ? "none"
-                           : planes.achromatic ? "achromatic"
-                                               : to_string(planes.chroma_layout)},
-                {"jpeg_tables", header.evidence.has_value() ? "header" : "pixels"},
-                {"jpeg_header_unused", header.evidence.has_value() ? json::Value() : json::Value(header.unused_because)},
-                {"jpeg_pixel_check", pixel_check},
-                {"jpeg_quantization", json::object({{"luma_grid_scores", luma_grid_scores}})},
-            });
-            json::Value configuration = json::object({
-                {"jpeg_quantization", json::object({
-                                          {"dct", "8x8 orthonormal DCT-II of YCbCr - 128, as JPEG's"},
-                                          {"grid_score", "mean of the 5 best AC lattice fits, each less two "
-                                                         "standard deviations of its noise"},
-                                          {"max_screening_blocks", max_screening_blocks},
-                                          {"rescored_offsets", rescored_offsets},
-                                          {"min_decisive_screening_score", min_decisive_screening_score},
-                                          {"max_grid_blocks", max_grid_blocks},
-                                          {"max_table_blocks", max_table_blocks},
-                                          {"min_lattice_samples", min_lattice_samples},
-                                          {"min_unit_share", min_unit_share},
-                                          {"min_step_score", min_step_score},
-                                          {"min_grid_score", min_grid_score},
-                                          {"min_grid_margin", min_grid_margin},
-                                          {"min_determined_steps", min_determined_steps},
-                                          {"min_tie_breaking_match", min_tie_breaking_match},
-                                          {"min_quality_match", min_quality_match},
-                                      })},
-                {"chroma_subsampling", json::object({
-                                           {"upsamplings", json::array({"triangle", "replicate"})},
-                                           {"max_residual", max_upsampled_residual},
-                                           {"max_phase_ratio", max_phase_ratio},
-                                           {"max_phase_ratio_alone", max_phase_ratio_alone},
-                                           {"max_upsampling_ratio", max_upsampling_ratio},
-                                           {"max_lines", max_pairing_lines},
-                                           {"achromatic_limit", achromatic_limit},
-                                       })},
-                {"min_confidence", options.min_confidence},
-            });
-            add_recompression(frame, options, history, params, configuration);
-            record.params = std::move(params);
-            history.configuration = std::move(configuration);
+            history.analyzed_as = planes.analyzed_as;
+            history.chroma_layout = planes.cb.empty()   ? "none"
+                                    : planes.achromatic ? "achromatic"
+                                                        : to_string(planes.chroma_layout);
+            history.jpeg_tables = header.evidence.has_value() ? "header" : "pixels";
+            if (!header.evidence.has_value())
+            {
+                history.jpeg_header_unused = header.unused_because;
+            }
+            add_recompression(frame, options, history);
             record.modifies_state = false;
 
             std::stable_sort(history.traces.begin(), history.traces.end(),
                              [](const CompressionTrace& left, const CompressionTrace& right)
                              { return left.confidence > right.confidence; });
+            record.evidence = std::move(history);
+            result.configuration = options;
             record.duration_ms = clock.duration_ms();
             record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
-            return history;
+            return result;
         }
     }
 
@@ -1988,13 +1928,8 @@ namespace lossylab
     {
         return json::object({
             {"schema_version", schema_version},
-            {"traces", json::to_array(traces)},
-            {"jpeg", json::optional_or_null(jpeg)},
-            {"jpeg_pixel_check", json::optional_or_null(jpeg_pixel_check)},
-            {"chroma", json::optional_or_null(chroma)},
-            {"recompression_curves", json::to_array(recompression_curves)},
             {"record", record.to_json()},
-            {"configuration", configuration},
+            {"configuration", reflect::to_json(configuration)},
         });
     }
 

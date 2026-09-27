@@ -147,25 +147,25 @@ namespace
 
     bool has_trace(const CompressionHistory& history, const TraceEvidence evidence)
     {
-        return std::any_of(history.traces.begin(), history.traces.end(),
+        return std::any_of(history.evidence().traces.begin(), history.evidence().traces.end(),
                            [evidence](const CompressionTrace& trace) { return trace.evidence == evidence; });
     }
 
     void test_a_never_compressed_image_shows_no_trace()
     {
         const CompressionHistory history = compression_history(texture());
-        assert(history.traces.empty());
-        assert(history.jpeg.has_value() && !history.jpeg->detected);
-        assert(history.chroma.has_value() && history.chroma->subsampling == Subsampling::Yuv444);
-        assert(history.record.kind == StageKind::CompressionHistory);
-        assert(history.record.params.at("analyzed_as").get<std::string>() == "rgb24");
+        assert(history.evidence().traces.empty());
+        assert(history.evidence().jpeg.has_value() && !history.evidence().jpeg->detected);
+        assert(history.evidence().chroma.has_value() && history.evidence().chroma->subsampling == Subsampling::Yuv444);
+        assert(history.record.kind() == StageKind::CompressionHistory);
+        assert(history.evidence().analyzed_as == "rgb24");
 
         // 4:4:4 chroma is not swept with WebP.
         if (capabilities().supports(ImageCodec::WebP))
         {
-            const json::Value& skipped = history.record.params.at("recompression").at("skipped_for_chroma");
-            assert(skipped.size() == 1 && skipped.at(0).get<std::string>() == to_string(ImageCodec::WebP));
-            assert(history.recompression_curves.empty());
+            const std::vector<ImageCodec>& skipped = history.evidence().recompression.skipped_for_chroma;
+            assert(skipped == std::vector<ImageCodec>{ImageCodec::WebP});
+            assert(history.evidence().recompression_curves.empty());
         }
     }
 
@@ -178,24 +178,24 @@ namespace
         {
             const CompressionHistory history =
                 compression_history(after_mjpeg(pristine, 4, pixel_format), without_recompression());
-            assert(history.jpeg->detected);
-            assert(history.jpeg->grid_x == 0 && history.jpeg->grid_y == 0);
-            assert(history.jpeg->chroma_subsampling == subsampling);
+            assert(history.evidence().jpeg->detected);
+            assert(history.evidence().jpeg->grid_x == 0 && history.evidence().jpeg->grid_y == 0);
+            assert(history.evidence().jpeg->chroma_subsampling == subsampling);
 
             // FFmpeg's MJPEG scales MPEG-1's intra matrix by qscale / 8: 16,
             // 19 and 22 become 8, 9 and 11 at qscale 4.
-            assert(history.jpeg->luma.determined >= 5);
-            assert(history.jpeg->luma.values[1] == 8 && history.jpeg->luma.values[8] == 8);
-            assert(history.jpeg->luma.values[2] == 9 && history.jpeg->luma.values[16] == 9);
+            assert(history.evidence().jpeg->luma.determined >= 5);
+            assert(history.evidence().jpeg->luma.values[1] == 8 && history.evidence().jpeg->luma.values[8] == 8);
+            assert(history.evidence().jpeg->luma.values[2] == 9 && history.evidence().jpeg->luma.values[16] == 9);
 
             // FFmpeg's MJPEG uses MPEG-1's intra matrix, not libjpeg's
             // tables, so the libjpeg quality is only the nearest one.
-            assert(history.jpeg->ijg_match < 1.0);
+            assert(history.evidence().jpeg->ijg_match < 1.0);
 
-            const auto jpeg = std::find_if(history.traces.begin(), history.traces.end(),
+            const auto jpeg = std::find_if(history.evidence().traces.begin(), history.evidence().traces.end(),
                                            [](const CompressionTrace& trace)
                                            { return trace.evidence == TraceEvidence::JpegQuantization; });
-            assert(jpeg != history.traces.end());
+            assert(jpeg != history.evidence().traces.end());
             assert(jpeg->codec == ImageCodec::Mjpeg);
             assert(jpeg->subsampling == subsampling);
         }
@@ -208,8 +208,8 @@ namespace
         {
             const CompressionHistory history =
                 compression_history(after_mjpeg(texture(), qscale, "yuvj420p"), without_recompression());
-            assert(history.chroma->subsampling == Subsampling::Yuv420);
-            assert(history.chroma->upsampling == ChromaUpsampling::Replicate);
+            assert(history.evidence().chroma->subsampling == Subsampling::Yuv420);
+            assert(history.evidence().chroma->upsampling == ChromaUpsampling::Replicate);
             assert(has_trace(history, TraceEvidence::ChromaSubsampling));
         }
     }
@@ -218,9 +218,9 @@ namespace
     {
         const Frame cropped = crop_rgb(after_mjpeg(texture(), 4, "yuvj420p"), 5, 3);
         const CompressionHistory history = compression_history(cropped, without_recompression());
-        assert(history.jpeg->detected);
-        assert(history.jpeg->grid_x == 3 && history.jpeg->grid_y == 5);
-        assert(history.jpeg->chroma_subsampling == Subsampling::Yuv420);
+        assert(history.evidence().jpeg->detected);
+        assert(history.evidence().jpeg->grid_x == 3 && history.evidence().jpeg->grid_y == 5);
+        assert(history.evidence().jpeg->chroma_subsampling == Subsampling::Yuv420);
     }
 
     void test_a_jpeg_mostly_clipped_to_black_is_found()
@@ -240,7 +240,7 @@ namespace
         }
         const CompressionHistory history =
             compression_history(after_mjpeg(rgb, 4, "yuvj420p"), without_recompression());
-        assert(history.jpeg->detected);
+        assert(history.evidence().jpeg->detected);
     }
 
     void test_a_jpeg_still_in_its_yuv_is_read_directly()
@@ -254,12 +254,12 @@ namespace
         const Frame yuv = roundtrip(texture(), options).frame;
 
         const CompressionHistory history = compression_history(yuv, without_recompression());
-        assert(history.record.params.at("analyzed_as").get<std::string>() == "yuvj420p");
+        assert(history.evidence().analyzed_as == "yuvj420p");
         assert(history.record.conversions.empty());
-        assert(!history.chroma.has_value());
-        assert(history.jpeg->detected);
-        assert(history.jpeg->chroma_subsampling == Subsampling::Yuv420);
-        assert(history.jpeg->chroma.has_value());
+        assert(!history.evidence().chroma.has_value());
+        assert(history.evidence().jpeg->detected);
+        assert(history.evidence().jpeg->chroma_subsampling == Subsampling::Yuv420);
+        assert(history.evidence().jpeg->chroma.has_value());
     }
 
     void test_gray_and_alpha_frames_are_analyzed()
@@ -268,15 +268,15 @@ namespace
 
         const Frame gray = convert(jpeg, PixelFormat::from_name("gray"), jpeg_color()).frame;
         const CompressionHistory gray_history = compression_history(gray, without_recompression());
-        assert(gray_history.record.params.at("analyzed_as").get<std::string>() == "gray");
-        assert(gray_history.jpeg->detected);
-        assert(gray_history.jpeg->chroma_subsampling == Subsampling::Gray);
-        assert(!gray_history.chroma.has_value());
+        assert(gray_history.evidence().analyzed_as == "gray");
+        assert(gray_history.evidence().jpeg->detected);
+        assert(gray_history.evidence().jpeg->chroma_subsampling == Subsampling::Gray);
+        assert(!gray_history.evidence().chroma.has_value());
 
         const Frame rgba = convert(jpeg, PixelFormat::from_name("rgba"), jpeg.color()).frame;
         const CompressionHistory rgba_history = compression_history(rgba, without_recompression());
         assert(!rgba_history.record.conversions.empty());
-        assert(rgba_history.jpeg->detected);
+        assert(rgba_history.evidence().jpeg->detected);
     }
 
     void test_an_achromatic_frame_claims_no_chroma_layout()
@@ -285,10 +285,10 @@ namespace
         const Frame gray = convert(jpeg, PixelFormat::from_name("gray"), jpeg_color()).frame;
         const Frame rgb = convert(gray, PixelFormat::from_name("rgb24"), jpeg.color()).frame;
         const CompressionHistory history = compression_history(rgb, without_recompression());
-        assert(history.record.params.at("chroma").get<std::string>() == "achromatic");
-        assert(history.jpeg->detected);
-        assert(!history.jpeg->chroma_subsampling.has_value());
-        assert(!history.chroma.has_value());
+        assert(history.evidence().chroma_layout == "achromatic");
+        assert(history.evidence().jpeg->detected);
+        assert(!history.evidence().jpeg->chroma_subsampling.has_value());
+        assert(!history.evidence().chroma.has_value());
     }
 
     void test_a_webp_saved_as_rgb_shows_its_quality()
@@ -310,20 +310,20 @@ namespace
         const Frame rgb = convert(decoded, PixelFormat::from_name("rgb24"), pristine.color()).frame;
 
         const CompressionHistory history = compression_history(rgb);
-        assert(!history.jpeg->detected);
-        assert(history.chroma->subsampling == Subsampling::Yuv420);
-        const auto webp = std::find_if(history.traces.begin(), history.traces.end(),
+        assert(!history.evidence().jpeg->detected);
+        assert(history.evidence().chroma->subsampling == Subsampling::Yuv420);
+        const auto webp = std::find_if(history.evidence().traces.begin(), history.evidence().traces.end(),
                                        [](const CompressionTrace& trace)
                                        { return trace.evidence == TraceEvidence::Recompression; });
-        assert(webp != history.traces.end());
+        assert(webp != history.evidence().traces.end());
         assert(webp->codec == ImageCodec::WebP);
         assert(webp->quality.has_value() && std::abs(*webp->quality - 80.0) <= 3.0);
-        assert(history.recompression_curves.size() == 2);
+        assert(history.evidence().recompression_curves.size() == 2);
 
         // A coarse curve short of min_confidence gets no fine sweep.
         CompressionHistoryOptions unreachable;
         unreachable.min_confidence = 1.0;
-        assert(compression_history(rgb, unreachable).recompression_curves.size() == 1);
+        assert(compression_history(rgb, unreachable).evidence().recompression_curves.size() == 1);
     }
 
     void test_a_detected_jpeg_is_swept_with_mjpeg_alone()
@@ -331,17 +331,16 @@ namespace
         CompressionHistoryOptions options;
         options.recompression_codecs = {ImageCodec::WebP, ImageCodec::Mjpeg};
         const CompressionHistory history = compression_history(after_mjpeg(texture(), 4, "yuvj420p"), options);
-        assert(history.jpeg->detected && *history.jpeg->grid_score > 0.8);
-        assert(!history.recompression_curves.empty());
-        for (const RecompressionCurve& curve : history.recompression_curves)
+        assert(history.evidence().jpeg->detected && *history.evidence().jpeg->grid_score > 0.8);
+        assert(!history.evidence().recompression_curves.empty());
+        for (const RecompressionSweep& sweep : history.evidence().recompression_curves)
         {
-            assert(curve.configuration.at("codec").get<std::string>() == to_string(ImageCodec::Mjpeg));
+            assert(sweep.options.codec == ImageCodec::Mjpeg);
         }
-        const json::Value& skipped_after_jpeg = history.record.params.at("recompression").at("skipped_after_jpeg");
+        const std::vector<ImageCodec>& skipped_after_jpeg = history.evidence().recompression.skipped_after_jpeg;
         if (capabilities().supports(ImageCodec::WebP))
         {
-            assert(skipped_after_jpeg.size() == 1);
-            assert(skipped_after_jpeg.at(0).get<std::string>() == to_string(ImageCodec::WebP));
+            assert(skipped_after_jpeg == std::vector<ImageCodec>{ImageCodec::WebP});
         }
     }
 
@@ -396,38 +395,39 @@ namespace
         const DecodedImage image = decode_image(source);
         const JpegInfo& header = *image.stream().jpeg;
         const CompressionHistory history = compression_history(image, without_recompression());
-        assert(history.record.params.at("jpeg_tables").get<std::string>() == "header");
-        assert(history.jpeg->detected && history.jpeg->luma.determined == 64);
-        assert(!history.jpeg->grid_score.has_value() && !history.jpeg->blocks.has_value());
-        assert(history.jpeg->chroma_subsampling == Subsampling::Yuv420);
+        assert(history.evidence().jpeg_tables == "header");
+        assert(history.evidence().jpeg->detected && history.evidence().jpeg->luma.determined == 64);
+        assert(!history.evidence().jpeg->grid_score.has_value() && !history.evidence().jpeg->blocks.has_value());
+        assert(history.evidence().jpeg->chroma_subsampling == Subsampling::Yuv420);
         for (const JpegInfo::QuantizationTable& table : header.quantization_tables)
         {
             if (table.id == header.components[0].quantization_table)
             {
-                assert(history.jpeg->luma.values == table.values);
+                assert(history.evidence().jpeg->luma.values == table.values);
             }
         }
-        assert(history.traces.front().evidence == TraceEvidence::JpegHeader);
-        assert(history.traces.front().confidence == 1.0);
-        assert(!history.jpeg_pixel_check.has_value());
+        assert(history.evidence().traces.front().evidence == TraceEvidence::JpegHeader);
+        assert(history.evidence().traces.front().confidence == 1.0);
+        assert(!history.evidence().jpeg_pixel_check.has_value());
 
         // The pixels' estimate, asked for, agrees with the header.
         CompressionHistoryOptions checked = without_recompression();
         checked.jpeg_pixel_check = true;
         const CompressionHistory cross_checked = compression_history(image, checked);
-        assert(cross_checked.jpeg_pixel_check.has_value() && cross_checked.jpeg_pixel_check->detected);
-        const json::Value& luma_agreement = cross_checked.record.params.at("jpeg_pixel_check").at("luma");
-        assert(luma_agreement.at("matching").get<int>() == luma_agreement.at("determined").get<int>());
+        const CompressionHistoryEvidence& checked_evidence = cross_checked.evidence();
+        assert(checked_evidence.jpeg_pixel_check.has_value() && checked_evidence.jpeg_pixel_check->detected);
+        const JpegTableAgreement& luma_agreement = checked_evidence.jpeg_pixel_agreement->luma;
+        assert(luma_agreement.matching == luma_agreement.determined);
 
         // A bare frame, or a decode converted to RGB, is read off its pixels.
         const CompressionHistory from_frame = compression_history(image.frame, without_recompression());
-        assert(from_frame.record.params.at("jpeg_tables").get<std::string>() == "pixels");
-        assert(from_frame.traces.front().evidence == TraceEvidence::JpegQuantization);
+        assert(from_frame.evidence().jpeg_tables == "pixels");
+        assert(from_frame.evidence().traces.front().evidence == TraceEvidence::JpegQuantization);
         DecodeImageOptions to_rgb;
         to_rgb.pixel_format = PixelFormat::from_name("rgb24");
         const CompressionHistory converted = compression_history(decode_image(source, to_rgb), without_recompression());
-        assert(converted.record.params.at("jpeg_tables").get<std::string>() == "pixels");
-        assert(converted.record.params.at("jpeg_header_unused").get<std::string>() == "it was converted on decode");
+        assert(converted.evidence().jpeg_tables == "pixels");
+        assert(converted.evidence().jpeg_header_unused == "it was converted on decode");
     }
 
     void test_a_jpeg_2000_saved_as_rgb_or_gray_shows_its_ratio()
@@ -457,11 +457,11 @@ namespace
             const CompressionHistory history =
                 compression_history(roundtrip(*compressed.source, encode).frame, options);
 
-            assert(history.record.params.at("recompression").at("errors").empty());
-            const auto trace = std::find_if(history.traces.begin(), history.traces.end(),
+            assert(history.evidence().recompression.errors.empty());
+            const auto trace = std::find_if(history.evidence().traces.begin(), history.evidence().traces.end(),
                                             [](const CompressionTrace& candidate)
                                             { return candidate.evidence == TraceEvidence::Recompression; });
-            assert(trace != history.traces.end());
+            assert(trace != history.evidence().traces.end());
             assert(trace->codec == ImageCodec::Jpeg2000);
 
             // Re-encoding reproduces the image over a range of ratios, since
@@ -481,12 +481,23 @@ namespace
     {
         const CompressionHistory history = compression_history(after_mjpeg(texture(), 4, "yuvj420p"));
         const json::Value document = history.to_json();
-        assert(document.at("jpeg").at("detected").get<bool>());
-        const json::Value& traces = document.at("traces");
+        const json::Value& evidence = document.at("record").at("evidence");
+        assert(evidence.at("jpeg").at("detected").get<bool>());
+        const json::Value& traces = evidence.at("traces");
         assert(std::any_of(traces.begin(), traces.end(), [](const json::Value& trace)
                            { return trace.at("evidence").get<std::string>() == "jpeg_quantization"; }));
         assert(document.at("record").at("kind").get<std::string>() == "compression_history");
-        assert(document.at("record").at("params").at("jpeg_quantization").at("luma_grid_scores").size() == 64);
+        assert(evidence.at("luma_grid_scores").size() == 64);
+
+        // The configuration is the four options, with nothing the build fixes.
+        const json::Value& configuration = document.at("configuration");
+        assert(configuration.size() == 4);
+        assert(configuration.at("recompression_crop") == 1024);
+        assert(configuration.at("jpeg_pixel_check") == false);
+
+        // Every result survives a round trip through the record.
+        const StageRecord parsed = StageRecord::from_json(history.record.to_json());
+        assert(parsed.to_json() == history.record.to_json());
     }
 
     void test_bad_options_are_refused()
@@ -506,7 +517,7 @@ namespace
         options.recompression_crop = 0;
         options.recompression_codecs = {ImageCodec::Png};
         const CompressionHistory history = compression_history(texture(64, 64), options);
-        assert(history.record.params.at("recompression").at("errors").contains("png"));
+        assert(history.evidence().recompression.errors.contains("png"));
     }
 
     void test_a_frame_with_embedded_data_is_analyzed_like_any_other()
@@ -516,7 +527,7 @@ namespace
         Frame frame = decode_image(Source::from_path(data_path("testsrc_64x48_p3_orientation6.jpg"))).frame;
         frame.set_sample_aspect_ratio(Rational{4, 3});
         const CompressionHistory history = compression_history(frame);
-        assert(history.record.params.at("recompression").at("errors").empty());
+        assert(history.evidence().recompression.errors.empty());
     }
 
     // -----------------------------------------------------------------------
@@ -536,18 +547,18 @@ namespace
         const Frame rgb = texture(64, 48);
         const RecompressionCurve from_rgb = recompression_curve(rgb, mjpeg_sweep());
         assert(from_rgb.record.output.pixel_format.name() == "yuvj420p");
-        assert(from_rgb.record.params.at("alpha").get<std::string>() == "kept");
+        assert(from_rgb.evidence().alpha == "kept");
 
         const Frame rgba = convert(rgb, PixelFormat::from_name("rgba"), rgb.color()).frame;
         const RecompressionCurve from_rgba = recompression_curve(rgba, mjpeg_sweep());
-        assert(from_rgba.record.params.at("alpha").get<std::string>() == "dropped");
+        assert(from_rgba.evidence().alpha == "dropped");
 
         const Frame gray = convert(rgb, PixelFormat::from_name("gray"), jpeg_color()).frame;
         RecompressionOptions luma_only = mjpeg_sweep();
         luma_only.planes = RecompressionPlanes::Luma;
         const RecompressionCurve from_gray = recompression_curve(gray, luma_only);
         assert(from_gray.record.output.pixel_format.name() == "yuvj444p");
-        assert(from_gray.configuration.at("error").get<std::string>() == "mse_y");
+        assert(from_gray.configuration.planes == RecompressionPlanes::Luma);
 
         if (capabilities().supports(ImageCodec::WebP))
         {

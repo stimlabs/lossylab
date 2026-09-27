@@ -83,10 +83,10 @@ def test_capture_decode_image_returns_the_frame_on_success():
     result = lossylab.capture_decode_image(lossylab.Source.from_path(str(DATA_DIR / "testsrc_64x48.png")))
     assert result.ok()
     assert result.value().frame.width() == 64
-    assert result.value().record.kind == lossylab.StageKind.Decode
+    assert result.value().record.kind == lossylab.StageKind.DecodeImage
     as_dict = result.to_dict()
     assert as_dict["value"]["probe"]["format_name"] == "png_pipe"
-    assert as_dict["value"]["record"]["kind"] == "decode"
+    assert as_dict["value"]["record"]["kind"] == "decode_image"
 
 
 def test_capture_decode_image_turns_a_missing_file_into_an_error():

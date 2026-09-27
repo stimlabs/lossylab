@@ -62,22 +62,22 @@ namespace
         for (const int prior : {4, 6, 9})
         {
             const RecompressionCurve curve = recompression_curve(compressed_once(prior), mjpeg_sweep());
-            assert(curve.estimated_prior_parameter == static_cast<double>(prior));
-            assert(curve.confidence >= 0.5);
+            assert(curve.evidence().estimated_prior_parameter == static_cast<double>(prior));
+            assert(curve.evidence().confidence >= 0.5);
         }
     }
 
     void test_a_never_compressed_frame_shows_no_ghost()
     {
         const RecompressionCurve curve = recompression_curve(pristine(), mjpeg_sweep());
-        assert(!curve.estimated_prior_parameter.has_value());
-        assert(curve.confidence < 0.5);
+        assert(!curve.evidence().estimated_prior_parameter.has_value());
+        assert(curve.evidence().confidence < 0.5);
 
         // Without a prior, re-encoding more coarsely always changes more.
-        for (std::size_t i = 1; i < curve.points.size(); ++i)
+        for (std::size_t i = 1; i < curve.evidence().points.size(); ++i)
         {
-            assert(curve.points[i].error > curve.points[i - 1].error);
-            assert(curve.points[i].bits_per_pixel < curve.points[i - 1].bits_per_pixel);
+            assert(curve.evidence().points[i].error > curve.evidence().points[i - 1].error);
+            assert(curve.evidence().points[i].bits_per_pixel < curve.evidence().points[i - 1].bits_per_pixel);
         }
     }
 
@@ -86,8 +86,8 @@ namespace
         RecompressionOptions options = mjpeg_sweep();
         options.metric = Metric::Ssim;
         const RecompressionCurve curve = recompression_curve(compressed_once(6), options);
-        assert(curve.estimated_prior_parameter == 6.0);
-        assert(curve.configuration.at("error").get<std::string>() == "1 - ssim");
+        assert(curve.evidence().estimated_prior_parameter == 6.0);
+        assert(curve.configuration.metric == Metric::Ssim);
     }
 
     void test_the_sweep_is_sorted_and_recorded()
@@ -96,15 +96,20 @@ namespace
         options.codec = ImageCodec::Mjpeg;
         options.parameter_range = {8, 3, 5, 3};
         const RecompressionCurve curve = recompression_curve(compressed_once(5), options);
-        assert(curve.points.size() == 3);
-        assert(curve.points[0].quality_parameter == 3 && curve.points[2].quality_parameter == 8);
+        assert(curve.evidence().points.size() == 3);
+        assert(curve.evidence().points[0].quality_parameter == 3 && curve.evidence().points[2].quality_parameter == 8);
 
         const StageRecord& record = curve.record;
-        assert(record.kind == StageKind::RecompressionCurve);
+        assert(record.kind() == StageKind::RecompressionCurve);
         assert(record.implementation == "mjpeg+mjpeg");
-        assert(record.params.at("notch_depths").size() == 3);
-        assert(curve.configuration.at("quality_scale").get<std::string>().starts_with("qscale"));
+        assert(curve.evidence().notch_depths.size() == 3);
+        assert(curve.evidence().quality_scale.starts_with("qscale"));
         assert(curve.to_json().contains("record"));
+
+        // The configuration is what the sweep ran with: sorted without
+        // repeats, and the format and color it picked filled in.
+        assert(curve.configuration.parameter_range == (std::vector<double>{3, 5, 8}));
+        assert(curve.configuration.pixel_format.has_value() && curve.configuration.color.has_value());
 
         // Duplicates collapse, which can leave too few points.
         options.parameter_range = {3, 3, 4};
@@ -151,8 +156,8 @@ namespace
             options.parameter_range.push_back(quality);
         }
         const RecompressionCurve ghost = recompression_curve(once, options);
-        assert(ghost.estimated_prior_parameter == 60.0);
-        assert(!recompression_curve(source, options).estimated_prior_parameter.has_value());
+        assert(ghost.evidence().estimated_prior_parameter == 60.0);
+        assert(!recompression_curve(source, options).evidence().estimated_prior_parameter.has_value());
     }
 
     void test_an_avif_ghost_under_the_same_encoder_and_settings()
@@ -181,7 +186,7 @@ namespace
             encode.rate_control = RateControl::quality(prior);
             encode.encoder_options = encoder_options;
             const RecompressionCurve ghost = recompression_curve(roundtrip(source, encode).frame, options);
-            assert(ghost.estimated_prior_parameter == static_cast<double>(prior));
+            assert(ghost.evidence().estimated_prior_parameter == static_cast<double>(prior));
         }
 
         // A never-compressed frame can show a notch too (here at crf 59, with
@@ -208,9 +213,9 @@ namespace
             encode.pixel_format = PixelFormat::from_name("rgb24");
             encode.rate_control = RateControl::quality(prior);
             const RecompressionCurve ghost = recompression_curve(roundtrip(source, encode).frame, options);
-            assert(ghost.estimated_prior_parameter == prior);
+            assert(ghost.evidence().estimated_prior_parameter == prior);
         }
-        assert(!recompression_curve(source, options).estimated_prior_parameter.has_value());
+        assert(!recompression_curve(source, options).evidence().estimated_prior_parameter.has_value());
     }
 }
 

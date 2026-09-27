@@ -54,18 +54,20 @@ namespace
         const EncodeToTargetResult result =
             encode_to_target(source, mjpeg_options(), target_of(EncodeTarget::Kind::BitsPerPixel, 3.0, 0.15));
 
-        assert(result.converged);
-        assert(std::abs(result.achieved - 3.0) <= 0.15);
-        assert(result.quality_parameter == std::round(result.quality_parameter));
-        assert(result.iterations >= 1 && result.iterations <= 8);
-        assert(std::abs(result.achieved - static_cast<double>(result.bytes.size()) * 8.0 / (64.0 * 48.0)) < 1e-9);
+        const EncodeSearch& search = result.search();
+        assert(search.converged);
+        assert(std::abs(search.achieved - 3.0) <= 0.15);
+        assert(search.quality_parameter == std::round(search.quality_parameter));
+        assert(!search.attempts.empty() && search.attempts.size() <= 8);
+        assert(std::abs(search.achieved - static_cast<double>(result.bytes.size()) * 8.0 / (64.0 * 48.0)) < 1e-9);
+        assert(search.target.kind == EncodeTarget::Kind::BitsPerPixel);
 
-        const json::Value& search = result.record.params.at("search");
-        assert(search.at("attempts").size() == static_cast<std::size_t>(result.iterations));
-        assert(search.at("converged").get<bool>());
-        assert(result.configuration.at("target").at("kind").get<std::string>() == "bpp");
+        // The configuration is the encode that won, with the quality the search
+        // settled on, so replaying it needs no search.
+        const EncodeImageOptions& configuration = std::get<EncodeImageOptions>(result.configuration);
+        assert(configuration.rate_control.quality_parameter() == search.quality_parameter);
         assert(result.record.encoder_settings.at("resolved").at("fixed_qscale").get<double>() ==
-               result.quality_parameter);
+               search.quality_parameter);
     }
 
     void test_an_image_is_driven_to_a_psnr_target()
@@ -81,8 +83,8 @@ namespace
 
         const EncodeToTargetResult result = encode_to_target(source_in("yuv420p", ColorRange::Limited), options,
                                                              target_of(EncodeTarget::Kind::Psnr, 32.0, 0.5));
-        assert(result.converged);
-        assert(std::abs(result.achieved - 32.0) <= 0.5);
+        assert(result.search().converged);
+        assert(std::abs(result.search().achieved - 32.0) <= 0.5);
     }
 
     void test_an_unreachable_target_reports_that_it_did_not_converge()
@@ -90,12 +92,12 @@ namespace
         const Frame source = source_in("yuvj420p", ColorRange::Full);
         const EncodeToTargetResult result =
             encode_to_target(source, mjpeg_options(), target_of(EncodeTarget::Kind::BitsPerPixel, 50.0, 0.1));
-        assert(!result.converged);
+        assert(!result.search().converged);
         assert(!result.bytes.empty());
 
         // The search walked up to the finest qscale, the closest it could get.
-        assert(result.quality_parameter == 1.0);
-        assert(!result.record.params.at("search").at("converged").get<bool>());
+        assert(result.search().quality_parameter == 1.0);
+        assert(result.record.to_json().at("evidence").at("search").at("converged") == false);
     }
 
     void test_a_clip_is_driven_to_a_bits_per_pixel_target()
@@ -129,9 +131,9 @@ namespace
 
         const EncodeToTargetResult result =
             encode_to_target(clip, options, target_of(EncodeTarget::Kind::BitsPerPixel, 1.0, 0.1));
-        assert(result.converged);
-        assert(std::abs(result.achieved - 1.0) <= 0.1);
-        assert(result.record.kind == StageKind::EncodeVideo);
+        assert(result.search().converged);
+        assert(std::abs(result.search().achieved - 1.0) <= 0.1);
+        assert(result.record.kind() == StageKind::EncodeVideo);
     }
 
     void test_a_lossless_encode_has_nothing_to_search()

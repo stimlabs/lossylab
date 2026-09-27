@@ -6,6 +6,8 @@
 #include "lossylab/core/pixel_format.hpp"
 #include "lossylab/core/rational.hpp"
 #include "lossylab/core/reflect.hpp"
+#include "lossylab/core/stage_evidence.hpp"
+#include "lossylab/core/stage_kind.hpp"
 #include "lossylab/core/strict.hpp"
 #include "lossylab/io/probe.hpp"
 
@@ -17,31 +19,6 @@
 
 namespace lossylab
 {
-    /// What kind of operation a stage performed. One member per operation the
-    /// design specifies, so a record can be grouped and compared by stage type
-    /// across a whole dataset.
-    enum class StageKind
-    {
-        Decode,
-        Probe,
-        Convert,
-        ChromaRoundtrip,
-        Reinterpret,
-        Resize,
-        Filter,
-        EncodeImage,
-        EncodeVideo,
-        Roundtrip,
-        AnimateStill,
-        Measure,
-        Compare,
-        RecompressionCurve,
-        CompressionHistory
-    };
-
-    std::string to_string(StageKind kind);
-    StageKind stage_kind_from_string(std::string_view name);
-
     /// Coded picture type. Frame type drives compression severity, so training
     /// samples are stratified on it and audits report its distribution.
     enum class PictureType
@@ -124,16 +101,14 @@ namespace lossylab
     /// processing, whatever the pipeline looked like.
     struct StageRecord
     {
-        StageKind kind = StageKind::Convert;
-
         /// The concrete implementation, e.g. "swscale", "zscale", "libx264".
         std::string implementation;
 
-        /// Per-file evidence: values this stage resolved from the file it
-        /// processed (what was measured as, what was detected, which stream was
-        /// read). The options the stage ran with are not here; they are the
-        /// same for every file and live in `ProcessingRecord::configurations()`.
-        json::Value params;
+        /// What this stage found out about its input: what it measured as,
+        /// what it detected, what it measured. One type per stage kind, which
+        /// is the stage's kind. The options the stage ran with are not here;
+        /// they live in `ProcessingRecord::configurations()`.
+        StageEvidence evidence;
 
         /// True when this stage's output is the input of the next stage, so
         /// replaying the chain has to run it. False for a stage that only
@@ -158,7 +133,7 @@ namespace lossylab
         std::vector<FrameStats> frames;
 
         /// Encoder configuration as resolved, including rate control and GOP
-        /// structure. Separate from `params` because it is the part that has to
+        /// structure. Separate from `evidence` because it is the part that has to
         /// match across classes for an equalization to be honest.
         json::Value encoder_settings;
 
@@ -181,11 +156,14 @@ namespace lossylab
         /// `duration_ms - ffmpeg_duration_ms` is this library's own overhead.
         double ffmpeg_duration_ms = 0.0;
 
+        /// The kind of operation, which the type of `evidence` states.
+        [[nodiscard]] StageKind kind() const noexcept { return stage_kind(evidence); }
+
         [[nodiscard]] json::Value to_json() const;
         static StageRecord from_json(const json::Value& value);
     };
 
-    LOSSYLAB_REFLECT(StageRecord, kind, implementation, params, modifies_state, input, output, conversions, transform,
+    LOSSYLAB_REFLECT(StageRecord, implementation, evidence, modifies_state, input, output, conversions, transform,
                       block_grid, frames, encoder_settings, achieved_bpp, seed, reproducible, duration_ms,
                       ffmpeg_duration_ms);
 
@@ -202,18 +180,21 @@ namespace lossylab
         /// identity (see `build_info()`) and the machine (see `diagnostics()`).
         [[nodiscard]] static ProcessingRecord for_this_build();
 
-        /// Adds a stage together with the options it ran with (`Strict` mode,
-        /// kernels, thresholds, encoder options, after defaults and
-        /// randomization were resolved). The options are static for the whole
-        /// record: a run with other options or another build is a new record.
-        void append(StageRecord stage, json::Value configuration = json::Value::object());
+        /// Adds a stage together with what it was told to do, resolved
+        /// (`Strict` mode, kernels, thresholds, encoder options, after
+        /// defaults and randomization). Throws ConfigError when the
+        /// configuration belongs to another kind of stage.
+        void append(StageRecord stage, StageConfiguration configuration);
 
         [[nodiscard]] const std::vector<StageRecord>& stages() const noexcept { return m_stages; }
 
-        /// The options of each stage, at the same position as in `stages()`.
-        /// Replaying stage `i` is applying `configurations()[i]` to the output
-        /// of every earlier stage that modifies state.
-        [[nodiscard]] const std::vector<json::Value>& configurations() const noexcept { return m_configurations; }
+        /// The configuration of each stage, at the same position as in
+        /// `stages()`. Replaying stage `i` is applying `configurations()[i]`
+        /// to the output of every earlier stage that modifies state.
+        [[nodiscard]] const std::vector<StageConfiguration>& configurations() const noexcept
+        {
+            return m_configurations;
+        }
         [[nodiscard]] bool empty() const noexcept { return m_stages.empty(); }
         [[nodiscard]] std::size_t size() const noexcept { return m_stages.size(); }
 
@@ -269,6 +250,6 @@ namespace lossylab
         json::Value m_diagnostics;
         std::optional<ProbeResult> m_origin;
         std::vector<StageRecord> m_stages;
-        std::vector<json::Value> m_configurations;
+        std::vector<StageConfiguration> m_configurations;
     };
 }

@@ -585,7 +585,7 @@ namespace lossylab
         VideoReaderOptions options;
         StreamInfo stream;
         StageRecord record;
-        json::Value configuration;
+        DecodeVideoConfiguration configuration;
     };
 
     VideoReader::VideoReader(const Source& source, const VideoReaderOptions& options)
@@ -597,7 +597,7 @@ namespace lossylab
         }
         m_impl->source = source;
         m_impl->options = options;
-        m_impl->record.kind = StageKind::Decode;
+        m_impl->record.evidence = DecodeVideoEvidence{};
 
         // Probing first means an unreadable file fails here rather than on the
         // first frames() call, and gives stream() something to return.
@@ -632,6 +632,8 @@ namespace lossylab
             }
         }
         m_impl->stream = *stream;
+        m_impl->configuration.reader = options;
+        m_impl->configuration.reader.stream_index = stream->index;
     }
 
     VideoReader::~VideoReader() = default;
@@ -703,13 +705,12 @@ namespace lossylab
         const bool converting = options.pixel_format.has_value() || options.color.has_value();
 
         StageRecord record;
-        record.kind = StageKind::Decode;
         record.implementation = decoder_name;
         record.transform = CoordinateTransform::identity();
         record.reproducible = options.thread_count == 1 || (!options.export_qp_maps && !options.export_motion_vectors);
 
         int decoded_count = 0;
-        int selected_count = 0;
+        std::vector<int> frame_indices;
 
         // Returns false once reading should stop.
         const auto handle = [&](const AVFrame& raw) -> bool
@@ -744,12 +745,12 @@ namespace lossylab
                 candidate.frame = std::move(converted.frame);
             }
 
-            if (selected_count == 0)
+            if (frame_indices.empty())
             {
                 record.input = native;
                 record.output = candidate.frame.describe();
             }
-            ++selected_count;
+            frame_indices.push_back(index);
             record.frames.push_back(candidate.stats);
 
             const bool wants_more = deliver(std::move(candidate));
@@ -810,28 +811,15 @@ namespace lossylab
             drain();
         }
 
-        if (selected_count == 0)
+        if (frame_indices.empty())
         {
             record.input =
                 FormatDescription{stream_info.width, stream_info.height, stream_info.pixel_format, stream_info.color};
             record.output = record.input;
         }
-        record.params = json::object({
-            {"source_sha256", m_impl->source.sha256()},
-            {"codec", decoder_name},
-            {"stream_index", stream_index},
-            {"tagged_color", stream_info.color.to_json()},
-            {"color_fully_tagged", stream_info.color_fully_tagged},
-            {"frames_decoded", decoded_count},
-            {"frames_selected", selected_count},
-        });
-        m_impl->configuration = json::object({
-            {"selector", select.to_json()},
-            {"thread_count", options.thread_count},
-            {"export_qp_maps", options.export_qp_maps},
-            {"export_motion_vectors", options.export_motion_vectors},
-            {"assumed_color", options.assumed_color.to_json()},
-        });
+        record.evidence = DecodeVideoEvidence{m_impl->source.sha256(), stream_info.color,
+                                              stream_info.color_fully_tagged, decoded_count, select.to_json()};
+        m_impl->configuration.frame_indices = std::move(frame_indices);
         record.duration_ms = clock.duration_ms();
         record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
         m_impl->record = std::move(record);
@@ -842,7 +830,7 @@ namespace lossylab
         return m_impl->record;
     }
 
-    const json::Value& VideoReader::configuration() const noexcept
+    const DecodeVideoConfiguration& VideoReader::configuration() const noexcept
     {
         return m_impl->configuration;
     }

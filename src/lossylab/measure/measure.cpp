@@ -860,17 +860,10 @@ namespace lossylab
 
     json::Value MeasureResult::to_json() const
     {
-        json::Value pooled_summaries = json::Value::object();
-        for (const auto& [name, summary] : pooled)
-        {
-            pooled_summaries[name] = reflect::to_json(summary);
-        }
         return json::object({
             {"schema_version", schema_version},
-            {"frames", json::to_array(frames)},
-            {"pooled", pooled_summaries},
             {"record", record.to_json()},
-            {"configuration", configuration},
+            {"configuration", reflect::to_json(configuration)},
         });
     }
 
@@ -878,12 +871,8 @@ namespace lossylab
     {
         return json::object({
             {"schema_version", schema_version},
-            {"frames", json::to_array(frames, [](const std::map<std::string, double>& metrics) {
-                 return json::to_object(metrics);
-             })},
-            {"pooled", json::to_object(pooled)},
             {"record", record.to_json()},
-            {"configuration", configuration},
+            {"configuration", reflect::to_json(configuration)},
         });
     }
 
@@ -900,17 +889,12 @@ namespace lossylab
     {
         return json::object({
             {"schema_version", schema_version},
-            {"points", json::to_array(points)},
-            {"estimated_prior_parameter", json::optional_or_null(estimated_prior_parameter)},
-            {"confidence", confidence},
             {"record", record.to_json()},
-            {"configuration", configuration},
+            {"configuration", reflect::to_json(configuration)},
         });
     }
 
-    MeasureResult measure(const std::vector<Frame>& frames,
-                          const std::vector<Analyzer>& analyzers,
-                          const MeasureOptions& options)
+    MeasureResult measure(const std::vector<Frame>& frames, const MeasureOptions& options)
     {
         const detail::StageClock clock;
 
@@ -918,7 +902,7 @@ namespace lossylab
         {
             throw ConfigError("measure() received no frames");
         }
-        if (analyzers.empty())
+        if (options.analyzers.empty())
         {
             throw ConfigError("measure() received no analyzers");
         }
@@ -937,7 +921,7 @@ namespace lossylab
         }
 
         std::vector<Analyzer> distinct_analyzers;
-        for (const Analyzer analyzer : analyzers)
+        for (const Analyzer analyzer : options.analyzers)
         {
             if (std::find(distinct_analyzers.begin(), distinct_analyzers.end(), analyzer) ==
                 distinct_analyzers.end())
@@ -960,82 +944,77 @@ namespace lossylab
             }
         }
 
-        MeasureResult result;
-        result.frames.resize(frames.size());
+        MeasureEvidence evidence;
+        evidence.frames.resize(frames.size());
         for (std::size_t index = 0; index < frames.size(); ++index)
         {
-            result.frames[index].index = static_cast<int>(index);
+            evidence.frames[index].index = static_cast<int>(index);
         }
 
+        MeasureResult result;
         StageRecord& record = result.record;
-        record.kind = StageKind::Measure;
         record.modifies_state = false;
         record.implementation = "libavfilter";
         record.input = format;
         record.output = format;
         record.transform = CoordinateTransform::identity();
 
-        json::Value analyzer_names = json::Value::array();
-        json::Value measured_as = json::Value::object();
-        json::Value methods = json::Value::object();
         MeasuredFrames measured_frames(frames, options.strict, record.conversions, "measure()");
 
         for (const Analyzer analyzer : distinct_analyzers)
         {
             const std::vector<Frame>& measured = measured_frames.for_analyzer(analyzer);
-            const std::string name = to_string(analyzer);
-            analyzer_names.push_back(name);
-            measured_as[name] = measured.front().pixel_format().name();
+            evidence.measured_as[to_string(analyzer)] = measured.front().pixel_format().name();
 
             if (analyzer == Analyzer::Noise)
             {
-                methods[name] = "tai_yang_edge_masked_immerkaer";
                 for (std::size_t index = 0; index < measured.size(); ++index)
                 {
                     if (const std::optional<double> sigma = noise_sigma(measured[index]))
                     {
-                        result.frames[index].noise_sigma = *sigma;
+                        evidence.frames[index].noise_sigma = *sigma;
                     }
                 }
                 continue;
             }
 
             const std::string filter = filter_for(analyzer);
-            const std::string arguments = filter_arguments(analyzer);
-            methods[name] = filter + "=" + arguments;
-
-            AnalyzerGraph graph(measured.front(), filter, arguments);
+            AnalyzerGraph graph(measured.front(), filter, filter_arguments(analyzer));
             const std::vector<FrameMetadata> metadata = graph.run(measured);
             for (std::size_t index = 0; index < measured.size(); ++index)
             {
-                read_filter_values(analyzer, metadata[index], measured[index], result.frames[index]);
+                read_filter_values(analyzer, metadata[index], measured[index], evidence.frames[index]);
             }
         }
 
-        result.pooled = pool_measurements(result.frames);
+        evidence.pooled = pool_measurements(evidence.frames);
 
-        record.params = json::object({
-            {"frame_count", frames.size()},
-            {"measured_as", measured_as},
-        });
-        result.configuration = json::object({
-            {"analyzers", analyzer_names},
-            {"methods", methods},
-            {"strict", to_string(options.strict)},
-        });
+        record.evidence = std::move(evidence);
+        result.configuration = options;
+        result.configuration.analyzers = std::move(distinct_analyzers);
         record.duration_ms = clock.duration_ms();
         record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
         return result;
     }
 
-    MeasureResult measure(const Frame& frame, const std::vector<Analyzer>& analyzers, const MeasureOptions& options)
+    MeasureResult measure(const Frame& frame, const MeasureOptions& options)
     {
-        return measure(std::vector<Frame>{frame}, analyzers, options);
+        return measure(std::vector<Frame>{frame}, options);
     }
 
-    CompareResult compare(const std::vector<Frame>& reference,
-                          const std::vector<Frame>& distorted,
-                          const std::vector<Metric>& metrics,
+    MeasureResult measure(const std::vector<Frame>& frames, const std::vector<Analyzer>& analyzers)
+    {
+        MeasureOptions options;
+        options.analyzers = analyzers;
+        return measure(frames, options);
+    }
+
+    MeasureResult measure(const Frame& frame, const std::vector<Analyzer>& analyzers)
+    {
+        return measure(std::vector<Frame>{frame}, analyzers);
+    }
+
+    CompareResult compare(const std::vector<Frame>& reference, const std::vector<Frame>& distorted,
                           const CompareOptions& options)
     {
         const detail::StageClock clock;
@@ -1050,7 +1029,7 @@ namespace lossylab
                               " reference frames and " + std::to_string(distorted.size()) +
                               " distorted frames");
         }
-        if (metrics.empty())
+        if (options.metrics.empty())
         {
             throw ConfigError("compare() received no metrics");
         }
@@ -1083,7 +1062,7 @@ namespace lossylab
         }
 
         std::vector<Metric> distinct_metrics;
-        for (const Metric metric : metrics)
+        for (const Metric metric : options.metrics)
         {
             capabilities().require_metric(metric);
             if (std::find(distinct_metrics.begin(), distinct_metrics.end(), metric) == distinct_metrics.end())
@@ -1104,11 +1083,11 @@ namespace lossylab
             }
         }
 
-        CompareResult result;
-        result.frames.resize(reference.size());
+        CompareEvidence evidence;
+        evidence.frames.resize(reference.size());
 
+        CompareResult result;
         StageRecord& record = result.record;
-        record.kind = StageKind::Compare;
         record.modifies_state = false;
         record.implementation = "libavfilter";
         record.input = format;
@@ -1120,44 +1099,48 @@ namespace lossylab
         MeasuredFrames reference_frames(reference, options.strict, record.conversions, "compare()");
         MeasuredFrames distorted_frames(distorted, options.strict, distorted_conversions, "compare()");
 
-        json::Value metric_names = json::Value::array();
-        json::Value measured_as = json::Value::object();
         for (const Metric metric : distinct_metrics)
         {
             const std::string filter = filter_for(metric);
             const std::vector<PixelFormat>& formats = comparable_formats(metric);
             const std::vector<Frame>& measured_reference = reference_frames.in_one_of(formats, filter);
             const std::vector<Frame>& measured_distorted = distorted_frames.in_one_of(formats, filter);
-            metric_names.push_back(to_string(metric));
-            measured_as[to_string(metric)] = measured_reference.front().pixel_format().name();
+            evidence.measured_as[to_string(metric)] = measured_reference.front().pixel_format().name();
 
             MetricGraph graph(measured_reference.front(), measured_distorted.front(), filter);
             const std::vector<FrameMetadata> metadata = graph.run(measured_reference, measured_distorted);
             for (std::size_t index = 0; index < metadata.size(); ++index)
             {
-                read_metric_values(metric, metadata[index], result.frames[index]);
+                read_metric_values(metric, metadata[index], evidence.frames[index]);
             }
         }
 
-        pool_into(result.pooled, result.frames);
+        pool_into(evidence.pooled, evidence.frames);
 
-        record.params = json::object({
-            {"frame_count", reference.size()},
-            {"measured_as", measured_as},
-        });
-        result.configuration = json::object({
-            {"metrics", metric_names},
-            {"strict", to_string(options.strict)},
-        });
+        record.evidence = std::move(evidence);
+        result.configuration = options;
+        result.configuration.metrics = std::move(distinct_metrics);
         record.duration_ms = clock.duration_ms();
         record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
         return result;
     }
 
-    CompareResult compare(const Frame& reference, const Frame& distorted, const std::vector<Metric>& metrics,
-                          const CompareOptions& options)
+    CompareResult compare(const Frame& reference, const Frame& distorted, const CompareOptions& options)
     {
-        return compare(std::vector<Frame>{reference}, std::vector<Frame>{distorted}, metrics, options);
+        return compare(std::vector<Frame>{reference}, std::vector<Frame>{distorted}, options);
+    }
+
+    CompareResult compare(const std::vector<Frame>& reference, const std::vector<Frame>& distorted,
+                          const std::vector<Metric>& metrics)
+    {
+        CompareOptions options;
+        options.metrics = metrics;
+        return compare(reference, distorted, options);
+    }
+
+    CompareResult compare(const Frame& reference, const Frame& distorted, const std::vector<Metric>& metrics)
+    {
+        return compare(std::vector<Frame>{reference}, std::vector<Frame>{distorted}, metrics);
     }
 
     namespace
@@ -1307,8 +1290,8 @@ namespace lossylab
         }
 
         RecompressionCurve curve;
+        RecompressionCurveEvidence evidence;
         StageRecord& record = curve.record;
-        record.kind = StageKind::RecompressionCurve;
         record.modifies_state = false;
         record.input = frame.describe();
         record.transform = CoordinateTransform::identity();
@@ -1362,24 +1345,26 @@ namespace lossylab
         decode_spec.strict = Strict::AllowRecorded;
 
         CompareOptions compare_options;
+        compare_options.metrics = {options.metric};
         compare_options.strict = Strict::AllowRecorded;
 
-        json::Value quality_scale;
         for (const double parameter : parameters)
         {
             encode_options.rate_control = RateControl::quality(parameter);
             const FrameResult decoded = roundtrip(samples, encode_options, decode_spec);
-            const CompareResult compared = compare(reference, decoded.frame, {options.metric}, compare_options);
-            const std::map<std::string, double>& values = compared.frames.front();
+            const CompareResult compared = compare(reference, decoded.frame, compare_options);
+            const std::map<std::string, double>& values = compared.evidence().frames.front();
             const double measured = values.at(error_key(options.metric, options.planes));
             const double error = options.metric == Metric::Psnr ? measured : 1.0 - measured;
-            curve.points.push_back(RecompressionPoint{parameter, error, decoded.record.achieved_bpp.value_or(0.0)});
+            evidence.points.push_back(
+                RecompressionPoint{parameter, error, decoded.record.achieved_bpp.value_or(0.0)});
 
             // Every point converts the same way, so the first one speaks for all.
-            if (curve.points.size() == 1)
+            if (evidence.points.size() == 1)
             {
                 record.implementation = decoded.record.implementation;
-                quality_scale = decoded.record.encoder_settings.at("quality_scale");
+                const json::Value& quality_scale = decoded.record.encoder_settings.at("quality_scale");
+                evidence.quality_scale = quality_scale.is_string() ? quality_scale.get<std::string>() : "";
                 for (const ConversionList* conversions : {&decoded.record.conversions, &compared.record.conversions})
                 {
                     record.conversions.insert(record.conversions.end(), conversions->begin(), conversions->end());
@@ -1387,7 +1372,7 @@ namespace lossylab
             }
         }
 
-        const std::vector<double> depths = notch_depths(curve.points);
+        const std::vector<double> depths = notch_depths(evidence.points);
         const auto deepest = std::max_element(depths.begin() + 1, depths.end() - 1);
         constexpr double minimum_noise_scale = 0.05;
         double noise_scale = minimum_noise_scale;
@@ -1405,31 +1390,22 @@ namespace lossylab
             {
                 noise_scale = std::max(statistics::median(other_depths), minimum_noise_scale);
             }
-            curve.confidence = *deepest / (*deepest + 3.0 * noise_scale);
-            if (curve.confidence >= 0.5)
+            evidence.confidence = *deepest / (*deepest + 3.0 * noise_scale);
+            if (evidence.confidence >= 0.5)
             {
-                curve.estimated_prior_parameter =
-                    curve.points[static_cast<std::size_t>(deepest - depths.begin())].quality_parameter;
+                evidence.estimated_prior_parameter =
+                    evidence.points[static_cast<std::size_t>(deepest - depths.begin())].quality_parameter;
             }
         }
 
-        record.params = json::object({
-            {"alpha", frame.pixel_format().has_alpha() && !pixel_format.has_alpha() ? "dropped" : "kept"},
-            {"notch_depths", depths},
-            {"noise_scale", noise_scale},
-            {"pixel_format", pixel_format.name()},
-            {"color", color.to_json()},
-        });
-        curve.configuration = json::object({
-            {"codec", to_string(options.codec)},
-            {"metric", to_string(options.metric)},
-            {"error", options.metric == Metric::Psnr ? error_key(options.metric, options.planes)
-                                                     : "1 - " + error_key(options.metric, options.planes)},
-            {"planes", to_string(options.planes)},
-            {"parameters", parameters},
-            {"quality_scale", quality_scale},
-            {"encoder_options", json::to_object(options.encoder_options)},
-        });
+        evidence.notch_depths = depths;
+        evidence.noise_scale = noise_scale;
+        evidence.alpha = frame.pixel_format().has_alpha() && !pixel_format.has_alpha() ? "dropped" : "kept";
+        record.evidence = std::move(evidence);
+        curve.configuration = options;
+        curve.configuration.parameter_range = std::move(parameters);
+        curve.configuration.pixel_format = pixel_format;
+        curve.configuration.color = color;
         record.duration_ms = clock.duration_ms();
         record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
         return curve;

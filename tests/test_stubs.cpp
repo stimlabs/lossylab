@@ -758,7 +758,7 @@ namespace
         }
         try
         {
-            (void)(measure(test_frame(), {}));
+            (void)(measure(test_frame(), std::vector<Analyzer>{}));
             assert(false && "expected throw");
         }
         catch (const ConfigError&)
@@ -789,7 +789,7 @@ namespace
         }
         try
         {
-            (void)(compare({a}, {a}, {}));
+            (void)(compare({a}, {a}, std::vector<Metric>{}));
             assert(false && "expected throw");
         }
         catch (const ConfigError&)

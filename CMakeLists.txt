@@ -57,6 +57,7 @@ add_library(lossylab STATIC
         src/lossylab/core/rational.cpp
         src/lossylab/core/frame.cpp
         src/lossylab/core/record.cpp
+        src/lossylab/core/stage_evidence.cpp
         src/lossylab/core/kernel.cpp
         src/lossylab/core/result.cpp
         src/lossylab/detail/ff_support.cpp

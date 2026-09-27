@@ -24,18 +24,28 @@ def test_psnr_and_ssim_are_reported_per_frame_and_pooled():
     distorted = yuv444_frame(np.full((48, 64), 104, dtype=np.uint8))
 
     result = lossylab.compare(reference, distorted, [lossylab.Metric.Psnr, lossylab.Metric.Ssim])
-    values = result.frames[0]
+    values = result.evidence.frames[0]
     assert values["mse_y"] == pytest.approx(16.0)
     assert values["psnr_y"] == pytest.approx(10 * math.log10(255**2 / 16))
     assert 0 < values["ssim"] <= 1
-    assert result.pooled["psnr_mean"] == values["psnr"]
+    assert result.evidence.pooled["psnr_mean"] == values["psnr"]
     assert result.record.kind == lossylab.StageKind.Compare
-    assert result.configuration["metrics"] == ["psnr", "ssim"]
+    assert isinstance(result.record.evidence, lossylab.CompareEvidence)
+    assert result.configuration.metrics == [lossylab.Metric.Psnr, lossylab.Metric.Ssim]
+
+
+def test_options_carry_the_metrics():
+    frame = yuv444_frame(np.full((48, 64), 100, dtype=np.uint8))
+    options = lossylab.CompareOptions()
+    options.metrics = [lossylab.Metric.Psnr]
+    assert math.isinf(lossylab.compare(frame, frame, options).evidence.frames[0]["psnr"])
+    with pytest.raises(lossylab.ConfigError):
+        lossylab.compare(frame, frame, lossylab.CompareOptions())
 
 
 def test_identical_frames_have_infinite_psnr():
     frame = yuv444_frame(np.arange(64 * 48, dtype=np.uint8).reshape(48, 64))
-    assert math.isinf(lossylab.compare(frame, frame, [lossylab.Metric.Psnr]).frames[0]["psnr"])
+    assert math.isinf(lossylab.compare(frame, frame, [lossylab.Metric.Psnr]).evidence.frames[0]["psnr"])
 
 
 def test_capture_compare_returns_a_refusal_as_a_file_error():
@@ -48,7 +58,8 @@ def test_capture_compare_returns_a_refusal_as_a_file_error():
     assert refused.error().operation == "compare"
 
     options = lossylab.CompareOptions()
+    options.metrics = [lossylab.Metric.Psnr]
     options.strict = lossylab.Strict.AllowRecorded
-    compared = lossylab.capture_compare(source, [decoded], [decoded], [lossylab.Metric.Psnr], options)
+    compared = lossylab.capture_compare(source, [decoded], [decoded], options)
     assert compared
-    assert compared.value().record.params["measured_as"]["psnr"] == "gbrp"
+    assert compared.value().evidence.measured_as["psnr"] == "gbrp"

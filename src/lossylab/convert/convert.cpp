@@ -168,12 +168,11 @@ namespace lossylab
         validate(frame, options);
 
         const PixelFormat source_format = frame.pixel_format();
-        const KernelSpec& kernel =
-            chroma_shrinks(source_format, options.pixel_format) ? options.chroma_down
-                                                                : options.chroma_up;
+        const bool chroma_down = chroma_shrinks(source_format, options.pixel_format);
+        const KernelSpec& kernel = chroma_down ? options.chroma_down : options.chroma_up;
 
         StageRecord record;
-        record.kind = StageKind::Convert;
+        record.evidence = ConvertEvidence{chroma_down ? "chroma_down" : "chroma_up"};
         record.implementation = "swscale";
         record.input = frame.describe();
         record.transform = CoordinateTransform::identity();
@@ -226,21 +225,10 @@ namespace lossylab
         output.copy_embedded_from(frame);
 
         record.output = output.describe();
-        record.params = json::Value::object();
-        json::Value configuration = json::object({
-            {"pix_fmt", options.pixel_format.name()},
-            {"color", options.color.to_json()},
-            {"kernel", kernel.to_json()},
-            {"kernel_role", chroma_shrinks(source_format, options.pixel_format)
-                                ? "chroma_down"
-                                : "chroma_up"},
-            {"backend", to_string(options.backend)},
-            {"strict", to_string(options.strict)},
-        });
         record.duration_ms = clock.duration_ms();
         record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
 
-        return FrameResult{std::move(output), std::move(record), std::move(configuration)};
+        return FrameResult{std::move(output), std::move(record), options};
     }
 
     FrameResult convert(const Frame& frame, const PixelFormat pixel_format,
@@ -301,7 +289,7 @@ namespace lossylab
         FrameResult back = convert(to_yuv.frame, back_to_source);
 
         StageRecord record;
-        record.kind = StageKind::ChromaRoundtrip;
+        record.evidence = ChromaRoundtripEvidence{intermediate};
         record.implementation = to_string(options.backend);
         record.input = frame.describe();
         record.output = back.frame.describe();
@@ -313,31 +301,24 @@ namespace lossylab
         record.conversions.insert(record.conversions.end(), back.record.conversions.begin(),
                                   back.record.conversions.end());
 
-        record.params = json::Value::object();
-        json::Value configuration = json::object({
-            {"subsampling", to_string(options.subsampling)},
-            {"intermediate_pix_fmt", intermediate.name()},
-            {"color", options.color.to_json()},
-            {"chroma_down", options.chroma_down.to_json()},
-            {"chroma_up", options.chroma_up.to_json()},
-            {"backend", to_string(options.backend)},
-            {"strict", to_string(options.strict)},
-        });
+        ChromaRoundtripOptions configuration = options;
+        configuration.intermediate_bit_depth = depth;
         record.duration_ms = clock.duration_ms();
         record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
 
         return FrameResult{std::move(back.frame), std::move(record), std::move(configuration)};
     }
 
-    FrameResult reinterpret(const Frame& frame, const ColorSpec& as_color)
+    FrameResult reinterpret(const Frame& frame, const ReinterpretOptions& options)
     {
         if (frame.empty())
         {
             throw ConfigError("reinterpret() received an empty frame");
         }
+        const ColorSpec& as_color = options.as_color;
 
         StageRecord record;
-        record.kind = StageKind::Reinterpret;
+        record.evidence = ReinterpretEvidence{};
         record.implementation = "relabel";
         record.input = frame.describe();
         record.transform = CoordinateTransform::identity();
@@ -377,12 +358,12 @@ namespace lossylab
         }
 
         record.output = output.describe();
-        record.params = json::Value::object();
-        json::Value configuration = json::object({
-            {"as_color", as_color.to_json()},
-            {"samples_modified", false},
-        });
 
-        return FrameResult{std::move(output), std::move(record), std::move(configuration)};
+        return FrameResult{std::move(output), std::move(record), options};
+    }
+
+    FrameResult reinterpret(const Frame& frame, const ColorSpec& as_color)
+    {
+        return reinterpret(frame, ReinterpretOptions{as_color});
     }
 }

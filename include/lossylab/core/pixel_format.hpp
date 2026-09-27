@@ -29,6 +29,12 @@ namespace lossylab
     std::string to_string(Subsampling subsampling);
     Subsampling subsampling_from_string(std::string_view name);
 
+    /// For reflect::from_json().
+    inline void from_string(const std::string_view name, Subsampling& value)
+    {
+        value = subsampling_from_string(name);
+    }
+
     /// A pixel format, by name rather than by FFmpeg enum, so that no public
     /// header has to include libavutil.
     ///

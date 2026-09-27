@@ -71,6 +71,32 @@ namespace lossylab
     ResizeBackend resize_backend_from_string(std::string_view name);
     Metric metric_from_string(std::string_view name);
 
+    /// For reflect::from_json().
+    inline void from_string(const std::string_view name, ImageCodec& value)
+    {
+        value = image_codec_from_string(name);
+    }
+
+    inline void from_string(const std::string_view name, VideoCodec& value)
+    {
+        value = video_codec_from_string(name);
+    }
+
+    inline void from_string(const std::string_view name, EncoderBackend& value)
+    {
+        value = encoder_backend_from_string(name);
+    }
+
+    inline void from_string(const std::string_view name, ResizeBackend& value)
+    {
+        value = resize_backend_from_string(name);
+    }
+
+    inline void from_string(const std::string_view name, Metric& value)
+    {
+        value = metric_from_string(name);
+    }
+
     [[nodiscard]] std::vector<ImageCodec> all_image_codecs();
     [[nodiscard]] std::vector<VideoCodec> all_video_codecs();
 

@@ -95,14 +95,19 @@ namespace
         const Source source = Source::from_path(path);
 
         const DecodedImage decoded = decode_image(source);
-        const json::Value& params = decoded.record.params;
+        assert(decoded.evidence().source_sha256 == source.sha256());
+        assert(decoded.evidence().source_sha256.starts_with("sha256:"));
 
-        assert(params.at("source_sha256").get<std::string>() == source.sha256());
-        assert(params.at("source_sha256").get<std::string>().starts_with("sha256:"));
-        assert(!params.contains("source"));
+        const json::Value document = decoded.processing_record().to_json();
+        assert(document.dump().find(path) == std::string::npos);
 
-        const std::string dumped = params.dump();
-        assert(dumped.find(path) == std::string::npos);
+        // Replaying the decode needs every option it ran with.
+        const json::Value& configuration = document.at("configurations").at(0);
+        assert(configuration.size() == 5);
+        for (const char* option : {"pixel_format", "color", "assumed_color", "orientation", "strict"})
+        {
+            assert(configuration.contains(option));
+        }
     }
 }
 

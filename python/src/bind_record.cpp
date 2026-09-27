@@ -6,9 +6,6 @@
 #include "lossylab/core/result.hpp"
 
 #include <nanobind/operators.h>
-#include <nanobind/stl/optional.h>
-#include <nanobind/stl/string.h>
-#include <nanobind/stl/vector.h>
 
 namespace lossylab::pybind
 {
@@ -17,8 +14,8 @@ namespace lossylab::pybind
     void bind_record(nb::module_& m)
     {
         nb::enum_<StageKind>(m, "StageKind")
-            .value("Decode", StageKind::Decode)
-            .value("Probe", StageKind::Probe)
+            .value("DecodeImage", StageKind::DecodeImage)
+            .value("DecodeVideo", StageKind::DecodeVideo)
             .value("Convert", StageKind::Convert)
             .value("ChromaRoundtrip", StageKind::ChromaRoundtrip)
             .value("Reinterpret", StageKind::Reinterpret)
@@ -26,7 +23,8 @@ namespace lossylab::pybind
             .value("Filter", StageKind::Filter)
             .value("EncodeImage", StageKind::EncodeImage)
             .value("EncodeVideo", StageKind::EncodeVideo)
-            .value("Roundtrip", StageKind::Roundtrip)
+            .value("RoundtripImage", StageKind::RoundtripImage)
+            .value("RoundtripVideo", StageKind::RoundtripVideo)
             .value("AnimateStill", StageKind::AnimateStill)
             .value("Measure", StageKind::Measure)
             .value("Compare", StageKind::Compare)
@@ -49,30 +47,17 @@ namespace lossylab::pybind
             .def_static("from_dict", [](nb::dict value) { return FrameStats::from_json(to_json(value)); });
 
         bind_reflected_rw<StageRecord>(m, "StageRecord")
+            .def_prop_ro("kind", &StageRecord::kind, "The kind of operation, which the type of `evidence` states.")
             .def_static("from_dict", [](nb::dict value) { return StageRecord::from_json(to_json(value)); });
 
         nb::class_<ProcessingRecord>(m, "ProcessingRecord")
             .def(nb::init<>())
             .def_static("for_this_build", &ProcessingRecord::for_this_build)
-            .def(
-                "append",
-                [](ProcessingRecord& self, StageRecord stage, nb::object configuration)
-                {
-                    self.append(std::move(stage),
-                                configuration.is_none() ? json::Value::object() : to_json(configuration));
-                },
-                "stage"_a, "configuration"_a = nb::none())
+            .def("append", &ProcessingRecord::append, "stage"_a, "configuration"_a,
+                 "Adds a stage with the configuration it ran with. Raises ConfigError when the configuration "
+                 "belongs to another kind of stage.")
             .def("stages", &ProcessingRecord::stages)
-            .def("configurations",
-                 [](const ProcessingRecord& self)
-                 {
-                     nb::list configurations;
-                     for (const json::Value& configuration : self.configurations())
-                     {
-                         configurations.append(to_python(configuration));
-                     }
-                     return configurations;
-                 })
+            .def("configurations", &ProcessingRecord::configurations)
             .def("empty", &ProcessingRecord::empty)
             .def("__len__", &ProcessingRecord::size)
             .def_prop_ro("build", [](const ProcessingRecord& self) { return to_python(self.build()); })
@@ -91,6 +76,6 @@ namespace lossylab::pybind
         nb::class_<FrameResult>(m, "FrameResult")
             .def_rw("frame", &FrameResult::frame)
             .def_rw("record", &FrameResult::record)
-            .def_prop_ro("configuration", [](const FrameResult& self) { return to_python(self.configuration); });
+            .def_ro("configuration", &FrameResult::configuration);
     }
 }

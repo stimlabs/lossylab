@@ -86,21 +86,37 @@ namespace
         static_cast<void>(reader.frames(select));
 
         const StageRecord& record = reader.record();
-        assert(record.kind == StageKind::Decode);
+        assert(record.kind() == StageKind::DecodeVideo);
         assert(record.implementation == "h264");
         assert(record.transform.is_identity());
         assert(record.frames.size() == std::size_t{3});
-        assert(reader.configuration().at("selector") == select.to_json());
-        assert(record.params.at("frames_selected") == 3);
+        const DecodeVideoEvidence& evidence = std::get<DecodeVideoEvidence>(record.evidence);
+        assert(evidence.selector == select.to_json());
+        assert(evidence.source_sha256.starts_with("sha256:"));
+        assert(reader.configuration().frame_indices == (std::vector<int>{0, 2, 4}));
+        assert(reader.configuration().reader.stream_index >= 0);
         assert(record.input == record.output);
         assert(record.input.pixel_format == PixelFormat::from_name("yuv420p"));
+    }
+
+    void test_a_predicate_selection_replays_from_the_frame_indices()
+    {
+        VideoReader reader = fixture_reader();
+        const std::vector<int> picked = indices_of(
+            reader.frames(FrameSelector::where([](const VideoFrame& frame) { return frame.index % 3 == 1; })));
+        assert(picked == (std::vector<int>{1, 4}));
+        const std::vector<int> recorded = reader.configuration().frame_indices;
+        assert(recorded == picked);
+        assert(std::get<DecodeVideoEvidence>(reader.record().evidence).selector.at("replayable") == false);
+
+        assert(indices_of(reader.frames(FrameSelector::indices(recorded))) == picked);
     }
 
     void test_indices_select_those_frames_and_stop_reading_after_the_last()
     {
         VideoReader reader = fixture_reader();
         assert(indices_of(reader.frames(FrameSelector::indices({3, 1}))) == (std::vector<int>{1, 3}));
-        assert(reader.record().params.at("frames_decoded") == 4);
+        assert(std::get<DecodeVideoEvidence>(reader.record().evidence).frames_decoded == 4);
     }
 
     void test_stride_selects_every_nth_frame_from_its_offset()
@@ -168,7 +184,7 @@ namespace
     {
         VideoReader reader = fixture_reader();
         assert(reader.frames(FrameSelector::stride(1, 99)).empty());
-        assert(reader.record().params.at("frames_decoded") == 5);
+        assert(std::get<DecodeVideoEvidence>(reader.record().evidence).frames_decoded == 5);
         assert(reader.record().input.width == 64);
         assert(reader.record().frames.empty());
     }
@@ -324,6 +340,7 @@ int main()
     test_all_reads_every_frame_in_presentation_order();
     test_frames_carry_their_timestamps();
     test_the_record_describes_the_read();
+    test_a_predicate_selection_replays_from_the_frame_indices();
     test_indices_select_those_frames_and_stop_reading_after_the_last();
     test_stride_selects_every_nth_frame_from_its_offset();
     test_timestamps_select_the_first_frame_at_or_after_each_time();

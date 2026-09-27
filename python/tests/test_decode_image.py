@@ -60,12 +60,14 @@ def test_a_grid_avif_decodes_to_the_whole_image():
     assert (result.frame.width(), result.frame.height()) == (128, 96)
     assert result.frame.plane(0).shape == (96, 128)
     assert len(result.tile_grid().tiles) == 4
-    assert result.record.params["tile_grid_id"] == result.tile_grid().id
+    assert result.evidence.tile_grid_id == result.tile_grid().id
 
 
 def test_decode_image_record_describes_the_decode():
     result = lossylab.decode_image(lossylab.Source.from_path(str(DATA_DIR / "testsrc_64x48.jpg")))
-    assert result.record.kind == lossylab.StageKind.Decode
+    assert result.record.kind == lossylab.StageKind.DecodeImage
+    assert isinstance(result.record.evidence, lossylab.DecodeImageEvidence)
+    assert result.record.evidence.orientation_handling == "reported"
     assert result.record.transform.is_identity()
     assert result.record.output == result.frame.describe()
 
@@ -84,7 +86,12 @@ def test_a_decoded_image_starts_a_processing_history():
     assert history.origin.format_name == decoded.probe.format_name
     assert len(history) == 1
 
+    [configuration] = history.configurations()
+    assert isinstance(configuration, lossylab.DecodeImageOptions)
+    assert configuration.orientation == lossylab.OrientationHandling.Report
+
     read_back = lossylab.ProcessingRecord.from_dict(history.to_dict())
     assert read_back.origin.streams[0].jpeg is not None
+    assert read_back.stages()[0].evidence.source_sha256 == decoded.evidence.source_sha256
     read_back.origin = None
     assert read_back.to_dict()["origin"] is None

@@ -5,63 +5,14 @@
 #include "lossylab/core/reflect.hpp"
 #include "lossylab/core/result.hpp"
 #include "lossylab/core/strict.hpp"
+#include "lossylab/io/decode_image_types.hpp"
 #include "lossylab/io/probe.hpp"
 #include "lossylab/io/source.hpp"
 
-#include <optional>
-#include <string>
-#include <string_view>
+#include <variant>
 
 namespace lossylab
 {
-    /// What decode_image() does with the orientation a file declares (EXIF
-    /// Orientation, or an AVIF/HEIF image's irot and imir properties).
-    enum class OrientationHandling
-    {
-        /// Leave the pixels as stored. The record states the orientation, so
-        /// a caller can apply it later or compare stored layouts.
-        Report,
-
-        /// Rotate and flip the pixels to display upright, exactly, and record
-        /// the coordinate transform that did it.
-        Apply
-    };
-
-    std::string to_string(OrientationHandling handling);
-    OrientationHandling orientation_handling_from_string(std::string_view name);
-
-    /// How a decoded image should be delivered.
-    struct DecodeImageOptions
-    {
-        /// Target pixel format. Left unset, the frame arrives in the codec's
-        /// native format, which is what an audit wants: the chroma planes as
-        /// the encoder actually wrote them, not an RGB rendering of them.
-        std::optional<PixelFormat> pixel_format;
-
-        /// Target color. Left unset, the frame keeps whatever the file tagged.
-        std::optional<ColorSpec> color;
-
-        /// Color to assume for whatever the file leaves unspecified. Files
-        /// without color tags are common, and every decoder guesses
-        /// differently; stating the assumption here keeps that guess out of
-        /// the library. Before this, what the codec itself fixes but FFmpeg's
-        /// decoder leaves unset is filled in (lossy WebP's centered chroma),
-        /// and an embedded ICC profile that matches a known primaries and
-        /// transfer pair (Display P3, sRGB, BT.709, ...) is used; each is
-        /// recorded as the source of the fields it filled.
-        ColorSpec assumed_color = ColorSpec::srgb();
-
-        /// Leaves the pixels as stored by default, like PIL's Image.open; a
-        /// training pipeline that wants what a viewer shows asks for Apply.
-        OrientationHandling orientation = OrientationHandling::Report;
-
-        /// Applies to the conversion, when one was requested, and to the
-        /// chroma layout change applying an orientation can entail.
-        Strict strict = Strict::AllowRecorded;
-    };
-
-    LOSSYLAB_REFLECT(DecodeImageOptions, pixel_format, color, assumed_color, orientation, strict);
-
     /// What decode_image() produced: the picture, the record of how, and
     /// everything probe() reports about the file.
     struct DecodedImage
@@ -74,10 +25,19 @@ namespace lossylab
         ProbeResult probe;
 
         Frame frame;
+
+        /// Its evidence is a DecodeImageEvidence (see `evidence()`).
         StageRecord record;
 
-        /// The options the decode ran with (see `FrameResult::configuration`).
-        json::Value configuration;
+        /// What the decode was told to do (see `FrameResult::configuration`).
+        DecodeImageOptions configuration;
+
+        /// What decoding decided: the source's hash, the stream decoded, the
+        /// tile grid assembled, and what was done with the orientation.
+        [[nodiscard]] const DecodeImageEvidence& evidence() const
+        {
+            return std::get<DecodeImageEvidence>(record.evidence);
+        }
 
         /// The stream that was decoded; for a tile grid, its first tile's.
         [[nodiscard]] const StreamInfo& stream() const;
@@ -108,12 +68,13 @@ namespace lossylab
     /// `Frame::icc_profile()`. The file is opened once, for both the probe
     /// and the decode. The record
     /// states the codec that decoded it, the format it arrived in, and any
-    /// conversion applied afterwards. Its params carry what decoding decided,
-    /// never what the file declares, which is in `probe`: the stream decoded
-    /// (`stream_index`), the tile grid assembled (`tile_grid_id`), the color
-    /// assumed for untagged fields (`assumed_color`), and what was done with
-    /// the orientation (`orientation_handling`: "reported", "applied", or
-    /// "applied_by_decoder" for JPEG XL, whose decoder turns the image upright
-    /// itself).
+    /// conversion applied afterwards. Its evidence carries what decoding
+    /// decided, never what the file declares, which is in `probe`: the hash
+    /// of the file's bytes (`source_sha256`), the stream decoded
+    /// (`stream_index`), the tile grid assembled (`tile_grid_id`), and what
+    /// was done with the orientation (`orientation_handling`: "reported",
+    /// "applied", or "applied_by_decoder" for JPEG XL, whose decoder turns the
+    /// image upright itself). The color assumed for untagged fields is a
+    /// conversion in the record.
     [[nodiscard]] DecodedImage decode_image(const Source& source, const DecodeImageOptions& options = {});
 }

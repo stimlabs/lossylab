@@ -44,7 +44,7 @@ def as_png(image):
 
 
 def traces_of(history, evidence):
-    return [trace for trace in history.traces if trace.evidence == evidence]
+    return [trace for trace in history.evidence.traces if trace.evidence == evidence]
 
 
 def without_recompression():
@@ -70,8 +70,8 @@ def test_a_jpeg_saved_as_png_shows_its_quality_and_subsampling(quality, subsampl
     assert jpeg.codec == lossylab.ImageCodec.Mjpeg
     assert jpeg.quality == quality
     assert jpeg.subsampling == expected
-    assert history.jpeg.ijg_quality_lowest <= quality <= history.jpeg.ijg_quality_highest
-    assert history.jpeg.luma.ijg_match == 1.0
+    assert history.evidence.jpeg.ijg_quality_lowest <= quality <= history.evidence.jpeg.ijg_quality_highest
+    assert history.evidence.jpeg.luma.ijg_match == 1.0
 
 
 def recovered_steps_agree(estimate, table):
@@ -93,12 +93,12 @@ def test_a_jpeg_with_photoshop_tables_is_found_with_a_low_libjpeg_match(preset, 
     image = through(texture(), "JPEG", quality=preset)
     history = lossylab.compression_history(as_png(image), without_recompression())
 
-    assert history.jpeg.detected
-    assert history.jpeg.chroma_subsampling == expected
-    assert recovered_steps_agree(history.jpeg.luma, image.quantization[0])
-    assert recovered_steps_agree(history.jpeg.chroma, image.quantization[1])
-    assert history.jpeg.ijg_match <= 0.5
-    assert history.jpeg.luma.ijg_match <= 0.5
+    assert history.evidence.jpeg.detected
+    assert history.evidence.jpeg.chroma_subsampling == expected
+    assert recovered_steps_agree(history.evidence.jpeg.luma, image.quantization[0])
+    assert recovered_steps_agree(history.evidence.jpeg.chroma, image.quantization[1])
+    assert history.evidence.jpeg.ijg_match <= 0.5
+    assert history.evidence.jpeg.luma.ijg_match <= 0.5
     [jpeg] = traces_of(history, lossylab.TraceEvidence.JpegQuantization)
     assert jpeg.quality is None
     assert jpeg.subsampling == expected
@@ -108,9 +108,9 @@ def test_a_jpeg_with_a_flat_table_is_found_with_a_low_libjpeg_match():
     image = through(texture(), "JPEG", qtables=[[12] * 64, [12] * 64])
     history = lossylab.compression_history(as_png(image), without_recompression())
 
-    assert history.jpeg.detected
-    assert {step for step in history.jpeg.luma.values if step != 0} == {12}
-    assert history.jpeg.ijg_match <= 0.5
+    assert history.evidence.jpeg.detected
+    assert {step for step in history.evidence.jpeg.luma.values if step != 0} == {12}
+    assert history.evidence.jpeg.ijg_match <= 0.5
     [jpeg] = traces_of(history, lossylab.TraceEvidence.JpegQuantization)
     assert jpeg.quality is None
 
@@ -118,20 +118,20 @@ def test_a_jpeg_with_a_flat_table_is_found_with_a_low_libjpeg_match():
 def test_a_cropped_jpeg_is_found_on_its_shifted_grid():
     image = through(texture(), "JPEG", quality=75).crop((5, 3, 500, 380))
     history = lossylab.compression_history(as_png(image), without_recompression())
-    assert history.jpeg.detected
-    assert (history.jpeg.grid_x, history.jpeg.grid_y) == (3, 5)
-    assert history.jpeg.ijg_quality == 75
+    assert history.evidence.jpeg.detected
+    assert (history.evidence.jpeg.grid_x, history.evidence.jpeg.grid_y) == (3, 5)
+    assert history.evidence.jpeg.ijg_quality == 75
 
 
 def test_gray_and_alpha_pngs_are_analyzed():
     gray = through(texture().convert("L"), "JPEG", quality=60)
     history = lossylab.compression_history(as_png(gray), without_recompression())
-    assert history.jpeg.ijg_quality == 60
-    assert history.jpeg.chroma_subsampling == lossylab.Subsampling.Gray
+    assert history.evidence.jpeg.ijg_quality == 60
+    assert history.evidence.jpeg.chroma_subsampling == lossylab.Subsampling.Gray
 
     rgba = through(texture(), "JPEG", quality=80).convert("RGBA")
     history = lossylab.compression_history(as_png(rgba))
-    assert history.jpeg.ijg_quality == 80
+    assert history.evidence.jpeg.ijg_quality == 80
     assert history.record.conversions
 
 
@@ -139,13 +139,13 @@ def test_a_webp_saved_as_png_shows_its_quality():
     image = through(texture(), "WEBP", quality=80)
     history = lossylab.compression_history(as_png(image))
 
-    assert not history.jpeg.detected
+    assert not history.evidence.jpeg.detected
     [webp] = traces_of(history, lossylab.TraceEvidence.Recompression)
     assert webp.codec == lossylab.ImageCodec.WebP
     assert abs(webp.quality - 80) <= 3
     [chroma] = traces_of(history, lossylab.TraceEvidence.ChromaSubsampling)
     assert chroma.subsampling == lossylab.Subsampling.Yuv420
-    assert history.chroma.upsampling == lossylab.ChromaUpsampling.Triangle
+    assert history.evidence.chroma.upsampling == lossylab.ChromaUpsampling.Triangle
 
 
 @pytest.mark.skipif(not features.check("jpg_2000"), reason="Pillow built without OpenJPEG")
@@ -167,15 +167,15 @@ def test_an_openjpeg_file_saved_as_png_shows_a_jpeg_2000_trace(mode):
 
 def test_a_never_compressed_png_shows_no_trace():
     history = lossylab.compression_history(as_png(texture()))
-    assert history.traces == []
-    assert not history.jpeg.detected
-    assert history.chroma.subsampling == lossylab.Subsampling.Yuv444
+    assert history.evidence.traces == []
+    assert not history.evidence.jpeg.detected
+    assert history.evidence.chroma.subsampling == lossylab.Subsampling.Yuv444
 
 
 def test_a_resize_after_compression_erases_the_jpeg_trace():
     image = through(texture(), "JPEG", quality=75).resize((460, 345), Image.LANCZOS)
     history = lossylab.compression_history(as_png(image), without_recompression())
-    assert not history.jpeg.detected
+    assert not history.evidence.jpeg.detected
 
 
 def test_capture_compression_history_serializes():
@@ -184,8 +184,11 @@ def test_capture_compression_history_serializes():
     assert result
     document = result.to_dict()["value"]
     assert document["record"]["kind"] == "compression_history"
-    assert any(trace["evidence"] == "jpeg_quantization" for trace in document["traces"])
-    assert result.value().to_dict()["jpeg"]["ijg_quality"] == 75
+    evidence = document["record"]["evidence"]
+    assert any(trace["evidence"] == "jpeg_quantization" for trace in evidence["traces"])
+    assert evidence["jpeg"]["ijg_quality"] == 75
+    assert document["configuration"]["recompression_crop"] == 1024
+    assert "dct" not in str(document["configuration"])
 
 
 def jpeg_bytes(image, **save_options):
@@ -204,13 +207,12 @@ def test_a_jpeg_file_is_read_from_its_header(quality, subsampling, expected):
         lossylab.Source.from_memory(jpeg_bytes(texture(), quality=quality, subsampling=subsampling))
     )
     history = lossylab.compression_history(image, without_recompression())
-    params = history.record.to_dict()["params"]
-    assert params["jpeg_tables"] == "header"
-    assert params["jpeg_header_unused"] is None
-    assert history.jpeg.detected
-    assert history.jpeg.ijg_quality == quality and history.jpeg.ijg_match == 1.0
-    assert history.jpeg.chroma_subsampling == expected
-    assert history.jpeg.grid_score is None and history.jpeg.luma.lattice_score is None
+    assert history.evidence.jpeg_tables == "header"
+    assert history.evidence.jpeg_header_unused is None
+    assert history.evidence.jpeg.detected
+    assert history.evidence.jpeg.ijg_quality == quality and history.evidence.jpeg.ijg_match == 1.0
+    assert history.evidence.jpeg.chroma_subsampling == expected
+    assert history.evidence.jpeg.grid_score is None and history.evidence.jpeg.luma.lattice_score is None
     [trace] = traces_of(history, lossylab.TraceEvidence.JpegHeader)
     assert trace.quality == quality and trace.confidence == 1.0
     assert traces_of(history, lossylab.TraceEvidence.JpegQuantization) == []
@@ -219,8 +221,8 @@ def test_a_jpeg_file_is_read_from_its_header(quality, subsampling, expected):
 def test_a_quality_100_jpeg_file_is_found_only_from_its_header():
     data = jpeg_bytes(texture(), quality=100)
     image = lossylab.decode_image(lossylab.Source.from_memory(data))
-    assert list(lossylab.compression_history(image, without_recompression()).jpeg.luma.values) == [1] * 64
-    assert not lossylab.compression_history(image.frame, without_recompression()).jpeg.detected
+    assert list(lossylab.compression_history(image, without_recompression()).evidence.jpeg.luma.values) == [1] * 64
+    assert not lossylab.compression_history(image.frame, without_recompression()).evidence.jpeg.detected
 
 
 def test_the_header_is_not_used_for_a_frame_it_does_not_describe():
@@ -236,9 +238,9 @@ def test_the_header_is_not_used_for_a_frame_it_does_not_describe():
         (lossylab.decode_image(cmyk), "a JPEG of 4 components"),
         (lossylab.decode_image(png), "not a JPEG file"),
     ]:
-        params = lossylab.compression_history(image, without_recompression()).record.to_dict()["params"]
-        assert params["jpeg_tables"] == "pixels"
-        assert params["jpeg_header_unused"] == reason
+        evidence = lossylab.compression_history(image, without_recompression()).evidence
+        assert evidence.jpeg_tables == "pixels"
+        assert evidence.jpeg_header_unused == reason
 
 
 def test_the_pixel_check_agrees_with_the_header():
@@ -246,17 +248,17 @@ def test_the_pixel_check_agrees_with_the_header():
     options.jpeg_pixel_check = True
     image = lossylab.decode_image(lossylab.Source.from_memory(jpeg_bytes(texture(), quality=75)))
     history = lossylab.compression_history(image, options)
-    assert history.jpeg_pixel_check.detected
-    check = history.record.to_dict()["params"]["jpeg_pixel_check"]
-    assert check["ijg_quality_equal"]
-    assert check["luma"]["matching"] == check["luma"]["determined"]
-    assert lossylab.compression_history(image, without_recompression()).jpeg_pixel_check is None
+    assert history.evidence.jpeg_pixel_check.detected
+    agreement = history.evidence.jpeg_pixel_agreement
+    assert agreement.ijg_quality_equal
+    assert agreement.luma.matching == agreement.luma.determined
+    assert lossylab.compression_history(image, without_recompression()).evidence.jpeg_pixel_check is None
 
 
 def test_capture_compression_history_takes_a_decoded_image():
     source = lossylab.Source.from_memory(jpeg_bytes(texture(), quality=75))
     result = lossylab.capture_compression_history(source, lossylab.decode_image(source))
     assert result
-    document = result.to_dict()["value"]
-    assert [trace["evidence"] for trace in document["traces"]] == ["jpeg_header"]
-    assert document["jpeg"]["grid_score"] is None
+    evidence = result.to_dict()["value"]["record"]["evidence"]
+    assert [trace["evidence"] for trace in evidence["traces"]] == ["jpeg_header"]
+    assert evidence["jpeg"]["grid_score"] is None

@@ -141,7 +141,7 @@ namespace lossylab
             }
 
             case StageKind::EncodeVideo:
-            case StageKind::Roundtrip:
+            case StageKind::RoundtripVideo:
             {
                 const VideoCodec codec =
                     video_codec_from_string(required_string(index, stage, "codec"));
@@ -163,6 +163,7 @@ namespace lossylab
             }
 
             case StageKind::EncodeImage:
+            case StageKind::RoundtripImage:
             {
                 const ImageCodec codec =
                     image_codec_from_string(required_string(index, stage, "codec"));
@@ -195,8 +196,8 @@ namespace lossylab
                 break;
             }
 
-            case StageKind::Decode:
-            case StageKind::Probe:
+            case StageKind::DecodeImage:
+            case StageKind::DecodeVideo:
             case StageKind::Reinterpret:
             case StageKind::AnimateStill:
             case StageKind::Measure:

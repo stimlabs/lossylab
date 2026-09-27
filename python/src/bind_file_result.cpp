@@ -10,9 +10,6 @@
 #include "lossylab/measure/compression_history.hpp"
 #include "lossylab/measure/measure.hpp"
 
-#include <nanobind/stl/string.h>
-#include <nanobind/stl/vector.h>
-
 namespace lossylab::pybind
 {
     using namespace nb::literals;
@@ -29,7 +26,7 @@ namespace lossylab::pybind
         {
             std::vector<VideoFrame> frames;
             StageRecord record;
-            json::Value configuration;
+            DecodeVideoConfiguration configuration;
         };
 
         template <typename T>
@@ -74,8 +71,7 @@ namespace lossylab::pybind
         nb::class_<VideoFramesResult>(m, "VideoFramesResult")
             .def_ro("frames", &VideoFramesResult::frames)
             .def_ro("record", &VideoFramesResult::record)
-            .def_prop_ro("configuration",
-                         [](const VideoFramesResult& self) { return to_python(self.configuration); });
+            .def_ro("configuration", &VideoFramesResult::configuration);
         bind_file_result<VideoFramesResult>(m, "VideoFramesFileResult");
         bind_file_result<MeasureResult>(m, "MeasureFileResult")
             .def("to_dict", [](const FileResult<MeasureResult>& self) { return to_python(self.to_json()); });
@@ -118,25 +114,35 @@ namespace lossylab::pybind
 
         m.def(
             "capture_measure",
-            [](const Source& source, const std::vector<Frame>& frames, const std::vector<Analyzer>& analyzers,
-               const MeasureOptions& options)
-            { return capture("measure", source, [&] { return measure(frames, analyzers, options); }); },
-            "source"_a, "frames"_a, "analyzers"_a, "options"_a = MeasureOptions{},
-            nb::call_guard<nb::gil_scoped_release>(),
-            "measure(frames, analyzers, options), with any exception it raises returned as a FileError instead. "
-            "`source` names the file the frames came from.");
+            [](const Source& source, const std::vector<Frame>& frames, const MeasureOptions& options)
+            { return capture("measure", source, [&] { return measure(frames, options); }); },
+            "source"_a, "frames"_a, "options"_a, nb::call_guard<nb::gil_scoped_release>(),
+            "measure(frames, options), with any exception it raises returned as a FileError instead. `source` "
+            "names the file the frames came from.");
+        m.def(
+            "capture_measure",
+            [](const Source& source, const std::vector<Frame>& frames, const std::vector<Analyzer>& analyzers)
+            { return capture("measure", source, [&] { return measure(frames, analyzers); }); },
+            "source"_a, "frames"_a, "analyzers"_a, nb::call_guard<nb::gil_scoped_release>(),
+            "measure(frames, analyzers), with any exception it raises returned as a FileError instead.");
 
         bind_file_result<CompareResult>(m, "CompareFileResult")
             .def("to_dict", [](const FileResult<CompareResult>& self) { return to_python(self.to_json()); });
         m.def(
             "capture_compare",
             [](const Source& source, const std::vector<Frame>& reference, const std::vector<Frame>& distorted,
-               const std::vector<Metric>& metrics, const CompareOptions& options)
-            { return capture("compare", source, [&] { return compare(reference, distorted, metrics, options); }); },
-            "source"_a, "reference"_a, "distorted"_a, "metrics"_a, "options"_a = CompareOptions{},
-            nb::call_guard<nb::gil_scoped_release>(),
-            "compare(reference, distorted, metrics, options), with any exception it raises returned as a FileError "
-            "instead. `source` names the file the distorted frames came from.");
+               const CompareOptions& options)
+            { return capture("compare", source, [&] { return compare(reference, distorted, options); }); },
+            "source"_a, "reference"_a, "distorted"_a, "options"_a, nb::call_guard<nb::gil_scoped_release>(),
+            "compare(reference, distorted, options), with any exception it raises returned as a FileError instead. "
+            "`source` names the file the distorted frames came from.");
+        m.def(
+            "capture_compare",
+            [](const Source& source, const std::vector<Frame>& reference, const std::vector<Frame>& distorted,
+               const std::vector<Metric>& metrics)
+            { return capture("compare", source, [&] { return compare(reference, distorted, metrics); }); },
+            "source"_a, "reference"_a, "distorted"_a, "metrics"_a, nb::call_guard<nb::gil_scoped_release>(),
+            "compare(reference, distorted, metrics), with any exception it raises returned as a FileError instead.");
 
         bind_file_result<CompressionHistory>(m, "CompressionHistoryFileResult")
             .def("to_dict", [](const FileResult<CompressionHistory>& self) { return to_python(self.to_json()); });

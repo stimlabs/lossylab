@@ -128,7 +128,7 @@ namespace
         const DecodedImage result = decode_image(Source::from_path(data_path(grid_444_fixture)));
         const TileGrid* grid = result.tile_grid();
         assert(grid != nullptr && grid->is_primary);
-        assert(result.record.params.at("tile_grid_id") == grid->id);
+        assert(result.evidence().tile_grid_id == grid->id);
         assert(grid->tiles.size() == 4);
         assert(result.stream().width == 64 && result.stream().height == 64);
         assert(result.stream().index == grid->tiles.front().stream_index);

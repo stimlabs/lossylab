@@ -5,6 +5,12 @@
 
 #include "lossylab/core/reflect.hpp"
 
+#include <nanobind/stl/map.h>
+#include <nanobind/stl/optional.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/variant.h>
+#include <nanobind/stl/vector.h>
+
 namespace lossylab::pybind
 {
     namespace detail

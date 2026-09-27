@@ -6,11 +6,7 @@
 #include "lossylab/measure/measure.hpp"
 
 #include <nanobind/stl/array.h>
-#include <nanobind/stl/map.h>
-#include <nanobind/stl/optional.h>
-#include <nanobind/stl/string.h>
 #include <nanobind/stl/string_view.h>
-#include <nanobind/stl/vector.h>
 
 namespace lossylab::pybind
 {
@@ -37,44 +33,56 @@ namespace lossylab::pybind
         bind_reflected<LetterboxBars>(m, "LetterboxBars");
         bind_reflected<Letterbox>(m, "Letterbox");
         bind_reflected<FrameMeasurement>(m, "FrameMeasurement");
+        bind_reflected<MeasureEvidence>(m, "MeasureEvidence");
 
         nb::class_<MeasureResult>(m, "MeasureResult")
-            .def_ro("frames", &MeasureResult::frames)
-            .def_ro("pooled", &MeasureResult::pooled)
             .def_ro("record", &MeasureResult::record)
-            .def_prop_ro("configuration", [](const MeasureResult& self) { return to_python(self.configuration); })
+            .def_ro("configuration", &MeasureResult::configuration)
+            .def_prop_ro("evidence", &MeasureResult::evidence, nb::rv_policy::reference_internal,
+                         "The measurements: per frame, pooled, and the format each analyzer measured in.")
             .def("to_dict", [](const MeasureResult& self) { return to_python(self.to_json()); });
 
-        m.def("measure",
-              nb::overload_cast<const std::vector<Frame>&, const std::vector<Analyzer>&, const MeasureOptions&>(
-                  &measure),
-              "frames"_a, "analyzers"_a, "options"_a = MeasureOptions{}, nb::call_guard<nb::gil_scoped_release>());
-        m.def("measure",
-              nb::overload_cast<const Frame&, const std::vector<Analyzer>&, const MeasureOptions&>(&measure),
-              "frame"_a, "analyzers"_a, "options"_a = MeasureOptions{}, nb::call_guard<nb::gil_scoped_release>());
+        m.def("measure", nb::overload_cast<const std::vector<Frame>&, const MeasureOptions&>(&measure), "frames"_a,
+              "options"_a, nb::call_guard<nb::gil_scoped_release>());
+        m.def("measure", nb::overload_cast<const Frame&, const MeasureOptions&>(&measure), "frame"_a, "options"_a,
+              nb::call_guard<nb::gil_scoped_release>());
+        m.def("measure", nb::overload_cast<const std::vector<Frame>&, const std::vector<Analyzer>&>(&measure),
+              "frames"_a, "analyzers"_a, nb::call_guard<nb::gil_scoped_release>());
+        m.def("measure", nb::overload_cast<const Frame&, const std::vector<Analyzer>&>(&measure), "frame"_a,
+              "analyzers"_a, nb::call_guard<nb::gil_scoped_release>());
 
         bind_reflected_rw<CompareOptions>(m, "CompareOptions");
+        bind_reflected<CompareEvidence>(m, "CompareEvidence");
 
         nb::class_<CompareResult>(m, "CompareResult")
-            .def_ro("frames", &CompareResult::frames)
-            .def_ro("pooled", &CompareResult::pooled)
             .def_ro("record", &CompareResult::record)
-            .def_prop_ro("configuration", [](const CompareResult& self) { return to_python(self.configuration); })
+            .def_ro("configuration", &CompareResult::configuration)
+            .def_prop_ro("evidence", &CompareResult::evidence, nb::rv_policy::reference_internal,
+                         "The metric values: per frame, pooled, and the format each metric measured in.")
             .def("to_dict", [](const CompareResult& self) { return to_python(self.to_json()); });
 
         m.def("compare",
-              nb::overload_cast<const std::vector<Frame>&, const std::vector<Frame>&, const std::vector<Metric>&,
-                                const CompareOptions&>(&compare),
-              "reference"_a, "distorted"_a, "metrics"_a, "options"_a = CompareOptions{},
-              nb::call_guard<nb::gil_scoped_release>());
-        m.def("compare",
-              nb::overload_cast<const Frame&, const Frame&, const std::vector<Metric>&, const CompareOptions&>(
+              nb::overload_cast<const std::vector<Frame>&, const std::vector<Frame>&, const CompareOptions&>(
                   &compare),
-              "reference"_a, "distorted"_a, "metrics"_a, "options"_a = CompareOptions{},
-              nb::call_guard<nb::gil_scoped_release>());
+              "reference"_a, "distorted"_a, "options"_a, nb::call_guard<nb::gil_scoped_release>());
+        m.def("compare", nb::overload_cast<const Frame&, const Frame&, const CompareOptions&>(&compare),
+              "reference"_a, "distorted"_a, "options"_a, nb::call_guard<nb::gil_scoped_release>());
+        m.def("compare",
+              nb::overload_cast<const std::vector<Frame>&, const std::vector<Frame>&, const std::vector<Metric>&>(
+                  &compare),
+              "reference"_a, "distorted"_a, "metrics"_a, nb::call_guard<nb::gil_scoped_release>());
+        m.def("compare", nb::overload_cast<const Frame&, const Frame&, const std::vector<Metric>&>(&compare),
+              "reference"_a, "distorted"_a, "metrics"_a, nb::call_guard<nb::gil_scoped_release>());
 
         bind_reflected<RecompressionPoint>(m, "RecompressionPoint");
-        bind_reflected<RecompressionCurve>(m, "RecompressionCurve");
+        bind_reflected<RecompressionCurveEvidence>(m, "RecompressionCurveEvidence");
+
+        nb::class_<RecompressionCurve>(m, "RecompressionCurve")
+            .def_ro("record", &RecompressionCurve::record)
+            .def_ro("configuration", &RecompressionCurve::configuration)
+            .def_prop_ro("evidence", &RecompressionCurve::evidence, nb::rv_policy::reference_internal,
+                         "The curve: its points, its notch and how confident it is.")
+            .def("to_dict", [](const RecompressionCurve& self) { return to_python(self.to_json()); });
 
         nb::enum_<ChromaUpsampling>(m, "ChromaUpsampling")
             .value("Replicate", ChromaUpsampling::Replicate)
@@ -91,8 +99,18 @@ namespace lossylab::pybind
         bind_reflected<ChromaSubsamplingEvidence>(m, "ChromaSubsamplingEvidence");
         bind_reflected<CompressionTrace>(m, "CompressionTrace");
         bind_reflected_rw<CompressionHistoryOptions>(m, "CompressionHistoryOptions");
+        bind_reflected<RecompressionSweep>(m, "RecompressionSweep");
+        bind_reflected<JpegTableAgreement>(m, "JpegTableAgreement");
+        bind_reflected<JpegPixelAgreement>(m, "JpegPixelAgreement");
+        bind_reflected<RecompressionOutcome>(m, "RecompressionOutcome");
+        bind_reflected<CompressionHistoryEvidence>(m, "CompressionHistoryEvidence");
 
-        bind_reflected<CompressionHistory>(m, "CompressionHistory");
+        nb::class_<CompressionHistory>(m, "CompressionHistory")
+            .def_ro("record", &CompressionHistory::record)
+            .def_ro("configuration", &CompressionHistory::configuration)
+            .def_prop_ro("evidence", &CompressionHistory::evidence, nb::rv_policy::reference_internal,
+                         "The traces, and the JPEG tables, chroma evidence and recompression curves they rest on.")
+            .def("to_dict", [](const CompressionHistory& self) { return to_python(self.to_json()); });
 
         m.def("compression_history",
               nb::overload_cast<const Frame&, const CompressionHistoryOptions&>(&compression_history), "frame"_a,

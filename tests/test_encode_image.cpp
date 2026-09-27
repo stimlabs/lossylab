@@ -62,8 +62,9 @@ namespace
     double psnr_of(const Frame& reference, const Frame& distorted)
     {
         CompareOptions options;
+        options.metrics = {Metric::Psnr};
         options.strict = Strict::AllowRecorded;
-        return compare(reference, distorted, {Metric::Psnr}, options).frames.front().at("psnr");
+        return compare(reference, distorted, options).evidence().frames.front().at("psnr");
     }
 
     template <typename Exception, typename Callable>
@@ -86,7 +87,7 @@ namespace
 
         assert(starts_with(encoded.bytes, 0, "\xFF\xD8"));
         const StageRecord& record = encoded.record;
-        assert(record.kind == StageKind::EncodeImage);
+        assert(record.kind() == StageKind::EncodeImage);
         assert(record.implementation == "mjpeg");
         assert(record.frames.size() == 1);
         assert(record.frames.front().qp_mean == 5.0);
@@ -183,8 +184,12 @@ namespace
         DecodeSpec decode_spec;
         decode_spec.pixel_format = source.pixel_format();
         const FrameResult result = roundtrip(source, options, decode_spec);
-        assert(result.record.kind == StageKind::Roundtrip);
-        assert(result.record.params.contains("encode") && result.record.params.contains("decode"));
+        assert(result.record.kind() == StageKind::RoundtripImage);
+        const RoundtripImageEvidence& evidence = std::get<RoundtripImageEvidence>(result.record.evidence);
+        assert(evidence.encode.extension == "webp" && !evidence.decode.source_sha256.empty());
+        const RoundtripImageConfiguration& configuration = std::get<RoundtripImageConfiguration>(result.configuration);
+        assert(configuration.encode.codec == options.codec);
+        assert(configuration.decode.pixel_format == decode_spec.pixel_format);
         assert(result.frame.describe() == source.describe());
         const double psnr = psnr_of(source, result.frame);
         assert(psnr > 25.0 && std::isfinite(psnr));
@@ -284,7 +289,7 @@ namespace
         const EncodeImageOptions options = image_options(ImageCodec::Avif, "yuv420p", 30);
         const EncodedResult encoded = encode_image(source, options);
         assert(starts_with(encoded.bytes, 4, "ftypavif"));
-        assert(encoded.record.params.at("container").get<std::string>() == "avif");
+        assert(std::get<EncodeImageEvidence>(encoded.record.evidence).container == "avif");
 
         const ProbeResult probed = probe(Source::from_memory(encoded.bytes));
         assert(probed.streams.front().width == 64 && probed.streams.front().height == 48);
@@ -370,9 +375,8 @@ namespace
             const EncodedResult encoded = encode_image(source, options);
 
             // What reading the output back finds is what the record says it kept.
-            const DecodedImage read_back = decode_image(Source::from_memory(encoded.bytes,
-                                                                            encoded.record.params.at("extension")
-                                                                                .get<std::string>()));
+            const DecodedImage read_back = decode_image(
+                Source::from_memory(encoded.bytes, std::get<EncodeImageEvidence>(encoded.record.evidence).extension));
             const TileGrid* grid = read_back.tile_grid();
             const bool kept_profile = grid != nullptr ? grid->icc_profile.has_value()
                                                       : read_back.stream().icc_profile.has_value();

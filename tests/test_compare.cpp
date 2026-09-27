@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -47,7 +48,7 @@ namespace
 
     double value_of(const CompareResult& result, const char* name, const std::size_t frame_index = 0)
     {
-        const auto& values = result.frames.at(frame_index);
+        const auto& values = result.evidence().frames.at(frame_index);
         const auto it = values.find(name);
         assert(it != values.end() && "metric value missing");
         return it->second;
@@ -66,7 +67,7 @@ namespace
         assert(value_of(result, "mse") == 0.0);
         assert(value_of(result, "ssim") == 1.0);
         assert(value_of(result, "ssim_y") == 1.0);
-        assert(result.record.kind == StageKind::Compare);
+        assert(result.record.kind() == StageKind::Compare);
         assert(result.record.conversions.empty());
     }
 
@@ -99,17 +100,18 @@ namespace
     {
         const CompareResult result =
             compare({flat_frame(100), flat_frame(100)}, {flat_frame(102), flat_frame(104)}, {Metric::Psnr});
-        assert(result.frames.size() == 2);
+        assert(result.evidence().frames.size() == 2);
         assert(near(value_of(result, "mse_y", 0), 4.0));
         assert(near(value_of(result, "mse_y", 1), 16.0));
 
         const double first = value_of(result, "psnr", 0);
         const double second = value_of(result, "psnr", 1);
-        assert(near(result.pooled.at("psnr_mean"), (first + second) / 2.0));
-        assert(result.pooled.at("psnr_min") == second);
-        assert(result.pooled.at("psnr_max") == first);
-        assert(near(result.pooled.at("psnr_median"), (first + second) / 2.0));
-        assert(near(result.pooled.at("psnr_std"), std::abs(first - second) / std::sqrt(2.0)));
+        const std::map<std::string, double>& pooled = result.evidence().pooled;
+        assert(near(pooled.at("psnr_mean"), (first + second) / 2.0));
+        assert(pooled.at("psnr_min") == second);
+        assert(pooled.at("psnr_max") == first);
+        assert(near(pooled.at("psnr_median"), (first + second) / 2.0));
+        assert(near(pooled.at("psnr_std"), std::abs(first - second) / std::sqrt(2.0)));
     }
 
     void test_packed_rgb_is_refused_unless_conversion_is_allowed()
@@ -128,9 +130,10 @@ namespace
         }
 
         CompareOptions options;
+        options.metrics = {Metric::Psnr, Metric::Ssim};
         options.strict = Strict::AllowRecorded;
-        const CompareResult result = compare(reference, distorted, {Metric::Psnr, Metric::Ssim}, options);
-        assert(result.record.params.at("measured_as").at("psnr").get<std::string>() == "gbrp");
+        const CompareResult result = compare(reference, distorted, options);
+        assert(result.evidence().measured_as.at("psnr") == "gbrp");
         assert(!result.record.conversions.empty());
 
         // Repacking loses nothing: every sample is off by exactly one.
@@ -177,12 +180,25 @@ namespace
         const json::Value document = compare(flat_frame(100), flat_frame(104), {Metric::Psnr}).to_json();
         assert(document.contains("record"));
         assert(document.at("configuration").at("metrics").at(0).get<std::string>() == "psnr");
-        assert(document.at("pooled").contains("psnr_mean"));
+        assert(document.at("record").at("evidence").at("pooled").contains("psnr_mean"));
+    }
+
+    void test_no_metric_is_refused()
+    {
+        try
+        {
+            static_cast<void>(compare(flat_frame(100), flat_frame(104), CompareOptions{}));
+            assert(false && "expected ConfigError");
+        }
+        catch (const ConfigError&)
+        {
+        }
     }
 }
 
 int main()
 {
+    test_no_metric_is_refused();
     test_identical_frames_have_infinite_psnr_and_unit_ssim();
     test_psnr_reports_the_mean_squared_error_of_each_plane();
     test_ssim_falls_with_the_distortion();

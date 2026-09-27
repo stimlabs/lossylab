@@ -502,10 +502,10 @@ namespace lossylab
         }
 
         /// One record for an encode followed by a decode of its output.
-        StageRecord roundtrip_record(const StageRecord& encoded, const StageRecord& decoded)
+        StageRecord roundtrip_record(const StageRecord& encoded, const StageRecord& decoded, StageEvidence evidence)
         {
             StageRecord record;
-            record.kind = StageKind::Roundtrip;
+            record.evidence = std::move(evidence);
             record.implementation = encoded.implementation + "+" + decoded.implementation;
             record.input = encoded.input;
             record.output = decoded.output;
@@ -518,21 +518,9 @@ namespace lossylab
             record.encoder_settings = encoded.encoder_settings;
             record.achieved_bpp = encoded.achieved_bpp;
             record.reproducible = encoded.reproducible && decoded.reproducible;
-            record.params = json::object({
-                {"encode", encoded.params},
-                {"decode", decoded.params},
-            });
             record.duration_ms = encoded.duration_ms + decoded.duration_ms;
             record.ffmpeg_duration_ms = encoded.ffmpeg_duration_ms + decoded.ffmpeg_duration_ms;
             return record;
-        }
-
-        json::Value roundtrip_configuration(const json::Value& encoded, const json::Value& decoded)
-        {
-            return json::object({
-                {"encode", encoded},
-                {"decode", decoded},
-            });
         }
 
         /// Decodes an encoded image, assuming the encoded color for whatever
@@ -544,9 +532,9 @@ namespace lossylab
             options.color = decode_spec.color;
             options.assumed_color = encoded.record.output.color;
             options.strict = decode_spec.strict;
-            const std::string extension = encoded.record.params.at("extension").get<std::string>();
+            const std::string& extension = std::get<EncodeImageEvidence>(encoded.record.evidence).extension;
             DecodedImage decoded = decode_image(Source::from_memory(encoded.bytes, extension), options);
-            return FrameResult{std::move(decoded.frame), std::move(decoded.record), std::move(decoded.configuration)};
+            return FrameResult{std::move(decoded.frame), std::move(decoded.record), decoded.configuration};
         }
 
         /// Decodes an encoded clip, which must give back `frame_count` frames.
@@ -563,7 +551,7 @@ namespace lossylab
             options.assumed_color = encoded.record.output.color;
             options.thread_count = decode_spec.thread_count;
             options.strict = decode_spec.strict;
-            const std::string extension = encoded.record.params.at("extension").get<std::string>();
+            const std::string& extension = std::get<EncodeVideoEvidence>(encoded.record.evidence).extension;
 
             VideoReader reader(Source::from_memory(encoded.bytes, extension), options);
             std::vector<VideoFrame> decoded = reader.frames(FrameSelector::all());
@@ -603,7 +591,6 @@ namespace lossylab
         require_known_options(encoder, options.encoder_options);
 
         StageRecord record;
-        record.kind = StageKind::EncodeVideo;
         record.implementation = encoder.name;
         record.input = frames.front().describe();
         record.transform = CoordinateTransform::identity();
@@ -637,26 +624,11 @@ namespace lossylab
         record.encoder_settings = encoder_settings(plan, session, options.rate_control.to_json());
         record.encoder_settings["gop"] = options.gop.to_json();
         record.achieved_bpp = bits_per_pixel(bytes.size(), record.output, encoded_frames.size());
-        record.params = json::object({
-            {"container", plan.muxer},
-            {"extension", plan.extension},
-            {"frame_count", encoded_frames.size()},
-            {"color", first.color().to_json()},
-        });
-        json::Value configuration = json::object({
-            {"codec", to_string(options.codec)},
-            {"backend", to_string(options.backend)},
-            {"frame_rate", options.frame_rate.to_json()},
-            {"pixel_format", options.pixel_format.name()},
-            {"rate_control", options.rate_control.to_json()},
-            {"gop", options.gop.to_json()},
-            {"encoder_options", json::to_object(options.encoder_options)},
-            {"thread_count", options.thread_count},
-            {"strict", to_string(options.strict)},
-        });
+        record.evidence = EncodeVideoEvidence{plan.muxer, plan.extension, static_cast<int>(encoded_frames.size()),
+                                              first.color(), std::nullopt};
         record.duration_ms = clock.duration_ms();
         record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
-        return EncodedResult{std::move(bytes), std::move(record), std::move(configuration)};
+        return EncodedResult{std::move(bytes), std::move(record), options};
     }
 
     EncodedResult encode_image(const Frame& frame, const EncodeImageOptions& options)
@@ -669,7 +641,6 @@ namespace lossylab
         require_known_options(encoder, options.encoder_options);
 
         StageRecord record;
-        record.kind = StageKind::EncodeImage;
         record.implementation = encoder.name;
         record.input = frame.describe();
         record.transform = CoordinateTransform::identity();
@@ -712,23 +683,12 @@ namespace lossylab
         record.encoder_settings = encoder_settings(plan, session, rate_control);
         record.encoder_settings["lossless"] = options.lossless;
         record.achieved_bpp = bits_per_pixel(bytes.size(), record.output, 1);
-        record.params = json::object({
-            {"container", plan.muxer.empty() ? json::Value() : json::Value(plan.muxer)},
-            {"extension", plan.extension},
-            {"color", encoded_frame.color().to_json()},
-        });
-        json::Value configuration = json::object({
-            {"codec", to_string(options.codec)},
-            {"pixel_format", options.pixel_format.name()},
-            {"lossless", options.lossless},
-            {"rate_control", rate_control},
-            {"encoder_options", json::to_object(options.encoder_options)},
-            {"thread_count", options.thread_count},
-            {"strict", to_string(options.strict)},
-        });
+        record.evidence = EncodeImageEvidence{
+            plan.muxer.empty() ? std::nullopt : std::optional<std::string>(plan.muxer), plan.extension,
+            encoded_frame.color(), std::nullopt};
         record.duration_ms = clock.duration_ms();
         record.ffmpeg_duration_ms = clock.ffmpeg_duration_ms();
-        return EncodedResult{std::move(bytes), std::move(record), std::move(configuration)};
+        return EncodedResult{std::move(bytes), std::move(record), options};
     }
 
     FramesResult roundtrip(const std::vector<Frame>& frames,
@@ -742,8 +702,12 @@ namespace lossylab
 
         const EncodedResult encoded = encode_video(frames, encode_spec);
         FramesResult decoded = decode_encoded(encoded, decode_spec, frames.size());
-        decoded.record = roundtrip_record(encoded.record, decoded.record);
-        decoded.configuration = roundtrip_configuration(encoded.configuration, decoded.configuration);
+        RoundtripVideoEvidence evidence{std::get<EncodeVideoEvidence>(encoded.record.evidence),
+                                        std::get<DecodeVideoEvidence>(decoded.record.evidence)};
+        decoded.record = roundtrip_record(encoded.record, decoded.record, std::move(evidence));
+        decoded.configuration =
+            RoundtripVideoConfiguration{std::get<EncodeVideoOptions>(encoded.configuration),
+                                        std::get<DecodeVideoConfiguration>(decoded.configuration)};
         return decoded;
     }
 
@@ -757,8 +721,11 @@ namespace lossylab
 
         const EncodedResult encoded = encode_image(frame, encode_spec);
         FrameResult decoded = decode_encoded(encoded, decode_spec);
-        decoded.record = roundtrip_record(encoded.record, decoded.record);
-        decoded.configuration = roundtrip_configuration(encoded.configuration, decoded.configuration);
+        RoundtripImageEvidence evidence{std::get<EncodeImageEvidence>(encoded.record.evidence),
+                                        std::get<DecodeImageEvidence>(decoded.record.evidence)};
+        decoded.record = roundtrip_record(encoded.record, decoded.record, std::move(evidence));
+        decoded.configuration = RoundtripImageConfiguration{std::get<EncodeImageOptions>(encoded.configuration),
+                                                            std::get<DecodeImageOptions>(decoded.configuration)};
         return decoded;
     }
 
@@ -778,13 +745,11 @@ namespace lossylab
         double pooled_metric(const std::vector<Frame>& reference, const std::vector<Frame>& distorted,
                              const EncodeTarget::Kind kind)
         {
+            const bool psnr = kind == EncodeTarget::Kind::Psnr;
             CompareOptions options;
+            options.metrics = {psnr ? Metric::Psnr : Metric::Ssim};
             options.strict = Strict::AllowRecorded;
-            if (kind == EncodeTarget::Kind::Psnr)
-            {
-                return compare(reference, distorted, {Metric::Psnr}, options).pooled.at("psnr_mean");
-            }
-            return compare(reference, distorted, {Metric::Ssim}, options).pooled.at("ssim_mean");
+            return compare(reference, distorted, options).evidence().pooled.at(psnr ? "psnr_mean" : "ssim_mean");
         }
 
         /// Bisects the encoder's quality range, ordered from its worst
@@ -803,8 +768,9 @@ namespace lossylab
             };
 
             EncodeToTargetResult result;
+            EncodeSearch search;
+            search.target = target;
             double closest_distance = std::numeric_limits<double>::infinity();
-            json::Value attempts = json::Value::array();
             std::set<double> tried;
             double low = 0.0;
             double high = 1.0;
@@ -820,8 +786,7 @@ namespace lossylab
 
                 EncodedResult encoded = encode(parameter);
                 const double achieved = achieved_by(encoded);
-                ++result.iterations;
-                attempts.push_back(json::object({{"quality_parameter", parameter}, {"achieved", achieved}}));
+                search.attempts.push_back(EncodeAttempt{parameter, achieved});
 
                 const double distance = std::abs(achieved - target.value);
                 if (distance < closest_distance || result.bytes.empty())
@@ -830,25 +795,26 @@ namespace lossylab
                     result.bytes = std::move(encoded.bytes);
                     result.record = std::move(encoded.record);
                     result.configuration = std::move(encoded.configuration);
-                    result.quality_parameter = parameter;
-                    result.achieved = achieved;
+                    search.quality_parameter = parameter;
+                    search.achieved = achieved;
                 }
                 if (distance <= target.tolerance)
                 {
-                    result.converged = true;
+                    search.converged = true;
                     break;
                 }
                 (achieved < target.value ? low : high) = position;
             }
 
-            result.configuration["target"] = target.to_json();
-            result.configuration["search"] = json::object({
-                {"method", "bisection over the encoder's quality range, from its worst quality to its best"},
-            });
-            result.record.params["search"] = json::object({
-                {"attempts", attempts},
-                {"converged", result.converged},
-            });
+            std::visit(
+                [&search](auto& evidence)
+                {
+                    if constexpr (requires { evidence.search = search; })
+                    {
+                        evidence.search = search;
+                    }
+                },
+                result.record.evidence);
             return result;
         }
 
@@ -885,6 +851,21 @@ namespace lossylab
                 break;
             }
         }
+    }
+
+    const EncodeSearch& EncodeToTargetResult::search() const
+    {
+        if (const auto* image = std::get_if<EncodeImageEvidence>(&record.evidence);
+            image != nullptr && image->search.has_value())
+        {
+            return *image->search;
+        }
+        if (const auto* video = std::get_if<EncodeVideoEvidence>(&record.evidence);
+            video != nullptr && video->search.has_value())
+        {
+            return *video->search;
+        }
+        throw Error("encode_to_target() result has no search in its record's evidence");
     }
 
     EncodeToTargetResult encode_to_target(const std::vector<Frame>& frames,

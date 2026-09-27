@@ -77,9 +77,20 @@ def test_record_describes_the_last_read():
     reader = fixture_reader()
     reader.frames(lossylab.FrameSelector.stride(2))
     record = reader.record()
-    assert record.kind == lossylab.StageKind.Decode
+    assert record.kind == lossylab.StageKind.DecodeVideo
     assert record.implementation == "h264"
-    assert record.params["frames_selected"] == 3
+    assert isinstance(record.evidence, lossylab.DecodeVideoEvidence)
+    assert record.evidence.source_sha256.startswith("sha256:")
+    assert reader.configuration().frame_indices == [0, 2, 4]
+
+
+def test_a_predicate_selection_replays_from_the_recorded_indices():
+    reader = fixture_reader()
+    picked = [frame.index for frame in reader.frames(lossylab.FrameSelector.where(lambda frame: frame.index > 2))]
+    recorded = reader.configuration().frame_indices
+    assert recorded == picked == [3, 4]
+    replayed = reader.frames(lossylab.FrameSelector.indices(recorded))
+    assert [frame.index for frame in replayed] == picked
 
 
 def test_qp_maps_and_motion_vectors_are_exported_on_request():
@@ -129,7 +140,7 @@ def test_capture_video_frames_returns_frames_and_record():
     )
     assert result.ok()
     assert [video_frame.index for video_frame in result.value().frames] == [1, 3]
-    assert result.value().record.params["frames_selected"] == 2
+    assert result.value().configuration.frame_indices == [1, 3]
 
 
 def test_capture_video_frames_turns_a_bad_file_into_an_error():

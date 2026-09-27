@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstddef>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -201,11 +202,16 @@ namespace lossylab::reflect
         /// enums (through an ADL `from_string(name, value&)` next to the
         /// enum's own `*_from_string`), optional (null is empty), vector,
         /// std::array, string-keyed map, reflected structs, and whatever
-        /// json::Value converts to directly.
+        /// json::Value converts to directly. JSON has no NaN or infinity and
+        /// writes both as null, so a null floating-point value reads as NaN.
         template <typename T>
         [[nodiscard]] T from_json_value(const json::Value& value)
         {
-            if constexpr (json::Readable<T>)
+            if constexpr (std::is_floating_point_v<T>)
+            {
+                return value.is_null() ? std::numeric_limits<T>::quiet_NaN() : value.get<T>();
+            }
+            else if constexpr (json::Readable<T>)
             {
                 return T::from_json(value);
             }
@@ -432,4 +438,15 @@ namespace lossylab::reflect
                           lossylab::reflect::detail::count_aggregate_fields<Type>(),                               \
                       #Type " reflection list is out of sync with its members: add or remove a name in "          \
                             "LOSSYLAB_REFLECT(" #Type ", ...) to match");                                          \
+    }
+
+/// LOSSYLAB_REFLECT for an aggregate without members, such as the evidence of
+/// a stage that observes nothing about its input.
+#define LOSSYLAB_REFLECT_EMPTY(Type)                                                                               \
+    template <>                                                                                                   \
+    struct lossylab::reflect::Fields<Type>                                                                        \
+    {                                                                                                              \
+        static constexpr auto members = std::tuple{};                                                              \
+        static_assert(lossylab::reflect::detail::count_aggregate_fields<Type>() == 0,                              \
+                      #Type " has members: list them with LOSSYLAB_REFLECT(" #Type ", ...)");                      \
     }

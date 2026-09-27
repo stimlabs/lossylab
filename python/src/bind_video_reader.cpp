@@ -5,9 +5,6 @@
 #include "lossylab/io/video_reader.hpp"
 
 #include <nanobind/stl/function.h>
-#include <nanobind/stl/optional.h>
-#include <nanobind/stl/string.h>
-#include <nanobind/stl/vector.h>
 
 namespace lossylab::pybind
 {
@@ -33,6 +30,9 @@ namespace lossylab::pybind
 
         bind_reflected_rw<VideoReaderOptions>(m, "VideoReaderOptions");
 
+        bind_reflected<DecodeVideoConfiguration>(m, "DecodeVideoConfiguration");
+        bind_reflected<DecodeVideoEvidence>(m, "DecodeVideoEvidence");
+
         // The reader keeps its Source alive, since it rereads it on every call
         // and a Source from from_memory borrows its buffer.
         nb::class_<VideoReader>(m, "VideoReader")
@@ -45,6 +45,6 @@ namespace lossylab::pybind
                  nb::call_guard<nb::gil_scoped_release>(),
                  "The callback runs with the GIL held, once per selected frame, and returns False to stop.")
             .def("record", &VideoReader::record, nb::rv_policy::reference_internal)
-            .def("configuration", [](const VideoReader& self) { return to_python(self.configuration()); });
+            .def("configuration", &VideoReader::configuration, nb::rv_policy::reference_internal);
     }
 }

@@ -1,6 +1,6 @@
 import json
-from pathlib import Path
 from hashlib import sha256
+from pathlib import Path
 
 import lossylab
 
@@ -53,8 +53,6 @@ def test_decode_image_records_the_hash_and_not_the_path():
     source = lossylab.Source.from_path(str(path))
 
     result = lossylab.decode_image(source)
-    params = result.record.params
 
-    assert params["source_sha256"] == source.sha256()
-    assert "source" not in params
-    assert str(path) not in json.dumps(params)
+    assert result.evidence.source_sha256 == source.sha256()
+    assert str(path) not in json.dumps(result.processing_record().to_dict())
