@@ -12,11 +12,9 @@
 
 extern "C" {
 #include <libavutil/frame.h>
-#include <libavutil/pixdesc.h>
 }
 
 #include <algorithm>
-#include <cstring>
 #include <map>
 #include <optional>
 #include <string>
@@ -247,47 +245,29 @@ namespace lossylab
         }
 
         /// Copies a decoded tile into the image at (x, y), clipping whatever
-        /// falls outside it. Chroma planes are placed at the position divided
-        /// by the format's subsampling.
+        /// falls outside it. The tile's position must be a whole chroma
+        /// sample and a whole byte in every plane.
         void place_tile(Frame& image, const Frame& tile, const int x, const int y)
         {
-            const AVPixFmtDescriptor* descriptor =
-                av_pix_fmt_desc_get(static_cast<AVPixelFormat>(image.pixel_format().raw()));
-            for (int plane_index = 0; plane_index < image.plane_count(); ++plane_index)
+            const int source_column = std::max(0, -x);
+            const int source_row = std::max(0, -y);
+            const int target_column = std::max(0, x);
+            const int target_row = std::max(0, y);
+            const int columns = std::min(tile.width() - source_column, image.width() - target_column);
+            const int rows = std::min(tile.height() - source_row, image.height() - target_row);
+            if (columns <= 0 || rows <= 0)
             {
-                const bool is_chroma = plane_index == 1 || plane_index == 2;
-                const int shift_x = is_chroma ? descriptor->log2_chroma_w : 0;
-                const int shift_y = is_chroma ? descriptor->log2_chroma_h : 0;
-                if (x % (1 << shift_x) != 0 || y % (1 << shift_y) != 0)
-                {
-                    throw ConfigError("a tile at (" + std::to_string(x) + ", " + std::to_string(y) +
-                                      ") is not aligned to the chroma subsampling of " + image.pixel_format().name());
-                }
-
-                PlaneView target = image.plane(plane_index);
-                const ConstPlaneView source = tile.plane(plane_index);
-                const int plane_x = x / (1 << shift_x);
-                const int plane_y = y / (1 << shift_y);
-
-                const int source_column = std::max(0, -plane_x);
-                const int source_row = std::max(0, -plane_y);
-                const int target_column = std::max(0, plane_x);
-                const int target_row = std::max(0, plane_y);
-                const int columns = std::min(source.width - source_column, target.width - target_column);
-                const int rows = std::min(source.height - source_row, target.height - target_row);
-                if (columns <= 0 || rows <= 0)
-                {
-                    continue;
-                }
-
-                const std::ptrdiff_t sample_bytes =
-                    static_cast<std::ptrdiff_t>(source.bytes_per_sample) * source.components_per_pixel;
-                for (int row = 0; row < rows; ++row)
-                {
-                    std::memcpy(target.row(target_row + row) + target_column * sample_bytes,
-                                source.row(source_row + row) + source_column * sample_bytes,
-                                static_cast<std::size_t>(columns * sample_bytes));
-                }
+                return;
+            }
+            try
+            {
+                detail::copy_rectangle(*tile.raw(), source_column, source_row, *image.raw(), target_column,
+                                       target_row, columns, rows);
+            }
+            catch (const ConfigError& error)
+            {
+                throw ConfigError("a tile at (" + std::to_string(x) + ", " + std::to_string(y) +
+                                  ") cannot be placed: " + error.what());
             }
         }
 

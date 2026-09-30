@@ -152,6 +152,15 @@ namespace lossylab::detail
     /// Frame's copy semantics.
     [[nodiscard]] FramePtr ref_frame(const AVFrame* source);
 
+    /// Copies the `width` x `height` rectangle at (source_x, source_y) of
+    /// `source` to (target_x, target_y) of `target`, which must share its
+    /// pixel format. Every plane is laid out as FFmpeg lays it out, for
+    /// packed, bit-packed and subsampled formats alike; a palette is copied
+    /// whole. Throws ConfigError when a corner is not a whole chroma sample
+    /// and a whole byte in every plane.
+    void copy_rectangle(const AVFrame& source, int source_x, int source_y, AVFrame& target, int target_x,
+                        int target_y, int width, int height);
+
     /// "sha256:" and the lowercase hex SHA-256 of `bytes`, computed through
     /// FFmpeg's own hash implementation.
     [[nodiscard]] std::string sha256_hex(std::span<const std::uint8_t> bytes);

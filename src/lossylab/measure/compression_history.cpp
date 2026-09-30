@@ -6,6 +6,7 @@
 #include "lossylab/core/schema_version.hpp"
 #include "lossylab/core/statistics.hpp"
 #include "lossylab/detail/ff_error.hpp"
+#include "lossylab/detail/ff_ptr.hpp"
 #include "lossylab/env/capabilities.hpp"
 #include "lossylab/io/jpeg_markers.hpp"
 
@@ -13,7 +14,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <functional>
 #include <limits>
 #include <map>
@@ -1309,40 +1309,14 @@ namespace lossylab
             return parameter;
         }
 
-        /// The number of samples plane `plane_index` has for every
-        /// `luma_samples` luma samples across.
-        int plane_samples(const Frame& frame, const int plane_index, const int luma_samples, const bool across)
-        {
-            const ConstPlaneView view = frame.plane(plane_index);
-            const int plane_extent = across ? view.width : view.height;
-            const int frame_extent = across ? frame.width() : frame.height();
-            int shift = 0;
-            while ((frame_extent + (1 << shift) - 1) >> shift > plane_extent)
-            {
-                ++shift;
-            }
-            return luma_samples >> shift;
-        }
-
-        /// A copy of the rectangle at (x, y), which must lie on the 16-pixel
-        /// grid so that every chroma plane's corner is a whole sample.
+        /// A copy of the rectangle at (x, y) in the frame's own pixel format,
+        /// which must lie on the 16-pixel grid so that every plane's corner
+        /// is a whole sample and a whole byte, also for formats that pack
+        /// several pixels into a byte.
         Frame crop_frame(const Frame& frame, const int x, const int y, const int width, const int height)
         {
             Frame cropped = Frame::allocate(width, height, frame.pixel_format(), frame.color());
-            for (int plane_index = 0; plane_index < frame.plane_count(); ++plane_index)
-            {
-                const ConstPlaneView source = frame.plane(plane_index);
-                const PlaneView target = cropped.plane(plane_index);
-                const int left = plane_samples(frame, plane_index, x, true);
-                const int top = plane_samples(frame, plane_index, y, false);
-                const std::ptrdiff_t bytes_per_pixel =
-                    static_cast<std::ptrdiff_t>(source.bytes_per_sample) * source.components_per_pixel;
-                for (int row = 0; row < target.height; ++row)
-                {
-                    std::memcpy(target.row(row), source.row(top + row) + left * bytes_per_pixel,
-                                static_cast<std::size_t>(target.row_bytes()));
-                }
-            }
+            detail::copy_rectangle(*frame.raw(), x, y, *cropped.raw(), 0, 0, width, height);
             return cropped;
         }
 

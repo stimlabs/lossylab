@@ -529,6 +529,61 @@ namespace
         assert(history.evidence().recompression.errors.empty());
     }
 
+    void test_the_recompression_crop_keeps_the_pixels_of_any_format()
+    {
+        // A 160x144 frame is cropped around its center to the 64-pixel
+        // square at (48, 32); sweeping that square given on its own must
+        // match.
+        constexpr int crop_side = 64;
+        constexpr int crop_left = 48;
+        constexpr int crop_top = 32;
+        CompressionHistoryOptions options;
+        options.recompression_codecs = {ImageCodec::Mjpeg};
+        options.recompression_crop = crop_side;
+
+        std::vector<std::pair<Frame, Frame>> whole_and_cropped;
+        // Formats that pack several pixels into a byte, a palette, and
+        // fewer bytes per pixel than components.
+        for (const auto& [format_name, extension] : {std::pair{"pal8", ".png"}, std::pair{"monob", ".png"},
+                                                     std::pair{"rgb565le", ".bmp"}})
+        {
+            const std::string stem = std::string("testsrc2_160x144_") + format_name;
+            const Frame whole = decode_image(Source::from_path(data_path(stem + extension))).frame;
+            assert(whole.pixel_format().name() == format_name);
+            whole_and_cropped.emplace_back(
+                whole, decode_image(Source::from_path(data_path(stem + "_crop_48_32_64x64" + extension))).frame);
+        }
+
+        // Formats whose conversion from rgb24 is the same pixel by pixel in
+        // the whole frame and in the square.
+        const Frame rgb = texture(160, 144);
+        Frame square = Frame::allocate(crop_side, crop_side, rgb.pixel_format(), rgb.color());
+        for (int y = 0; y < crop_side; ++y)
+        {
+            std::memcpy(square.plane(0).row(y), rgb.plane(0).row(crop_top + y) + 3 * crop_left,
+                        static_cast<std::size_t>(3 * crop_side));
+        }
+        for (const char* name : {"rgb24", "rgb0", "gbrp", "yuv420p"})
+        {
+            const PixelFormat format = PixelFormat::from_name(name);
+            whole_and_cropped.emplace_back(convert(rgb, format, rgb.color()).frame,
+                                           convert(square, format, rgb.color()).frame);
+        }
+
+        for (const auto& [whole, cropped] : whole_and_cropped)
+        {
+            const CompressionHistory history = compression_history(whole, options);            assert(history.evidence().recompression.crop == (Rect{crop_left, crop_top, crop_side, crop_side}));
+            assert(history.evidence().recompression_curves.size() == 1);
+            const RecompressionSweep& sweep = history.evidence().recompression_curves.front();
+            const RecompressionCurve expected = recompression_curve(cropped, sweep.options);
+            assert(sweep.curve.points.size() == expected.evidence().points.size());
+            for (std::size_t i = 0; i < sweep.curve.points.size(); ++i)
+            {
+                assert(sweep.curve.points[i].error == expected.evidence().points[i].error);
+            }
+        }
+    }
+
     // -----------------------------------------------------------------------
     // recompression_curve() on any input
     // -----------------------------------------------------------------------
@@ -634,6 +689,7 @@ namespace
 int main()
 {
     test_a_frame_with_embedded_data_is_analyzed_like_any_other();
+    test_the_recompression_crop_keeps_the_pixels_of_any_format();
     test_a_never_compressed_image_shows_no_trace();
     test_a_jpeg_saved_as_rgb_shows_its_tables_and_subsampling();
     test_chroma_upsampling_is_found_at_any_quality();

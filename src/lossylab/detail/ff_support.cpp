@@ -1,8 +1,14 @@
 #include "lossylab/detail/ff_error.hpp"
 #include "lossylab/detail/ff_ptr.hpp"
 
+extern "C" {
+#include <libavutil/imgutils.h>
+#include <libavutil/pixdesc.h>
+}
+
 #include <array>
 #include <cstdio>
+#include <string>
 
 namespace lossylab::detail
 {
@@ -66,6 +72,56 @@ namespace lossylab::detail
         FramePtr copy = make_frame();
         LL_FF_CHECK(av_frame_ref(copy.get(), source));
         return copy;
+    }
+
+    namespace
+    {
+        /// The start of every plane of `frame` at pixel (x, y), after
+        /// checking that it falls on a whole chroma sample and a whole byte.
+        std::array<std::uint8_t*, 4> plane_corners(const AVFrame& frame, const int x, const int y)
+        {
+            const auto format = static_cast<AVPixelFormat>(frame.format);
+            const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(format);
+            const bool bit_packed = (descriptor->flags & AV_PIX_FMT_FLAG_BITSTREAM) != 0;
+            if (x < 0 || y < 0 || x % (1 << descriptor->log2_chroma_w) != 0 ||
+                y % (1 << descriptor->log2_chroma_h) != 0 ||
+                (bit_packed && x * av_get_bits_per_pixel(descriptor) % 8 != 0))
+            {
+                throw ConfigError("(" + std::to_string(x) + ", " + std::to_string(y) +
+                                  ") is not a whole chroma sample and byte of " + descriptor->name);
+            }
+
+            std::array<std::uint8_t*, 4> corners = {frame.data[0], frame.data[1], frame.data[2], frame.data[3]};
+            for (int plane_index = 0; plane_index < av_pix_fmt_count_planes(format); ++plane_index)
+            {
+                const auto plane = static_cast<std::size_t>(plane_index);
+                const bool is_chroma = plane_index == 1 || plane_index == 2;
+                const int row = is_chroma ? y >> descriptor->log2_chroma_h : y;
+                const int column_bytes = LL_FF_CHECK(av_image_get_linesize(format, x, plane_index));
+                corners[plane] += static_cast<std::ptrdiff_t>(row) * frame.linesize[plane] + column_bytes;
+            }
+            return corners;
+        }
+    }
+
+    void copy_rectangle(const AVFrame& source, const int source_x, const int source_y, AVFrame& target,
+                        const int target_x, const int target_y, const int width, const int height)
+    {
+        if (source.format != target.format)
+        {
+            throw ConfigError("copy_rectangle() between two pixel formats");
+        }
+        if (source_x + width > source.width || source_y + height > source.height ||
+            target_x + width > target.width || target_y + height > target.height)
+        {
+            throw ConfigError("copy_rectangle() reaches outside a frame");
+        }
+        const std::array<std::uint8_t*, 4> source_corners = plane_corners(source, source_x, source_y);
+        const std::array<std::uint8_t*, 4> target_corners = plane_corners(target, target_x, target_y);
+        const std::array<const std::uint8_t*, 4> source_data = {source_corners[0], source_corners[1],
+                                                                source_corners[2], source_corners[3]};
+        av_image_copy(target_corners.data(), target.linesize, source_data.data(), source.linesize,
+                      static_cast<AVPixelFormat>(source.format), width, height);
     }
 
     Sha256Stream::Sha256Stream()
