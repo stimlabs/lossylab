@@ -23,6 +23,7 @@ LOSSYLAB_BUILD_TOOLS = "OFF"
 [dependency-groups]
 dev = [
     "mypy>=1.19.1",
+    "nanobind>=2.0",
     "ruff>=0.16.8",
 ]
 
