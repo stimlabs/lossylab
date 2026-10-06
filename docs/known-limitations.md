@@ -30,3 +30,20 @@ The WebP specification puts the TIFF header first in the chunk. Some writers add
 - **Source:** `libavcodec/webp.c` skips `ANIM` and `ANMF` chunks (the same case as `XMP `), so it never finds image data in an animation.
 
 The stream reports 0x0. `probe()` reads the canvas size, frame count and compression from the RIFF chunks instead.
+
+### JPEG: CMYK is folded to RGB without its profile
+
+- **FFmpeg version:** n8.1.3
+- **Verified against:** the source code.
+- **Source:** for an Adobe CMYK JPEG (`adobe_transform` 0), `libavcodec/mjpegdec.c` (lines 2813 to 2834) multiplies each of C, M and Y by K and outputs `gbrap` with the alpha plane set to 255. A YCCK JPEG (`adobe_transform` 2) is folded the same way into `yuva444p`. The embedded CMYK profile is never applied, and the CMYK samples are not kept.
+
+A conversion to sRGB rgb24 therefore cannot apply a CMYK profile. It records the profile as `not applied: CMYK folded to RGB by the decoder` and drops it from the frame.
+
+### swscale: 4:2:0 and 4:2:2 to RGB repeat chroma at even sizes
+
+- **FFmpeg version:** n8.1.3
+- **Verified against:** the source code.
+- **Source:** `libswscale/swscale_unscaled.c` (lines 2414 to 2417) converts yuv420p, yuv422p and yuva420p of even height to RGB with `ff_yuv2rgb_get_func_ptr`, which repeats each chroma sample, unless `SWS_ACCURATE_RND` is set. `handle_jpeg()` in `libswscale/utils.c` turns the yuvj formats into these first. An odd width forces full chroma interpolation instead (`utils.c`, line 1247), and an odd height takes the general scaler. Without the flag, the chroma upsampler depends on the image's size, not on the kernel asked for.
+- **Source, bit depth:** a source of more than 8 bits converted to 8 bits gets an 8×8 ordered dither (`libswscale/swscale.c`, lines 291 and 521).
+
+`convert()` always sets `SWS_ACCURATE_RND | SWS_BITEXACT`, and `SWS_FULL_CHR_H_INT | SWS_FULL_CHR_H_INP` when either side is RGB. A conversion to rgb24 goes through 16-bit RGB and rounds to 8 bits itself, without dither.

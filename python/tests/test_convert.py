@@ -1,5 +1,7 @@
+import io
 from pathlib import Path
 
+import numpy
 import pytest
 
 import lossylab
@@ -106,3 +108,71 @@ def test_chroma_roundtrip_applies_a_realistic_chroma_history():
 
     assert result.frame.pixel_format() == frame.pixel_format()
     assert result.record.kind == lossylab.StageKind.ChromaRoundtrip
+
+
+def _png_with_profile(pixels, profile_bytes):
+    """PNG bytes of an RGB array, with the given ICC profile embedded if any."""
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    image = Image.fromarray(pixels, "RGB")
+    image.save(buffer, format="PNG", **({"icc_profile": profile_bytes} if profile_bytes else {}))
+    return buffer.getvalue()
+
+
+def _decode_to_srgb24(data):
+    options = lossylab.DecodeImageOptions()
+    conversion = lossylab.ConvertOptions()
+    conversion.pixel_format = lossylab.PixelFormat.from_name("rgb24")
+    conversion.color = lossylab.ColorSpec.srgb()
+    options.conversion = conversion
+    return lossylab.decode_image(lossylab.Source.from_bytes(data), options)
+
+
+def _random_rgb(height=24, width=40):
+    return numpy.random.default_rng(7).integers(0, 256, (height, width, 3), dtype=numpy.uint8)
+
+
+def test_an_adobe_rgb_profile_converts_like_lcms2_in_pillow():
+    from PIL import Image, ImageCms
+
+    pixels = _random_rgb()
+    adobe_rgb = (DATA_DIR / "icc" / "adobe_rgb_colord.icc").read_bytes()
+    decoded = _decode_to_srgb24(_png_with_profile(pixels, adobe_rgb))
+    assert decoded.frame.icc_profile() is None
+    assert _has_conversion(decoded.record.conversions, "icc_profile")
+
+    reference = ImageCms.profileToProfile(
+        Image.fromarray(pixels, "RGB"),
+        ImageCms.ImageCmsProfile(io.BytesIO(adobe_rgb)),
+        ImageCms.createProfile("sRGB"),
+        renderingIntent=ImageCms.Intent.RELATIVE_COLORIMETRIC,
+        flags=ImageCms.Flags.BLACKPOINTCOMPENSATION | ImageCms.Flags.NOOPTIMIZE,
+    )
+    assert numpy.array_equal(numpy.asarray(decoded.frame.plane(0)), numpy.asarray(reference))
+
+
+def test_an_srgb_profile_and_no_profile_decode_identically():
+    pixels = _random_rgb()
+    srgb = (DATA_DIR / "icc" / "srgb_colord.icc").read_bytes()
+    srgb_d50 = (DATA_DIR / "icc" / "srgb_d50_v2.icc").read_bytes()
+    untagged = _decode_to_srgb24(_png_with_profile(pixels, None))
+    assert numpy.array_equal(numpy.asarray(untagged.frame.plane(0)), pixels)
+    for profile in (srgb, srgb_d50):
+        tagged = _decode_to_srgb24(_png_with_profile(pixels, profile))
+        assert not _has_conversion(tagged.record.conversions, "icc_profile")
+        assert numpy.array_equal(numpy.asarray(tagged.frame.plane(0)), pixels)
+
+
+def test_a_cmyk_profile_is_recorded_as_not_applied():
+    from PIL import Image
+
+    cmyk = numpy.random.default_rng(3).integers(0, 256, (16, 16, 4), dtype=numpy.uint8)
+    buffer = io.BytesIO()
+    Image.fromarray(cmyk, "CMYK").save(
+        buffer, format="JPEG", quality=95, icc_profile=(DATA_DIR / "icc" / "cmyk_lut_v4.icc").read_bytes()
+    )
+    decoded = _decode_to_srgb24(buffer.getvalue())
+    events = {event.property: event.to for event in decoded.record.conversions}
+    assert events["icc_profile"] == "not applied: CMYK folded to RGB by the decoder"
+    assert decoded.frame.icc_profile() is None

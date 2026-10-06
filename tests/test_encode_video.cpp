@@ -89,8 +89,11 @@ namespace
     /// to the source.
     void check_roundtrip(const std::vector<Frame>& clip, const EncodeVideoOptions& options, const double min_psnr)
     {
+        ConvertOptions conversion;
+        conversion.pixel_format = clip.front().pixel_format();
+        conversion.color = clip.front().color();
         DecodeSpec decode_spec;
-        decode_spec.pixel_format = clip.front().pixel_format();
+        decode_spec.conversion = conversion;
         const FramesResult result = roundtrip(clip, options, decode_spec);
         assert(result.frames.size() == clip.size());
         assert(result.record.kind() == StageKind::RoundtripVideo);

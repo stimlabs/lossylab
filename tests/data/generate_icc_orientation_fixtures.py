@@ -30,6 +30,7 @@ FFMPEG = "/opt/ffmpeg/bin/ffmpeg"
 D50 = (0.9642, 1.0, 0.8249)
 D65_XY = (0.3127, 0.3290)
 DISPLAY_P3_XY = ((0.680, 0.320), (0.265, 0.690), (0.150, 0.060))
+SRGB_XY = ((0.640, 0.330), (0.300, 0.600), (0.150, 0.060))
 
 BRADFORD = ((0.8951, 0.2664, -0.1614), (-0.7502, 1.7135, 0.0367), (0.0389, -0.0685, 1.0296))
 
@@ -167,6 +168,31 @@ def display_p3_profile(description, trc_tags):
     ])
 
 
+def d50_v2_profile(description, primaries):
+    """A version 2 profile whose colorants are adapted to D50 but which carries neither a `chad` tag nor a media
+    white point other than D50, like the Google 2016 sRGB profile."""
+    colorants = multiply(bradford_adaptation(xy_to_xyz(D65_XY), D50), rgb_to_xyz_matrix(primaries, D65_XY))
+    curve = tag_sampled_curve(srgb_decode, 1024)
+    return build_profile(bytes([2, 0x10, 0, 0]), "mntr", "RGB ", "XYZ ", [
+        ("desc", tag_v2_desc(description)),
+        ("wtpt", tag_xyz(D50)),
+        ("rXYZ", tag_xyz(tuple(row[0] for row in colorants))),
+        ("gXYZ", tag_xyz(tuple(row[1] for row in colorants))),
+        ("bXYZ", tag_xyz(tuple(row[2] for row in colorants))),
+        ("rTRC", curve),
+        ("gTRC", curve),
+        ("bTRC", curve),
+    ])
+
+
+def write_d50_profiles():
+    (ICC_DIR / "srgb_d50_v2.icc").write_bytes(d50_v2_profile("sRGB", SRGB_XY))
+    (ICC_DIR / "display_p3_d50_v2.icc").write_bytes(
+        d50_v2_profile("sRGB Transfer with Display P3 Gamut", DISPLAY_P3_XY))
+    (ICC_DIR / "unknown_primaries_d50_v2.icc").write_bytes(
+        d50_v2_profile("Calibrated display", ((0.600, 0.350), (0.280, 0.620), (0.160, 0.070))))
+
+
 def write_profiles():
     ICC_DIR.mkdir(exist_ok=True)
 
@@ -194,6 +220,7 @@ def write_profiles():
     for source_name, target_name in (("sRGB.icc", "srgb_colord.icc"), ("AdobeRGB1998.icc", "adobe_rgb_colord.icc"),
                                      ("ProPhotoRGB.icc", "prophoto_rgb_colord.icc"), ("Rec709.icc", "rec709_colord.icc")):
         shutil.copyfile(COLORD_DIR / source_name, ICC_DIR / target_name)
+    write_d50_profiles()
 
 
 def exif_with_orientation(orientation):

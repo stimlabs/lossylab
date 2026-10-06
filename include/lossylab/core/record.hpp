@@ -205,6 +205,16 @@ namespace lossylab
         [[nodiscard]] const std::optional<ProbeResult>& origin() const noexcept { return m_origin; }
         void set_origin(std::optional<ProbeResult> origin);
 
+        /// The seed a pipeline ran with, from which every stage that draws
+        /// derives its own; nullopt for a record no pipeline made.
+        [[nodiscard]] std::optional<std::uint64_t> seed() const noexcept { return m_seed; }
+        void set_seed(std::optional<std::uint64_t> seed) noexcept { m_seed = seed; }
+
+        /// `Frame::samples_sha256()` of a pipeline's output. A replay of the
+        /// record on the same build gives the same hash.
+        [[nodiscard]] const std::optional<std::string>& output_sha256() const noexcept { return m_output_sha256; }
+        void set_output_sha256(std::optional<std::string> hash) { m_output_sha256 = std::move(hash); }
+
         /// The composition of every stage transform: maps a coordinate in the
         /// original input to the corresponding coordinate in the final output.
         /// Inverting it is how an output crop or an inpainting mask is traced
@@ -241,6 +251,8 @@ namespace lossylab
         json::Value m_build;
         json::Value m_diagnostics;
         std::optional<ProbeResult> m_origin;
+        std::optional<std::uint64_t> m_seed;
+        std::optional<std::string> m_output_sha256;
         std::vector<StageRecord> m_stages;
         std::vector<StageConfiguration> m_configurations;
     };

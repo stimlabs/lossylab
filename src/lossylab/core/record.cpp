@@ -18,6 +18,9 @@ namespace lossylab
         case StageKind::Convert: return "convert";
         case StageKind::ChromaRoundtrip: return "chroma_roundtrip";
         case StageKind::Reinterpret: return "reinterpret";
+        case StageKind::Crop: return "crop";
+        case StageKind::Orient: return "orient";
+        case StageKind::Achromatic: return "achromatic";
         case StageKind::Resize: return "resize";
         case StageKind::Filter: return "filter";
         case StageKind::EncodeImage: return "encode_image";
@@ -40,6 +43,9 @@ namespace lossylab
         if (name == "convert") { return StageKind::Convert; }
         if (name == "chroma_roundtrip") { return StageKind::ChromaRoundtrip; }
         if (name == "reinterpret") { return StageKind::Reinterpret; }
+        if (name == "crop") { return StageKind::Crop; }
+        if (name == "orient") { return StageKind::Orient; }
+        if (name == "achromatic") { return StageKind::Achromatic; }
         if (name == "resize") { return StageKind::Resize; }
         if (name == "filter") { return StageKind::Filter; }
         if (name == "encode_image") { return StageKind::EncodeImage; }
@@ -325,6 +331,8 @@ namespace lossylab
             {"build", m_build},
             {"diagnostics", m_diagnostics},
             {"origin", m_origin.has_value() ? reflect::to_json(*m_origin) : json::Value()},
+            {"seed", m_seed.has_value() ? json::Value(*m_seed) : json::Value()},
+            {"output_sha256", m_output_sha256.has_value() ? json::Value(*m_output_sha256) : json::Value()},
             {"configurations", json::to_array(m_configurations, configuration_to_json)},
             {"stages", json::to_array(m_stages)},
         });
@@ -339,6 +347,14 @@ namespace lossylab
         if (!origin.is_null())
         {
             record.set_origin(ProbeResult::from_json(origin));
+        }
+        if (const json::Value& seed = value.at("seed"); !seed.is_null())
+        {
+            record.m_seed = seed.get<std::uint64_t>();
+        }
+        if (const json::Value& output = value.at("output_sha256"); !output.is_null())
+        {
+            record.m_output_sha256 = output.get<std::string>();
         }
         std::vector<StageRecord> stages = json::from_array<StageRecord>(value.at("stages"));
         const json::Value& configurations = value.at("configurations");

@@ -29,7 +29,9 @@ namespace
     StageRecord scaling_stage(const int in_w, const int in_h, const int out_w, const int out_h)
     {
         StageRecord stage;
-        stage.evidence = ConvertEvidence{"chroma_up"};
+        ConvertEvidence evidence;
+        evidence.kernel_role = "chroma_up";
+        stage.evidence = evidence;
         stage.implementation = "swscale";
         stage.input = format(in_w, in_h, "yuv420p", ColorSpec::bt709_limited());
         stage.output = format(out_w, out_h, "yuv420p", ColorSpec::bt709_limited());
@@ -284,7 +286,8 @@ namespace
     {
         const StageKind kinds[] = {
             StageKind::DecodeImage, StageKind::DecodeVideo, StageKind::Convert, StageKind::ChromaRoundtrip,
-            StageKind::Reinterpret, StageKind::Resize, StageKind::Filter, StageKind::EncodeImage,
+            StageKind::Reinterpret, StageKind::Crop, StageKind::Orient, StageKind::Achromatic,
+            StageKind::Resize, StageKind::Filter, StageKind::EncodeImage,
             StageKind::EncodeVideo, StageKind::RoundtripImage, StageKind::RoundtripVideo, StageKind::AnimateStill,
             StageKind::Measure, StageKind::Compare, StageKind::RecompressionCurve, StageKind::CompressionHistory,
         };

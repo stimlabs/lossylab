@@ -662,6 +662,32 @@ namespace lossylab
 
         std::string quoted(const std::string& signature) { return "'" + signature + "'"; }
 
+        /// The XYZ of a chromaticity at a luminance of 1.
+        Xyz xyz_of(const Chromaticity& chromaticity)
+        {
+            return {chromaticity.x / chromaticity.y, 1.0, (1.0 - chromaticity.x - chromaticity.y) / chromaticity.y};
+        }
+
+        /// The chromaticities of the colorants after an adaptation, and of
+        /// the white their sum makes.
+        IccProfileInfo::Colorants colorants_after(const Matrix& adaptation, const std::array<Xyz, 3>& colorants)
+        {
+            Xyz white{};
+            IccProfileInfo::Colorants result;
+            std::array<Chromaticity*, 3> targets = {&result.red, &result.green, &result.blue};
+            for (std::size_t i = 0; i < colorants.size(); ++i)
+            {
+                const Xyz adapted = multiply(adaptation, colorants[i]);
+                *targets[i] = chromaticity_of(adapted);
+                for (std::size_t k = 0; k < 3; ++k)
+                {
+                    white[k] += adapted[k];
+                }
+            }
+            result.white = chromaticity_of(white);
+            return result;
+        }
+
         /// Reads the tone curves and colorants of a matrix/shaper profile.
         void read_matrix_shaper(const ProfileBytes& bytes, const std::map<std::string, Tag>& tags,
                                 IccProfileInfo& info)
@@ -765,22 +791,30 @@ namespace lossylab
                 }
             }
 
-            Xyz white{};
-            IccProfileInfo::Colorants measured;
-            std::array<Chromaticity*, 3> targets = {&measured.red, &measured.green, &measured.blue};
-            for (std::size_t i = 0; i < colorants.size(); ++i)
+            IccProfileInfo::Colorants measured = colorants_after(undo_adaptation, colorants);
+            const KnownPrimaries* known = match_primaries(measured);
+
+            // Some version 2 profiles (Google's 2016 sRGB among them) store
+            // colorants adapted to D50 but carry neither a `chad` tag nor their
+            // media white point, so nothing above undid the adaptation. When
+            // such colorants match nothing, they are compared once more as
+            // adapted from D65 with the Bradford transform.
+            constexpr Chromaticity d50 = {0.3457, 0.3585};
+            const bool white_is_d50 =
+                std::abs(measured.white.x - d50.x) < 0.002 && std::abs(measured.white.y - d50.y) < 0.002;
+            if (known == nullptr && white_is_d50)
             {
-                const Xyz source = multiply(undo_adaptation, colorants[i]);
-                *targets[i] = chromaticity_of(source);
-                for (std::size_t k = 0; k < 3; ++k)
+                const IccProfileInfo::Colorants from_d65 =
+                    colorants_after(multiply(bradford_adaptation(d50_white, xyz_of(d65)), undo_adaptation), colorants);
+                if (const KnownPrimaries* adapted = match_primaries(from_d65))
                 {
-                    white[k] += source[k];
+                    known = adapted;
+                    measured = from_d65;
                 }
             }
-            measured.white = chromaticity_of(white);
             info.colorants = measured;
 
-            if (const KnownPrimaries* known = match_primaries(measured))
+            if (known != nullptr)
             {
                 info.primaries = known->code;
                 info.known_as = known_name(known->name, curve);

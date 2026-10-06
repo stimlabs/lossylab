@@ -103,8 +103,8 @@ namespace
 
         // Replaying the decode needs every option it ran with.
         const json::Value& configuration = document.at("configurations").at(0);
-        assert(configuration.size() == 5);
-        for (const char* option : {"pixel_format", "color", "assumed_color", "orientation", "strict"})
+        assert(configuration.size() == 4);
+        for (const char* option : {"conversion", "assumed_color", "orientation", "strict"})
         {
             assert(configuration.contains(option));
         }

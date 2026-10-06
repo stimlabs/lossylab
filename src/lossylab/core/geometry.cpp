@@ -253,6 +253,7 @@ namespace lossylab
         case BlockGridKind::Macroblock16: return "macroblock16";
         case BlockGridKind::Ctu32: return "ctu32";
         case BlockGridKind::Ctu64: return "ctu64";
+        case BlockGridKind::JpegMcu: return "jpeg_mcu";
         }
         return "unknown";
     }
@@ -263,6 +264,7 @@ namespace lossylab
         if (name == "macroblock16") { return BlockGridKind::Macroblock16; }
         if (name == "ctu32") { return BlockGridKind::Ctu32; }
         if (name == "ctu64") { return BlockGridKind::Ctu64; }
+        if (name == "jpeg_mcu") { return BlockGridKind::JpegMcu; }
         return std::nullopt;
     }
 
@@ -276,6 +278,7 @@ namespace lossylab
         case BlockGridKind::Macroblock16: grid.block_width = grid.block_height = 16; break;
         case BlockGridKind::Ctu32: grid.block_width = grid.block_height = 32; break;
         case BlockGridKind::Ctu64: grid.block_width = grid.block_height = 64; break;
+        case BlockGridKind::JpegMcu: grid.block_width = grid.block_height = 8; break;
         }
         return grid;
     }

@@ -333,8 +333,8 @@ namespace lossylab
         /// Frames already in them pass through; any other conversion is
         /// refused under Strict::Refuse and recorded otherwise.
         std::vector<Frame> fit_to_encoder(const std::vector<Frame>& frames, const PixelFormat& pixel_format,
-                                          const std::optional<ColorSpec>& color, const Strict strict,
-                                          ConversionList& conversions, const std::string& what)
+                                          const std::optional<ColorSpec>& color, const KernelSpec& chroma_down,
+                                          const Strict strict, ConversionList& conversions, const std::string& what)
         {
             const Frame& first = frames.front();
             const ColorSpec target_color = color.value_or(first.color());
@@ -355,11 +355,17 @@ namespace lossylab
                                                "them explicitly or allow a recorded conversion");
             }
 
+            ConvertOptions convert_options;
+            convert_options.pixel_format = pixel_format;
+            convert_options.color = target_color;
+            convert_options.chroma_down = chroma_down;
+            convert_options.icc = IccHandling::Ignore;
+            convert_options.alpha = AlphaHandling::Discard;
             std::vector<Frame> converted;
             converted.reserve(frames.size());
             for (const Frame& frame : frames)
             {
-                FrameResult result = convert(frame, pixel_format, target_color, Strict::AllowRecorded);
+                FrameResult result = convert(frame, convert_options);
                 if (converted.empty())
                 {
                     for (ConversionEvent& event : result.record.conversions)
@@ -515,8 +521,7 @@ namespace lossylab
         FrameResult decode_encoded(const EncodedResult& encoded, const DecodeSpec& decode_spec)
         {
             DecodeImageOptions options;
-            options.pixel_format = decode_spec.pixel_format;
-            options.color = decode_spec.color;
+            options.conversion = decode_spec.conversion;
             options.assumed_color = encoded.record.output.color;
             options.strict = decode_spec.strict;
             const std::string& extension = std::get<EncodeImageEvidence>(encoded.record.evidence).extension;
@@ -533,11 +538,9 @@ namespace lossylab
                 throw ConfigError("roundtrip() decode thread_count must be at least 1");
             }
             VideoReaderOptions options;
-            options.pixel_format = decode_spec.pixel_format;
-            options.color = decode_spec.color;
+            options.conversion = decode_spec.conversion;
             options.assumed_color = encoded.record.output.color;
             options.thread_count = decode_spec.thread_count;
-            options.strict = decode_spec.strict;
             const std::string& extension = std::get<EncodeVideoEvidence>(encoded.record.evidence).extension;
 
             VideoReader reader(Source::from_memory(encoded.bytes, extension), options);
@@ -582,8 +585,9 @@ namespace lossylab
         record.input = frames.front().describe();
         record.transform = CoordinateTransform::identity();
 
-        const std::vector<Frame> encoded_frames = fit_to_encoder(
-            frames, options.pixel_format, options.color, options.strict, record.conversions, "encode_video()");
+        const std::vector<Frame> encoded_frames =
+            fit_to_encoder(frames, options.pixel_format, options.color, KernelSpec{Kernel::Area, {}}, options.strict,
+                           record.conversions, "encode_video()");
         const Frame& first = encoded_frames.front();
         detail::EncoderPlan plan = detail::plan_video_encode(encoder.name, options, first.pixel_format());
         plan.setup.width = first.width();
@@ -634,8 +638,8 @@ namespace lossylab
         record.input = frame.describe();
         record.transform = CoordinateTransform::identity();
 
-        const Frame encoded_frame = fit_to_encoder({frame}, options.pixel_format, options.color, options.strict,
-                                                   record.conversions, "encode_image()")
+        const Frame encoded_frame = fit_to_encoder({frame}, options.pixel_format, options.color, options.chroma_down,
+                                                   options.strict, record.conversions, "encode_image()")
                                         .front();
         detail::EncoderPlan plan = detail::plan_image_encode(encoder.name, options, encoded_frame.pixel_format(),
                                                              encoded_frame.color());
@@ -721,9 +725,13 @@ namespace lossylab
         /// back into something comparable with them.
         DecodeSpec decode_spec_like(const Frame& frame)
         {
+            ConvertOptions conversion;
+            conversion.pixel_format = frame.pixel_format();
+            conversion.color = frame.color();
+            conversion.icc = IccHandling::Ignore;
+            conversion.alpha = AlphaHandling::Discard;
             DecodeSpec decode_spec;
-            decode_spec.pixel_format = frame.pixel_format();
-            decode_spec.color = frame.color();
+            decode_spec.conversion = conversion;
             decode_spec.strict = Strict::AllowRecorded;
             return decode_spec;
         }

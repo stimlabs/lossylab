@@ -1619,7 +1619,7 @@ namespace lossylab
             {
                 return unused("its orientation was applied");
             }
-            if (image.configuration.pixel_format.has_value() || image.configuration.color.has_value())
+            if (image.configuration.conversion.has_value())
             {
                 return unused("it was converted on decode");
             }

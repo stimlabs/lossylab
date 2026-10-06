@@ -210,6 +210,11 @@ namespace lossylab
         /// record entry.
         [[nodiscard]] FormatDescription describe() const;
 
+        /// "sha256:" and the SHA-256 of `describe()` and the samples, row by
+        /// row without padding, palette included. Equal for two frames that
+        /// hold the same image, however their rows are aligned.
+        [[nodiscard]] std::string samples_sha256() const;
+
         /// The decoder's per-block quantizer map, when it exported one.
         /// Requires the frame to have come from a VideoReader configured to
         /// export them.

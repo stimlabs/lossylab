@@ -675,21 +675,29 @@ namespace lossylab
             orientation_handling = "applied";
         }
 
+        // A JPEG's minimum coded units are the grid its compression left in
+        // the samples, in output coordinates.
+        if (const std::optional<JpegInfo>& jpeg = find_stream(probed, decoded.stream_index).jpeg;
+            jpeg.has_value() && !jpeg->components.empty())
+        {
+            BlockGrid grid = BlockGrid::for_kind(BlockGridKind::JpegMcu);
+            for (const JpegInfo::Component& component : jpeg->components)
+            {
+                grid.block_width = std::max(grid.block_width, 8 * component.horizontal_sampling);
+                grid.block_height = std::max(grid.block_height, 8 * component.vertical_sampling);
+            }
+            record.block_grid = grid.apply_transform(record.transform);
+        }
+
         record.output = frame.describe();
         record.evidence = DecodeImageEvidence{source.sha256(), decoded.stream_index, decoded.tile_grid_id,
                                               orientation_handling};
 
         // An explicit target means one conversion, run through the same code
         // path everything else uses, so its record is the same shape.
-        if (options.pixel_format.has_value() || options.color.has_value())
+        if (options.conversion.has_value())
         {
-            ConvertOptions convert_options;
-            convert_options.pixel_format =
-                options.pixel_format.value_or(frame.pixel_format());
-            convert_options.color = options.color.value_or(frame.color());
-            convert_options.strict = options.strict;
-
-            FrameResult converted = convert(frame, convert_options);
+            FrameResult converted = convert(frame, *options.conversion);
 
             record.conversions.insert(record.conversions.end(),
                                       converted.record.conversions.begin(),

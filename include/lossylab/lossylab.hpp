@@ -51,6 +51,7 @@
 
 // Transformation.
 #include "lossylab/convert/convert.hpp"
+#include "lossylab/transform/transform.hpp"
 #include "lossylab/filter/filter_graph.hpp"
 #include "lossylab/motion/animate_still.hpp"
 #include "lossylab/resample/resize.hpp"

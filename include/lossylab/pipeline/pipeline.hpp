@@ -3,23 +3,24 @@
 #include "lossylab/core/frame.hpp"
 #include "lossylab/core/pipeline_spec.hpp"
 #include "lossylab/core/result.hpp"
+#include "lossylab/io/source.hpp"
 
 #include <cstdint>
 #include <memory>
-#include <vector>
 
 namespace lossylab
 {
-    /// Executes a PipelineSpec.
+    /// Executes a PipelineSpec on one image, in memory.
     ///
-    /// Multi-generation platform chains (resize, convert, encode, decode,
-    /// repeat) run entirely in C++ with no trip out to NumPy between stages.
-    /// The same machinery serves equalization: applying a capture-like history
-    /// to synthetic images is just another spec, and because it is the same
-    /// spec format, what was applied to each class is directly comparable.
+    /// Each stage runs the operation its configuration belongs to (decode,
+    /// convert, chroma round trip, reinterpret, crop, orient, achromatic,
+    /// image round trip), and the record collects every stage with the
+    /// configuration it ran with, so `PipelineSpec::from_record()` of it runs
+    /// the same chain again.
     class Pipeline
     {
     public:
+        /// Validates the spec against this build.
         explicit Pipeline(PipelineSpec spec);
         ~Pipeline();
 
@@ -28,15 +29,16 @@ namespace lossylab
         Pipeline(Pipeline&&) noexcept;
         Pipeline& operator=(Pipeline&&) noexcept;
 
-        /// Runs the chain.
+        /// Runs the chain on a file. The first stage must be a decode; when
+        /// the spec names a source hash, `source` must have it.
         ///
-        /// `seed` drives every stochastic stage, each drawing from a stream
-        /// derived from it and its own position, so one seed reproduces the
-        /// whole run regardless of batch size or thread count.
-        [[nodiscard]] PipelineResult run(const std::vector<Frame>& frames,
-                                         std::uint64_t seed = 0);
+        /// `seed` is recorded, and each stage that draws at random derives
+        /// its own stream from it and its position, so one seed reproduces
+        /// the whole run.
+        [[nodiscard]] PipelineResult run(const Source& source, std::uint64_t seed = 0) const;
 
-        [[nodiscard]] PipelineResult run(const Frame& frame, std::uint64_t seed = 0);
+        /// Runs the chain on a frame. The first stage must not be a decode.
+        [[nodiscard]] PipelineResult run(const Frame& frame, std::uint64_t seed = 0) const;
 
         [[nodiscard]] const PipelineSpec& spec() const noexcept;
 

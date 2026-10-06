@@ -40,6 +40,9 @@ message(STATUS "FFmpeg: libavcodec ${FFMPEG_libavcodec_VERSION} from ${FFMPEG_li
 # zlib decompresses a PNG's embedded ICC profile. FFmpeg depends on it already.
 find_package(ZLIB REQUIRED)
 
+# lcms2 converts embedded ICC profiles to sRGB. FFmpeg's libjxl loads it already.
+pkg_check_modules(LCMS2 REQUIRED IMPORTED_TARGET lcms2>=2.13)
+
 # ---------------------------------------------------------------------------
 # Library
 # ---------------------------------------------------------------------------
@@ -77,6 +80,7 @@ add_library(lossylab STATIC
         src/lossylab/io/read_headers.cpp
         src/lossylab/io/video_reader.cpp
         src/lossylab/convert/convert.cpp
+        src/lossylab/transform/transform.cpp
         src/lossylab/core/pipeline_spec.cpp
         src/lossylab/resample/resize.cpp
         src/lossylab/filter/filter_graph.cpp
@@ -114,7 +118,7 @@ target_include_directories(lossylab
 )
 
 # FFmpeg is an implementation detail: no public header includes libav*.
-target_link_libraries(lossylab PRIVATE PkgConfig::FFMPEG ZLIB::ZLIB)
+target_link_libraries(lossylab PRIVATE PkgConfig::FFMPEG ZLIB::ZLIB PkgConfig::LCMS2)
 lossylab_set_warnings(lossylab)
 set_target_properties(lossylab PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -140,6 +144,7 @@ if(BUILD_PYTHON_BINDINGS)
             python/src/bind_encode.cpp
             python/src/bind_file_result.cpp
             python/src/bind_convert.cpp
+            python/src/bind_pipeline.cpp
     )
     target_link_libraries(_lossylab PRIVATE lossylab::lossylab)
 

@@ -8,6 +8,7 @@
 #include "lossylab/io/video_reader_types.hpp"
 #include "lossylab/measure/compression_history_types.hpp"
 #include "lossylab/measure/measure_types.hpp"
+#include "lossylab/transform/transform_types.hpp"
 
 #include <variant>
 
@@ -20,7 +21,7 @@ namespace lossylab
         std::variant<DecodeImageEvidence, DecodeVideoEvidence, ConvertEvidence, ChromaRoundtripEvidence,
                      ReinterpretEvidence, EncodeImageEvidence, EncodeVideoEvidence, RoundtripImageEvidence,
                      RoundtripVideoEvidence, MeasureEvidence, CompareEvidence, RecompressionCurveEvidence,
-                     CompressionHistoryEvidence>;
+                     CompressionHistoryEvidence, CropEvidence, OrientEvidence, AchromaticEvidence>;
 
     /// What one stage was told to do, resolved: the input to replaying it.
     /// Its alternatives follow StageEvidence's, kind for kind.
@@ -28,7 +29,7 @@ namespace lossylab
         std::variant<DecodeImageOptions, DecodeVideoConfiguration, ConvertOptions, ChromaRoundtripOptions,
                      ReinterpretOptions, EncodeImageOptions, EncodeVideoOptions, RoundtripImageConfiguration,
                      RoundtripVideoConfiguration, MeasureOptions, CompareOptions, RecompressionOptions,
-                     CompressionHistoryOptions>;
+                     CompressionHistoryOptions, CropOptions, OrientOptions, AchromaticOptions>;
 
     template <StageKind Kind>
     struct StageKindIs
@@ -53,6 +54,9 @@ namespace lossylab
     template <> struct StageKindOf<CompareEvidence> : StageKindIs<StageKind::Compare> {};
     template <> struct StageKindOf<RecompressionCurveEvidence> : StageKindIs<StageKind::RecompressionCurve> {};
     template <> struct StageKindOf<CompressionHistoryEvidence> : StageKindIs<StageKind::CompressionHistory> {};
+    template <> struct StageKindOf<CropEvidence> : StageKindIs<StageKind::Crop> {};
+    template <> struct StageKindOf<OrientEvidence> : StageKindIs<StageKind::Orient> {};
+    template <> struct StageKindOf<AchromaticEvidence> : StageKindIs<StageKind::Achromatic> {};
 
     template <> struct StageKindOf<DecodeImageOptions> : StageKindIs<StageKind::DecodeImage> {};
     template <> struct StageKindOf<DecodeVideoConfiguration> : StageKindIs<StageKind::DecodeVideo> {};
@@ -67,6 +71,9 @@ namespace lossylab
     template <> struct StageKindOf<CompareOptions> : StageKindIs<StageKind::Compare> {};
     template <> struct StageKindOf<RecompressionOptions> : StageKindIs<StageKind::RecompressionCurve> {};
     template <> struct StageKindOf<CompressionHistoryOptions> : StageKindIs<StageKind::CompressionHistory> {};
+    template <> struct StageKindOf<CropOptions> : StageKindIs<StageKind::Crop> {};
+    template <> struct StageKindOf<OrientOptions> : StageKindIs<StageKind::Orient> {};
+    template <> struct StageKindOf<AchromaticOptions> : StageKindIs<StageKind::Achromatic> {};
 
     [[nodiscard]] StageKind stage_kind(const StageEvidence& evidence) noexcept;
     [[nodiscard]] StageKind stage_kind(const StageConfiguration& configuration) noexcept;

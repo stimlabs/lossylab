@@ -773,8 +773,9 @@ namespace
         target.transfer = TransferCharacteristic::Srgb;
 
         DecodeImageOptions options;
-        options.pixel_format = PixelFormat::from_name("yuv420p");
-        options.color = target;
+        options.conversion = ConvertOptions{};
+        options.conversion->pixel_format = PixelFormat::from_name("yuv420p");
+        options.conversion->color = target;
 
         const DecodedImage result = decode_image(Source::from_path(data_path(png_fixture)), options);
 

@@ -155,11 +155,18 @@ namespace
         return color;
     }
 
-    void test_a_predicate_sees_the_native_frame()
+    VideoReaderOptions converting_to_rgb()
     {
         VideoReaderOptions options;
-        options.pixel_format = PixelFormat::from_name("rgb24");
-        options.color = rgb_with_the_clips_transfer();
+        options.conversion = ConvertOptions{};
+        options.conversion->pixel_format = PixelFormat::from_name("rgb24");
+        options.conversion->color = rgb_with_the_clips_transfer();
+        return options;
+    }
+
+    void test_a_predicate_sees_the_native_frame()
+    {
+        const VideoReaderOptions options = converting_to_rgb();
         VideoReader reader = fixture_reader(options);
 
         const std::vector<VideoFrame> frames = reader.frames(FrameSelector::where(
@@ -274,9 +281,7 @@ namespace
 
     void test_a_requested_conversion_is_applied_and_recorded()
     {
-        VideoReaderOptions options;
-        options.pixel_format = PixelFormat::from_name("rgb24");
-        options.color = rgb_with_the_clips_transfer();
+        const VideoReaderOptions options = converting_to_rgb();
         VideoReader reader = fixture_reader(options);
 
         const std::vector<VideoFrame> frames = reader.frames(FrameSelector::indices({0}));

@@ -9,9 +9,51 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace lossylab
 {
+    /// What a conversion to sRGB rgb24 does with an ICC profile or color tags
+    /// that are not sRGB.
+    enum class IccHandling
+    {
+        /// Converts the colors to sRGB with lcms2: relative colorimetric
+        /// intent with black point compensation. The profile, or for a frame
+        /// without one its primaries and transfer, describes the source. A
+        /// profile equivalent to sRGB is not applied.
+        Convert,
+
+        /// Leaves the colors as they are and keeps the profile on the frame.
+        Ignore
+    };
+
+    std::string to_string(IccHandling handling);
+    IccHandling icc_handling_from_string(std::string_view name);
+
+    inline void from_string(const std::string_view name, IccHandling& value)
+    {
+        value = icc_handling_from_string(name);
+    }
+
+    /// What a conversion to rgb24 does with an alpha channel.
+    enum class AlphaHandling
+    {
+        /// Composites the colors over black, in the encoded sRGB values. A
+        /// frame marked premultiplied already is; its alpha is dropped.
+        OverBlack,
+
+        /// Drops the alpha channel and keeps the colors as they are.
+        Discard
+    };
+
+    std::string to_string(AlphaHandling handling);
+    AlphaHandling alpha_handling_from_string(std::string_view name);
+
+    inline void from_string(const std::string_view name, AlphaHandling& value)
+    {
+        value = alpha_handling_from_string(name);
+    }
+
     /// How a conversion should be carried out.
     ///
     /// Everything here is explicit on purpose. A conversion that picked its own
@@ -31,10 +73,16 @@ namespace lossylab
         KernelSpec chroma_down{Kernel::Area, {}};
 
         /// Kernel used when chroma planes grow, i.e. going to a finer
-        /// subsampling or back to RGB.
-        KernelSpec chroma_up{Kernel::Bilinear, {}};
+        /// subsampling or back to RGB. Bicubic is swscale's own default.
+        KernelSpec chroma_up{Kernel::Bicubic, {}};
 
         ResizeBackend backend = ResizeBackend::Swscale;
+
+        /// Applies when the target is rgb24 in sRGB.
+        IccHandling icc = IccHandling::Convert;
+
+        /// Applies when the target is rgb24 and the source has alpha.
+        AlphaHandling alpha = AlphaHandling::OverBlack;
 
         /// Defaults to AllowRecorded, unlike filter graphs and encoders.
         ///
@@ -50,7 +98,7 @@ namespace lossylab
         Strict strict = Strict::AllowRecorded;
     };
 
-    LOSSYLAB_REFLECT(ConvertOptions, pixel_format, color, chroma_down, chroma_up, backend, strict);
+    LOSSYLAB_REFLECT(ConvertOptions, pixel_format, color, chroma_down, chroma_up, backend, icc, alpha, strict);
 
     /// Options for a chroma subsampling round trip.
     struct ChromaRoundtripOptions
@@ -65,7 +113,7 @@ namespace lossylab
         ColorSpec color = ColorSpec::bt709_limited();
 
         KernelSpec chroma_down{Kernel::Area, {}};
-        KernelSpec chroma_up{Kernel::Bilinear, {}};
+        KernelSpec chroma_up{Kernel::Bicubic, {}};
 
         /// Bit depth of the intermediate YUV. Defaults to matching the source.
         std::optional<int> intermediate_bit_depth;
@@ -92,9 +140,21 @@ namespace lossylab
         /// The kernel the chroma planes were resampled with: "chroma_down"
         /// when they shrank, "chroma_up" otherwise.
         std::string kernel_role;
+
+        /// What described the source colors converted to sRGB:
+        /// "icc_profile", "color_tags", or "none" when nothing was converted.
+        std::string color_transform = "none";
+
+        /// "sha256:" and the SHA-256 of the ICC profile applied, if one was.
+        std::optional<std::string> icc_profile_sha256;
+
+        /// What happened to an alpha channel: "over_black", "discarded",
+        /// "premultiplied" (dropped from colors already composited), or
+        /// "none" when the source had none or the target keeps it.
+        std::string alpha = "none";
     };
 
-    LOSSYLAB_REFLECT(ConvertEvidence, kernel_role);
+    LOSSYLAB_REFLECT(ConvertEvidence, kernel_role, color_transform, icc_profile_sha256, alpha);
 
     /// What a chroma round trip decided for one frame.
     struct ChromaRoundtripEvidence

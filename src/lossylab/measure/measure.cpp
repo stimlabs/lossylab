@@ -1339,9 +1339,13 @@ namespace lossylab
         encode_options.pixel_format = pixel_format;
         encode_options.encoder_options = options.encoder_options;
 
+        ConvertOptions conversion;
+        conversion.pixel_format = pixel_format;
+        conversion.color = color;
+        conversion.icc = IccHandling::Ignore;
+        conversion.alpha = AlphaHandling::Discard;
         DecodeSpec decode_spec;
-        decode_spec.pixel_format = pixel_format;
-        decode_spec.color = color;
+        decode_spec.conversion = conversion;
         decode_spec.strict = Strict::AllowRecorded;
 
         CompareOptions compare_options;

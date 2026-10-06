@@ -129,7 +129,8 @@ namespace lossylab
         Dct8,        ///< JPEG / MJPEG / WebP 8x8 DCT grid
         Macroblock16, ///< H.264 macroblocks
         Ctu32,       ///< HEVC / VP9 / AV1 coding tree units
-        Ctu64
+        Ctu64,
+        JpegMcu      ///< a decoded JPEG's minimum coded units: 8x8, 16x8 or 16x16 with its chroma subsampling
     };
 
     std::string to_string(BlockGridKind kind);

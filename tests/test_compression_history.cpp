@@ -124,7 +124,11 @@ namespace
         options.rate_control = RateControl::quality(qscale);
         options.strict = Strict::AllowRecorded;
         const Frame decoded = roundtrip(rgb, options).frame;
-        return convert(decoded, PixelFormat::from_name("rgb24"), rgb.color()).frame;
+        ConvertOptions to_rgb;
+        to_rgb.pixel_format = PixelFormat::from_name("rgb24");
+        to_rgb.color = rgb.color();
+        to_rgb.chroma_up = KernelSpec{Kernel::Nearest, {}};
+        return convert(decoded, to_rgb).frame;
     }
 
     Frame crop_rgb(const Frame& rgb, const int left, const int top)
@@ -203,7 +207,7 @@ namespace
 
     void test_chroma_upsampling_is_found_at_any_quality()
     {
-        // swscale replicates chroma going to RGB, whatever the JPEG's quality.
+        // after_mjpeg() replicates chroma going to RGB, whatever the JPEG's quality.
         for (const int qscale : {2, 8})
         {
             const CompressionHistory history =
@@ -424,7 +428,9 @@ namespace
         assert(from_frame.evidence().jpeg_tables == "pixels");
         assert(from_frame.evidence().traces.front().evidence == TraceEvidence::JpegQuantization);
         DecodeImageOptions to_rgb;
-        to_rgb.pixel_format = PixelFormat::from_name("rgb24");
+        to_rgb.conversion = ConvertOptions{};
+        to_rgb.conversion->pixel_format = PixelFormat::from_name("rgb24");
+        to_rgb.conversion->color = ColorSpec::srgb();
         const CompressionHistory converted = compression_history(decode_image(source, to_rgb), without_recompression());
         assert(converted.evidence().jpeg_tables == "pixels");
         assert(converted.evidence().jpeg_header_unused == "it was converted on decode");

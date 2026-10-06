@@ -68,10 +68,15 @@ namespace lossylab
         /// "Release", "Debug", ...
         std::string build_type;
 
+        /// The libraries lossylab links besides FFmpeg: lcms2, whose color
+        /// transforms change pixels, and zlib. `to_json()` writes these as
+        /// {"lcms2": "2.14.0", ...}.
+        std::vector<LibraryVersion> libraries;
+
         [[nodiscard]] json::Value to_json() const;
     };
 
-    LOSSYLAB_REFLECT(LossylabBuild, commit, dirty, compiler, build_type);
+    LOSSYLAB_REFLECT(LossylabBuild, commit, dirty, compiler, build_type, libraries);
 
     /// Everything about the linked FFmpeg that can change an output byte.
     struct FfmpegBuild

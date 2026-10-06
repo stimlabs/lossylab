@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lossylab/convert/convert_types.hpp"
 #include "lossylab/core/color_spec.hpp"
 #include "lossylab/core/json.hpp"
 #include "lossylab/core/pixel_format.hpp"
@@ -17,10 +18,9 @@ namespace lossylab
         /// Which stream to read. Negative means the first video stream.
         int stream_index = -1;
 
-        /// Format to deliver frames in. Unset means the decoder's native
-        /// format, which is what an audit wants.
-        std::optional<PixelFormat> pixel_format;
-        std::optional<ColorSpec> color;
+        /// The conversion each frame goes through. Unset means the decoder's
+        /// native format and color, which is what an audit wants.
+        std::optional<ConvertOptions> conversion;
 
         /// Color to assume when the file tags none.
         ColorSpec assumed_color = ColorSpec::bt709_limited();
@@ -35,13 +35,10 @@ namespace lossylab
         /// Pinned for reproducibility. Frame-threaded decoding can reorder
         /// side data even where the pixels come out identical.
         int thread_count = 1;
-
-        /// Applies to the conversion, when one was requested.
-        Strict strict = Strict::AllowRecorded;
     };
 
-    LOSSYLAB_REFLECT(VideoReaderOptions, stream_index, pixel_format, color, assumed_color, export_qp_maps,
-                      export_motion_vectors, thread_count, strict);
+    LOSSYLAB_REFLECT(VideoReaderOptions, stream_index, conversion, assumed_color, export_qp_maps,
+                      export_motion_vectors, thread_count);
 
     /// What one read of a VideoReader was told: its options, with the stream
     /// resolved, and the frames it picked. Reading again with

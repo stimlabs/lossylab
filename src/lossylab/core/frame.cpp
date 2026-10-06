@@ -345,6 +345,31 @@ namespace lossylab
         return m_frame != nullptr && (m_frame->flags & AV_FRAME_FLAG_KEY) != 0;
     }
 
+    std::string Frame::samples_sha256() const
+    {
+        if (m_frame == nullptr)
+        {
+            throw ConfigError("samples_sha256() on an empty Frame");
+        }
+        detail::Sha256Stream hash;
+        const std::string description = describe().to_json().dump();
+        hash.feed(std::span(reinterpret_cast<const std::uint8_t*>(description.data()), description.size()));
+        for (int index = 0; index < plane_count(); ++index)
+        {
+            const ConstPlaneView view = plane(index);
+            for (int row = 0; row < view.height; ++row)
+            {
+                hash.feed(std::span(view.row(row), static_cast<std::size_t>(view.row_bytes())));
+            }
+        }
+        const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(static_cast<AVPixelFormat>(m_frame->format));
+        if (descriptor != nullptr && (descriptor->flags & AV_PIX_FMT_FLAG_PAL) != 0)
+        {
+            hash.feed(std::span<const std::uint8_t>(m_frame->data[1], AVPALETTE_SIZE));
+        }
+        return hash.finish();
+    }
+
     int Frame::plane_count() const noexcept
     {
         return m_frame != nullptr ? pixel_format().plane_count() : 0;

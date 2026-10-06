@@ -109,12 +109,14 @@ def test_qp_maps_and_motion_vectors_are_exported_on_request():
 
 
 def test_a_requested_conversion_is_applied():
-    options = lossylab.VideoReaderOptions()
-    options.pixel_format = lossylab.PixelFormat.from_name("rgb24")
-    # RGB keeping the clip's BT.709 transfer, which convert() cannot change.
+    conversion = lossylab.ConvertOptions()
+    conversion.pixel_format = lossylab.PixelFormat.from_name("rgb24")
+    # RGB keeping the clip's BT.709 transfer.
     color = lossylab.ColorSpec.srgb()
     color.transfer = lossylab.TransferCharacteristic.Bt709
-    options.color = color
+    conversion.color = color
+    options = lossylab.VideoReaderOptions()
+    options.conversion = conversion
     frames = fixture_reader(options).frames(lossylab.FrameSelector.indices([0]))
     assert frames[0].frame.plane(0).shape == (48, 64, 3)
 

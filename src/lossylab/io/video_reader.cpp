@@ -702,8 +702,6 @@ namespace lossylab
         support.qp_maps = contains(qp_exporting_decoders, decoder_name);
         support.motion_vectors = contains(motion_vector_exporting_decoders, decoder_name);
 
-        const bool converting = options.pixel_format.has_value() || options.color.has_value();
-
         StageRecord record;
         record.implementation = decoder_name;
         record.transform = CoordinateTransform::identity();
@@ -730,14 +728,9 @@ namespace lossylab
             matcher.commit(candidate);
 
             const FormatDescription native = candidate.frame.describe();
-            if (converting)
+            if (options.conversion.has_value())
             {
-                ConvertOptions convert_options;
-                convert_options.pixel_format = options.pixel_format.value_or(candidate.frame.pixel_format());
-                convert_options.color = options.color.value_or(candidate.frame.color());
-                convert_options.strict = options.strict;
-
-                FrameResult converted = convert(candidate.frame, convert_options);
+                FrameResult converted = convert(candidate.frame, *options.conversion);
                 for (const ConversionEvent& event : converted.record.conversions)
                 {
                     record_once(record.conversions, event);

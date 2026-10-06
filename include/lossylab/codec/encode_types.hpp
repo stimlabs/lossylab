@@ -1,8 +1,10 @@
 #pragma once
 
+#include "lossylab/convert/convert_types.hpp"
 #include "lossylab/core/codec_id.hpp"
 #include "lossylab/core/color_spec.hpp"
 #include "lossylab/core/json.hpp"
+#include "lossylab/core/kernel.hpp"
 #include "lossylab/core/pixel_format.hpp"
 #include "lossylab/core/rational.hpp"
 #include "lossylab/core/reflect.hpp"
@@ -190,6 +192,10 @@ namespace lossylab
         /// lossy WebP limited-range BT.601 with centered chroma.
         std::optional<ColorSpec> color;
 
+        /// The kernel that shrinks the chroma planes when the frame has to be
+        /// converted to `pixel_format` first, such as RGB to 4:2:0.
+        KernelSpec chroma_down{Kernel::Area, {}};
+
         /// Encode losslessly. PNG requires it; WebP, JPEG XL and JPEG 2000
         /// (the reversible 5/3 wavelet) support it; MJPEG and AVIF refuse it.
         /// PNG, lossless JPEG XL and lossless JPEG 2000 have no quality
@@ -205,21 +211,23 @@ namespace lossylab
         Strict strict = Strict::Refuse;
     };
 
-    LOSSYLAB_REFLECT(EncodeImageOptions, codec, rate_control, pixel_format, color, lossless, encoder_options,
-                      thread_count, strict);
+    LOSSYLAB_REFLECT(EncodeImageOptions, codec, rate_control, pixel_format, color, chroma_down, lossless,
+                      encoder_options, thread_count, strict);
 
     /// How the bytes from an encode should be decoded back.
     struct DecodeSpec
     {
-        /// Format to decode into. Unset means the codec's native format, which
-        /// preserves the chroma structure the encoder produced.
-        std::optional<PixelFormat> pixel_format;
-        std::optional<ColorSpec> color;
+        /// The conversion the decoded frames go through. Unset means the
+        /// codec's native format, which preserves the chroma structure the
+        /// encoder produced.
+        std::optional<ConvertOptions> conversion;
         int thread_count = 1;
+
+        /// Applies to the decode itself; the conversion has its own.
         Strict strict = Strict::Refuse;
     };
 
-    LOSSYLAB_REFLECT(DecodeSpec, pixel_format, color, thread_count, strict);
+    LOSSYLAB_REFLECT(DecodeSpec, conversion, thread_count, strict);
 
     /// What an encode should be driven to hit.
     struct EncodeTarget

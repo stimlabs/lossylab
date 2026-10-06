@@ -34,6 +34,23 @@ namespace
         assert(info.is_consistent());
     }
 
+    void test_the_libraries_beside_ffmpeg_are_part_of_the_identity()
+    {
+        const LossylabBuild& info = build_info().lossylab;
+        assert(info.libraries.size() == std::size_t{2});
+        assert(info.libraries[0].name == "lcms2");
+        assert(info.libraries[1].name == "zlib");
+        for (const LibraryVersion& library : info.libraries)
+        {
+            assert(library.major > 0);
+            assert(library.major == library.compiled_major);
+        }
+
+        json::Value other = build_info().to_json();
+        other["lossylab"]["libraries"]["lcms2"] = "0.0.0";
+        assert(build_diff(build_info().to_json(), other).contains("lossylab.libraries.lcms2"));
+    }
+
     void test_the_identity_names_the_commit_and_hashes_everything()
     {
         const BuildInfo& info = build_info();
@@ -117,6 +134,7 @@ int main()
 {
     test_build_info_reports_a_version_and_libraries();
     test_runtime_libraries_match_the_headers_we_compiled_against();
+    test_the_libraries_beside_ffmpeg_are_part_of_the_identity();
     test_the_identity_names_the_commit_and_hashes_everything();
     test_build_diff_names_what_differs();
     test_diagnostics_describe_the_machine();

@@ -53,6 +53,17 @@ namespace
         return options;
     }
 
+    /// Decodes back to the source's own format and color.
+    DecodeSpec decode_like(const Frame& source)
+    {
+        ConvertOptions conversion;
+        conversion.pixel_format = source.pixel_format();
+        conversion.color = source.color();
+        DecodeSpec decode_spec;
+        decode_spec.conversion = conversion;
+        return decode_spec;
+    }
+
     bool starts_with(const std::vector<std::uint8_t>& bytes, const std::size_t offset, const std::string_view text)
     {
         return bytes.size() >= offset + text.size() &&
@@ -182,15 +193,14 @@ namespace
         assert(starts_with(encoded.bytes, 0, "RIFF") && starts_with(encoded.bytes, 8, "WEBP"));
         assert(encoded.record.block_grid->kind == BlockGridKind::Macroblock16);
 
-        DecodeSpec decode_spec;
-        decode_spec.pixel_format = source.pixel_format();
+        const DecodeSpec decode_spec = decode_like(source);
         const FrameResult result = roundtrip(source, options, decode_spec);
         assert(result.record.kind() == StageKind::RoundtripImage);
         const RoundtripImageEvidence& evidence = std::get<RoundtripImageEvidence>(result.record.evidence);
         assert(evidence.encode.extension == "webp" && !evidence.decode.source_sha256.empty());
         const RoundtripImageConfiguration& configuration = std::get<RoundtripImageConfiguration>(result.configuration);
         assert(configuration.encode.codec == options.codec);
-        assert(configuration.decode.pixel_format == decode_spec.pixel_format);
+        assert(configuration.decode.conversion->pixel_format == source.pixel_format());
         assert(result.frame.describe() == source.describe());
         const double psnr = psnr_of(source, result.frame);
         assert(psnr > 25.0 && std::isfinite(psnr));
@@ -218,8 +228,7 @@ namespace
             EncodeImageOptions options = image_options(lossless.codec, lossless.pixel_format, 50);
             options.lossless = true;
 
-            DecodeSpec decode_spec;
-            decode_spec.pixel_format = source.pixel_format();
+            const DecodeSpec decode_spec = decode_like(source);
             const FrameResult result = roundtrip(source, options, decode_spec);
             assert(result.frame.describe() == source.describe());
             assert(std::isinf(psnr_of(source, result.frame)));
@@ -241,8 +250,7 @@ namespace
         const EncodedResult encoded = encode_image(source, options);
         assert(std::get<EncodeImageEvidence>(encoded.record.evidence).resolved.options.at("distance") == "1.000000");
 
-        DecodeSpec decode_spec;
-        decode_spec.pixel_format = source.pixel_format();
+        const DecodeSpec decode_spec = decode_like(source);
         // FFmpeg's CLI measures the same 24.6 dB for this encode of the sharp,
         // tiny test pattern.
         const double psnr = psnr_of(source, roundtrip(source, options, decode_spec).frame);
@@ -264,8 +272,7 @@ namespace
         const auto coarser = encode_image(source, image_options(ImageCodec::Jpeg2000, "rgb24", 32)).bytes.size();
         assert(coarser < encoded.bytes.size());
 
-        DecodeSpec decode_spec;
-        decode_spec.pixel_format = source.pixel_format();
+        const DecodeSpec decode_spec = decode_like(source);
         const double psnr = psnr_of(source, roundtrip(source, options, decode_spec).frame);
         assert(psnr > 25.0 && std::isfinite(psnr));
 
@@ -292,8 +299,7 @@ namespace
         const ProbeResult probed = probe(Source::from_memory(encoded.bytes));
         assert(probed.streams.front().width == 64 && probed.streams.front().height == 48);
 
-        DecodeSpec decode_spec;
-        decode_spec.pixel_format = source.pixel_format();
+        const DecodeSpec decode_spec = decode_like(source);
         const FrameResult result = roundtrip(source, options, decode_spec);
         assert(result.frame.describe() == source.describe());
         assert(psnr_of(source, result.frame) > 25.0);

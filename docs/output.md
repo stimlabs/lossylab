@@ -39,7 +39,9 @@ Replay starts from the same input bytes, so a source is identified by a hash of 
 
 To reproduce stage `i`, apply `configurations()[i]` to the state left by the earlier stages, starting from `origin`. A stage's `input` is only a format description, so the earlier stages that changed the samples have to be replayed.
 
-`StageRecord.modifies_state` says which stages those are. `True` (decode, convert, resize, encode): the output is the next stage's input. `False` (measure, compare, compression_history): the stage only analyzed, and any conversion in its `conversions` was applied to a copy that was discarded.
+For a record a `Pipeline` made, `PipelineSpec.from_record(record)` is that replay as a spec: run it on the same file, and the output's `samples_sha256()` equals the record's `output_sha256` on the same build. See [pipeline.md](pipeline.md).
+
+`StageRecord.modifies_state` says which stages those are. `True` (decode, convert, crop, orient, achromatic, resize, encode): the output is the next stage's input. `False` (measure, compare, compression_history): the stage only analyzed, and any conversion in its `conversions` was applied to a copy that was discarded.
 
 ## What reproducible means
 
@@ -47,7 +49,7 @@ A replay is expected to give **identical evidence**, not identical bytes. Byte-e
 
 When two records of the same input disagree, the record must say where to look:
 
-- **Build identity** is what can change results: the lossylab code (git commit, whether the tree was modified, compiler, build type) and the FFmpeg it runs on (version, configure line, library versions). The record embeds it whole, together with `identity_hash`, a SHA-256 over all of it. Equal hashes mean the same build. Different hashes mean `build_diff()` of the two identities lists exactly what differs.
+- **Build identity** is what can change results: the lossylab code (git commit, whether the tree was modified, compiler, build type, and the lcms2 and zlib it links) and the FFmpeg it runs on (version, configure line, library versions). The record embeds it whole, together with `identity_hash`, a SHA-256 over all of it. Equal hashes mean the same build. Different hashes mean `build_diff()` of the two identities lists exactly what differs.
 - **Diagnostics** are facts about the machine (architecture, OS, CPU features). They are recorded so they can be blamed, and are not part of the identity: results are expected to match across machines.
 
 ## Rules

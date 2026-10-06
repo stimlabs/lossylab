@@ -9,6 +9,7 @@
 #include "lossylab/io/video_reader.hpp"
 #include "lossylab/measure/compression_history.hpp"
 #include "lossylab/measure/measure.hpp"
+#include "lossylab/pipeline/pipeline.hpp"
 
 namespace lossylab::pybind
 {
@@ -168,5 +169,13 @@ namespace lossylab::pybind
             nb::call_guard<nb::gil_scoped_release>(),
             "compression_history(image, options), with any exception it raises returned as a FileError instead. "
             "`source` names the file the image was decoded from.");
+
+        bind_file_result<PipelineResult>(m, "PipelineFileResult");
+        m.def(
+            "capture_run",
+            [](const Source& source, const Pipeline& pipeline, const std::uint64_t seed)
+            { return capture("pipeline", source, [&] { return pipeline.run(source, seed); }); },
+            "source"_a, "pipeline"_a, "seed"_a = 0, nb::call_guard<nb::gil_scoped_release>(),
+            "pipeline.run(source, seed), with any exception it raises returned as a FileError instead.");
     }
 }

@@ -7,6 +7,7 @@
 #include <array>
 #include <cassert>
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <string>
 #include <vector>
@@ -376,21 +377,44 @@ namespace
         assert(avif.color().primaries == ColorPrimaries::Smpte432);
     }
 
-    void test_a_profile_without_a_tag_equivalent_stays_with_a_converted_frame()
+    DecodeImageOptions adobe_rgb_webp_to_srgb(const IccHandling icc)
     {
         // The WebP decodes to YUV with no chroma siting; sRGB names none.
         DecodeImageOptions options;
         options.assumed_color = ColorSpec::srgb();
         options.assumed_color.chroma_location = ChromaLocation::Center;
-        options.pixel_format = PixelFormat::from_name("rgb24");
-        options.color = ColorSpec::srgb();
-        options.strict = Strict::AllowRecorded;
-        const Source webp = Source::from_path(data_path("testsrc_64x48_lossy_adobe_rgb_orientation8.webp"));
+        options.conversion = ConvertOptions{};
+        options.conversion->pixel_format = PixelFormat::from_name("rgb24");
+        options.conversion->color = ColorSpec::srgb();
+        options.conversion->icc = icc;
+        return options;
+    }
 
-        // The conversion keeps the primaries and transfer, so the profile still
-        // describes the converted samples.
-        const DecodedImage converted = decode_image(webp, options);
+    void test_a_profile_without_a_tag_equivalent_is_converted_to_srgb()
+    {
+        const Source webp = Source::from_path(data_path("testsrc_64x48_lossy_adobe_rgb_orientation8.webp"));
+        const DecodedImage converted = decode_image(webp, adobe_rgb_webp_to_srgb(IccHandling::Convert));
         assert(converted.frame.pixel_format().name() == std::string("rgb24"));
+        assert(converted.frame.icc_profile() == nullptr);
+        assert(converted.record.output.icc_profile.empty());
+        assert(has_conversion(converted.record.conversions, "icc_profile"));
+
+        // Adobe RGB's wider gamut moves saturated colors, so the samples
+        // differ from the unconverted decode.
+        const DecodedImage kept = decode_image(webp, adobe_rgb_webp_to_srgb(IccHandling::Ignore));
+        bool differs = false;
+        for (int y = 0; y < kept.frame.height() && !differs; ++y)
+        {
+            differs = std::memcmp(kept.frame.plane(0).row(y), converted.frame.plane(0).row(y),
+                                  static_cast<std::size_t>(kept.frame.width() * 3)) != 0;
+        }
+        assert(differs);
+    }
+
+    void test_an_ignored_profile_stays_with_a_converted_frame()
+    {
+        const Source webp = Source::from_path(data_path("testsrc_64x48_lossy_adobe_rgb_orientation8.webp"));
+        const DecodedImage converted = decode_image(webp, adobe_rgb_webp_to_srgb(IccHandling::Ignore));
         assert(converted.frame.icc_profile() != nullptr);
         assert(converted.frame.icc_profile()->info.known_as == "Adobe RGB (1998)");
         assert(converted.record.output.icc_profile == "Adobe RGB (1998)");
@@ -507,7 +531,8 @@ int main()
     test_a_transposed_422_image_becomes_440_and_says_so();
     test_an_avif_and_a_grid_are_turned_upright();
     test_a_recognized_profile_stands_in_for_missing_tags();
-    test_a_profile_without_a_tag_equivalent_stays_with_a_converted_frame();
+    test_a_profile_without_a_tag_equivalent_is_converted_to_srgb();
+    test_an_ignored_profile_stays_with_a_converted_frame();
     test_relabeling_the_primaries_drops_the_profile();
     test_the_decoded_frame_carries_the_embedded_data();
     test_a_file_without_embedded_data_records_its_absence();

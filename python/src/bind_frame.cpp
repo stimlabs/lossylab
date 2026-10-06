@@ -1,12 +1,15 @@
 #include "bindings.hpp"
 
+#include "lossylab/core/error.hpp"
 #include "lossylab/core/frame.hpp"
 
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/optional.h>
+#include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
 #include <cstdint>
+#include <cstring>
 #include <span>
 #include <stdexcept>
 
@@ -60,6 +63,43 @@ namespace lossylab::pybind
             plane_shape(view, shape, strides);
             return nb::ndarray<nb::numpy, nb::ro>(view.data, shape.size(), shape.data(), nb::find(&self),
                                                    strides.data(), plane_dtype(view.bytes_per_sample));
+        }
+
+        /// The samples of a single-plane format as one C-contiguous array:
+        /// a view when the rows carry no padding, a copy otherwise.
+        nb::ndarray<nb::numpy, nb::ro> to_numpy(const Frame& self)
+        {
+            if (self.plane_count() != 1)
+            {
+                throw ConfigError("to_numpy() takes a frame with one plane, not " + self.pixel_format().name() +
+                                  "; use plane()");
+            }
+            const ConstPlaneView view = self.plane(0);
+            const auto row_bytes = static_cast<std::size_t>(view.width) *
+                                   static_cast<std::size_t>(view.components_per_pixel * view.bytes_per_sample);
+            if (static_cast<std::size_t>(view.row_bytes()) != row_bytes)
+            {
+                throw ConfigError("to_numpy() needs whole-byte samples, which " + self.pixel_format().name() +
+                                  " does not have");
+            }
+            if (view.stride == static_cast<std::ptrdiff_t>(row_bytes))
+            {
+                return read_only_plane(self, 0);
+            }
+
+            auto* copy = new std::uint8_t[row_bytes * static_cast<std::size_t>(view.height)];
+            for (int row = 0; row < view.height; ++row)
+            {
+                std::memcpy(copy + row_bytes * static_cast<std::size_t>(row), view.row(row), row_bytes);
+            }
+            nb::capsule owner(copy, [](void* data) noexcept { delete[] static_cast<std::uint8_t*>(data); });
+            std::vector<std::size_t> shape;
+            std::vector<std::int64_t> strides;
+            ConstPlaneView contiguous = view;
+            contiguous.stride = static_cast<std::ptrdiff_t>(row_bytes);
+            plane_shape(contiguous, shape, strides);
+            return nb::ndarray<nb::numpy, nb::ro>(copy, shape.size(), shape.data(), owner, strides.data(),
+                                                   plane_dtype(view.bytes_per_sample));
         }
 
         nb::ndarray<nb::numpy> writable_plane(Frame& self, int index)
@@ -146,6 +186,11 @@ namespace lossylab::pybind
             .def("plane_count", &Frame::plane_count)
             .def("plane", &read_only_plane, "index"_a,
                  "Read-only view of one plane's samples. Call writable_plane() to mutate.")
+            .def("to_numpy", &to_numpy,
+                 "The samples as one C-contiguous read-only array, (height, width, components) for a packed "
+                 "format such as rgb24. A view when the rows carry no padding, a copy otherwise. Raises "
+                 "ConfigError for a format with several planes or with samples smaller than a byte.")
+            .def("samples_sha256", &Frame::samples_sha256)
             .def("writable_plane", &writable_plane, "index"_a,
                  "Detaches this Frame's buffer if shared, then returns a writable view of one plane.")
             .def("is_writable", &Frame::is_writable)

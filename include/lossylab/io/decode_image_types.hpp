@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lossylab/convert/convert_types.hpp"
 #include "lossylab/core/color_spec.hpp"
 #include "lossylab/core/pixel_format.hpp"
 #include "lossylab/core/reflect.hpp"
@@ -37,13 +38,11 @@ namespace lossylab
     /// How a decoded image should be delivered.
     struct DecodeImageOptions
     {
-        /// Target pixel format. Left unset, the frame arrives in the codec's
-        /// native format, which is what an audit wants: the chroma planes as
-        /// the encoder actually wrote them, not an RGB rendering of them.
-        std::optional<PixelFormat> pixel_format;
-
-        /// Target color. Left unset, the frame keeps whatever the file tagged.
-        std::optional<ColorSpec> color;
+        /// The conversion the decoded frame goes through, after the
+        /// orientation. Left unset, the frame arrives in the codec's native
+        /// format and color, which is what an audit wants: the chroma planes
+        /// as the encoder actually wrote them, not an RGB rendering of them.
+        std::optional<ConvertOptions> conversion;
 
         /// Color to assume for whatever the file leaves unspecified. Files
         /// without color tags are common, and every decoder guesses
@@ -59,12 +58,12 @@ namespace lossylab
         /// training pipeline that wants what a viewer shows asks for Apply.
         OrientationHandling orientation = OrientationHandling::Report;
 
-        /// Applies to the conversion, when one was requested, and to the
-        /// chroma layout change applying an orientation can entail.
+        /// Applies to the chroma layout change applying an orientation can
+        /// entail. The conversion has its own.
         Strict strict = Strict::AllowRecorded;
     };
 
-    LOSSYLAB_REFLECT(DecodeImageOptions, pixel_format, color, assumed_color, orientation, strict);
+    LOSSYLAB_REFLECT(DecodeImageOptions, conversion, assumed_color, orientation, strict);
 
     /// What decode_image() decided for one file, never what the file
     /// declares, which is in the probe.

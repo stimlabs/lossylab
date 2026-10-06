@@ -112,6 +112,29 @@ namespace
         assert(near(info.colorants->white, 0.3457, 0.3585));
     }
 
+    void test_colorants_adapted_to_d50_without_a_chad_tag_are_recognized()
+    {
+        const IccProfileInfo srgb = describe_icc_profile(read_profile("srgb_d50_v2.icc"));
+        assert(srgb.problems.empty());
+        assert(srgb.known_as == "sRGB");
+        assert(srgb.primaries == ColorPrimaries::Bt709);
+        assert(near(srgb.colorants->red, 0.640, 0.330));
+        assert(near(srgb.colorants->white, 0.3127, 0.3290));
+
+        const IccProfileInfo display_p3 = describe_icc_profile(read_profile("display_p3_d50_v2.icc"));
+        assert(display_p3.known_as == "Display P3");
+        assert(display_p3.primaries == ColorPrimaries::Smpte432);
+    }
+
+    void test_unknown_primaries_with_a_d50_white_stay_unidentified()
+    {
+        const IccProfileInfo info = describe_icc_profile(read_profile("unknown_primaries_d50_v2.icc"));
+        assert(info.problems.empty());
+        assert(info.known_as.empty());
+        assert(!info.primaries.has_value());
+        assert(near(info.colorants->white, 0.3457, 0.3585));
+    }
+
     void test_a_cmyk_lookup_table_profile_describes_no_colorants()
     {
         const IccProfileInfo info = describe_icc_profile(read_profile("cmyk_lut_v4.icc"));
@@ -212,6 +235,8 @@ int main()
     test_a_rec709_profile_has_the_bt709_curve();
     test_adobe_rgb_is_named_but_has_no_primaries_code();
     test_prophoto_keeps_its_d50_white_and_gamma();
+    test_colorants_adapted_to_d50_without_a_chad_tag_are_recognized();
+    test_unknown_primaries_with_a_d50_white_stay_unidentified();
     test_a_cmyk_lookup_table_profile_describes_no_colorants();
     test_a_version_2_gray_profile_reads_its_gamma();
     test_a_computed_profile_id_matches_the_embedded_one();

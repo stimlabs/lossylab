@@ -255,7 +255,8 @@ namespace lossylab::pybind
             .value("Dct8", BlockGridKind::Dct8)
             .value("Macroblock16", BlockGridKind::Macroblock16)
             .value("Ctu32", BlockGridKind::Ctu32)
-            .value("Ctu64", BlockGridKind::Ctu64);
+            .value("Ctu64", BlockGridKind::Ctu64)
+            .value("JpegMcu", BlockGridKind::JpegMcu);
 
         bind_reflected_rw<BlockGrid>(m, "BlockGrid")
             .def_static("for_kind", &BlockGrid::for_kind, "kind"_a)

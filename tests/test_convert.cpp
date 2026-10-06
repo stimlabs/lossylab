@@ -4,7 +4,9 @@
 
 #include <cassert>
 #include <cmath>
+#include <cstdint>
 #include <string>
+#include <utility>
 
 using namespace lossylab;
 
@@ -316,6 +318,214 @@ namespace
     }
 
     // -----------------------------------------------------------------------
+    // The rgb24 path
+    // -----------------------------------------------------------------------
+
+    /// An rgb24 frame whose channels vary independently, tagged sRGB.
+    Frame textured_rgb(const int width, const int height)
+    {
+        Frame frame = Frame::allocate(width, height, PixelFormat::from_name("rgb24"), ColorSpec::srgb());
+        for (int y = 0; y < height; ++y)
+        {
+            std::uint8_t* row = frame.plane(0).row(y);
+            for (int x = 0; x < width; ++x)
+            {
+                row[x * 3] = static_cast<std::uint8_t>((x * 37 + y * 11) % 256);
+                row[x * 3 + 1] = static_cast<std::uint8_t>((x * 5 + y * 53) % 256);
+                row[x * 3 + 2] = static_cast<std::uint8_t>((x * y + 91) % 256);
+            }
+        }
+        return frame;
+    }
+
+    ConvertOptions to_srgb24()
+    {
+        ConvertOptions options;
+        options.pixel_format = PixelFormat::from_name("rgb24");
+        options.color = ColorSpec::srgb();
+        return options;
+    }
+
+    bool samples_equal(const Frame& left, const Frame& right)
+    {
+        return left.width() == right.width() && left.height() == right.height() &&
+               plane_difference(left, right) == 0.0;
+    }
+
+    void test_the_chroma_upsampler_asked_for_is_used_at_every_size()
+    {
+        // swscale's own shortcut repeats 4:2:0 chroma for even sizes whatever
+        // the kernel; with it bypassed, two kernels differ at every size.
+        for (const auto& [width, height] : {std::pair{64, 48}, std::pair{63, 48}, std::pair{64, 47}})
+        {
+            const Frame yuv =
+                convert(textured_rgb(width, height), PixelFormat::from_name("yuv420p"), bt709_yuv()).frame;
+            ConvertOptions nearest = to_srgb24();
+            nearest.chroma_up = KernelSpec{Kernel::Nearest, {}};
+            ConvertOptions bicubic = to_srgb24();
+            bicubic.chroma_up = KernelSpec{Kernel::Bicubic, {}};
+            assert(plane_difference(convert(yuv, nearest).frame, convert(yuv, bicubic).frame) > 0.0);
+        }
+    }
+
+    void test_eight_bit_rgb_gray_and_palette_sources_keep_their_values()
+    {
+        const Frame rgb = textured_rgb(33, 17);
+        const FrameResult same = convert(rgb, to_srgb24());
+        assert(samples_equal(same.frame, rgb));
+        assert(same.frame.plane(0).stride == 33 * 3);
+
+        Frame gray = Frame::allocate(256, 2, PixelFormat::from_name("gray"), ColorSpec::srgb());
+        for (int y = 0; y < 2; ++y)
+        {
+            for (int x = 0; x < 256; ++x)
+            {
+                gray.plane(0).row(y)[x] = static_cast<std::uint8_t>(x);
+            }
+        }
+        const Frame expanded = convert(gray, to_srgb24()).frame;
+        for (int x = 0; x < 256; ++x)
+        {
+            for (int channel = 0; channel < 3; ++channel)
+            {
+                assert(expanded.plane(0).row(1)[x * 3 + channel] == x);
+            }
+        }
+
+        // A palette lookup is exact; bgr24 takes swscale's own path.
+        const Frame palette = decode_image(Source::from_path(data_path("testsrc2_160x144_pal8.png"))).frame;
+        const Frame looked_up = convert(palette, to_srgb24()).frame;
+        const Frame reference = convert(palette, PixelFormat::from_name("bgr24"), ColorSpec::srgb()).frame;
+        for (int y = 0; y < palette.height(); ++y)
+        {
+            for (int x = 0; x < palette.width(); ++x)
+            {
+                for (int channel = 0; channel < 3; ++channel)
+                {
+                    assert(looked_up.plane(0).row(y)[x * 3 + channel] ==
+                           reference.plane(0).row(y)[x * 3 + 2 - channel]);
+                }
+            }
+        }
+    }
+
+    void test_sixteen_bit_samples_are_rounded_once_without_dither()
+    {
+        Frame wide = Frame::allocate(40, 24, PixelFormat::from_name("rgb48"), ColorSpec::srgb());
+        for (int y = 0; y < wide.height(); ++y)
+        {
+            auto* row = reinterpret_cast<std::uint16_t*>(wide.plane(0).row(y));
+            for (int i = 0; i < wide.width() * 3; ++i)
+            {
+                row[i] = static_cast<std::uint16_t>((i * 997 + y * 4099) % 65536);
+            }
+        }
+        const Frame rounded = convert(wide, to_srgb24()).frame;
+        for (int y = 0; y < wide.height(); ++y)
+        {
+            const auto* row = reinterpret_cast<const std::uint16_t*>(wide.plane(0).row(y));
+            for (int i = 0; i < wide.width() * 3; ++i)
+            {
+                assert(rounded.plane(0).row(y)[i] == (row[i] * 255U + 32767U) / 65535U);
+            }
+        }
+    }
+
+    void test_alpha_is_composited_over_black_or_discarded()
+    {
+        Frame rgba = Frame::allocate(16, 16, PixelFormat::from_name("rgba"), ColorSpec::srgb());
+        for (int y = 0; y < 16; ++y)
+        {
+            for (int x = 0; x < 16; ++x)
+            {
+                std::uint8_t* pixel = rgba.plane(0).row(y) + x * 4;
+                pixel[0] = static_cast<std::uint8_t>(x * 16 + 15);
+                pixel[1] = static_cast<std::uint8_t>(y * 16);
+                pixel[2] = 200;
+                pixel[3] = static_cast<std::uint8_t>((x * 16 + y) % 256);
+            }
+        }
+
+        const FrameResult over_black = convert(rgba, to_srgb24());
+        assert(std::get<ConvertEvidence>(over_black.record.evidence).alpha == "over_black");
+        assert(has_conversion(over_black.record.conversions, "alpha"));
+        ConvertOptions discard = to_srgb24();
+        discard.alpha = AlphaHandling::Discard;
+        const FrameResult discarded = convert(rgba, discard);
+        assert(std::get<ConvertEvidence>(discarded.record.evidence).alpha == "discarded");
+
+        for (int y = 0; y < 16; ++y)
+        {
+            for (int x = 0; x < 16; ++x)
+            {
+                const std::uint8_t* pixel = rgba.plane(0).row(y) + x * 4;
+                for (int channel = 0; channel < 3; ++channel)
+                {
+                    const unsigned color = pixel[channel];
+                    assert(over_black.frame.plane(0).row(y)[x * 3 + channel] == (color * pixel[3] + 127U) / 255U);
+                    assert(discarded.frame.plane(0).row(y)[x * 3 + channel] == color);
+                }
+            }
+        }
+    }
+
+    void test_colors_tagged_other_than_srgb_are_converted()
+    {
+        Frame display_p3 = textured_rgb(32, 8);
+        ColorSpec tags = ColorSpec::srgb();
+        tags.primaries = ColorPrimaries::Smpte432;
+        display_p3.set_color(tags);
+        // A neutral gray row: relative colorimetric keeps it neutral.
+        for (int x = 0; x < 32; ++x)
+        {
+            std::uint8_t* pixel = display_p3.plane(0).row(0) + x * 3;
+            pixel[0] = pixel[1] = pixel[2] = static_cast<std::uint8_t>(x * 8);
+        }
+
+        const FrameResult converted = convert(display_p3, to_srgb24());
+        const ConvertEvidence& evidence = std::get<ConvertEvidence>(converted.record.evidence);
+        assert(evidence.color_transform == "color_tags");
+        assert(!evidence.icc_profile_sha256.has_value());
+        assert(has_conversion(converted.record.conversions, "primaries"));
+        assert(converted.frame.color() == ColorSpec::srgb());
+        assert(plane_difference(converted.frame, display_p3) > 0.0);
+        for (int x = 0; x < 32; ++x)
+        {
+            const std::uint8_t* pixel = converted.frame.plane(0).row(0) + x * 3;
+            assert(std::abs(pixel[0] - pixel[1]) <= 1 && std::abs(pixel[1] - pixel[2]) <= 1);
+            assert(std::abs(pixel[1] - x * 8) <= 1);
+        }
+
+        ConvertOptions ignore = to_srgb24();
+        ignore.icc = IccHandling::Ignore;
+        try
+        {
+            (void)convert(display_p3, ignore);
+            assert(false && "expected throw");
+        }
+        catch (const NotImplemented&)
+        {
+        }
+    }
+
+    void test_a_profile_is_applied_once_and_dropped()
+    {
+        const Frame p3 = decode_image(Source::from_path(data_path("testsrc_64x48_p3.png"))).frame;
+        assert(p3.icc_profile() != nullptr);
+        const FrameResult converted = convert(p3, to_srgb24());
+        const ConvertEvidence& evidence = std::get<ConvertEvidence>(converted.record.evidence);
+        assert(evidence.color_transform == "icc_profile");
+        assert(evidence.icc_profile_sha256.has_value() && evidence.icc_profile_sha256->starts_with("sha256:"));
+        assert(has_conversion(converted.record.conversions, "icc_profile"));
+        assert(converted.frame.icc_profile() == nullptr);
+
+        // Converting again finds sRGB and changes nothing.
+        const FrameResult again = convert(converted.frame, to_srgb24());
+        assert(std::get<ConvertEvidence>(again.record.evidence).color_transform == "none");
+        assert(samples_equal(again.frame, converted.frame));
+    }
+
+    // -----------------------------------------------------------------------
     // chroma_roundtrip
     // -----------------------------------------------------------------------
 
@@ -508,6 +718,12 @@ int main()
     test_convert_rejects_empty_frames_and_invalid_targets();
     test_the_kernel_used_is_named_in_the_record();
     test_different_chroma_kernels_give_different_results();
+    test_the_chroma_upsampler_asked_for_is_used_at_every_size();
+    test_eight_bit_rgb_gray_and_palette_sources_keep_their_values();
+    test_sixteen_bit_samples_are_rounded_once_without_dither();
+    test_alpha_is_composited_over_black_or_discarded();
+    test_colors_tagged_other_than_srgb_are_converted();
+    test_a_profile_is_applied_once_and_dropped();
     test_a_chroma_roundtrip_returns_to_the_source_format();
     test_a_chroma_roundtrip_actually_loses_chroma();
     test_coarser_subsampling_loses_more();

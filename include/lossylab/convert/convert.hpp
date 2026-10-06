@@ -20,14 +20,25 @@ namespace lossylab
     /// changed, so two datasets can be compared on their conversion history
     /// rather than on trust.
     ///
-    /// The target must keep the source's primaries and transfer: swscale's
-    /// path here applies the YUV matrix and range only, so a change of gamut
-    /// or tone curve throws NotImplemented rather than being labeled as done.
+    /// swscale runs with accurate rounding, bit-exact arithmetic and full
+    /// chroma interpolation, so the chroma kernel asked for is the one used at
+    /// every frame size, and with one thread.
+    ///
+    /// A target of rgb24 takes one path for every source: swscale to 16-bit
+    /// RGB, then the color conversion to sRGB (`icc`), then compositing over
+    /// black (`alpha`), then a single exact rounding to 8 bits. No dither is
+    /// applied, and an 8-bit RGB, palette or gray source keeps its values.
+    ///
+    /// Otherwise the target must keep the source's primaries and transfer:
+    /// swscale applies the YUV matrix and range only, so a change of gamut or
+    /// tone curve throws NotImplemented rather than being labeled as done.
     /// `reinterpret` relabels those fields when that is what is meant.
     [[nodiscard]] FrameResult convert(const Frame& frame, const ConvertOptions& options);
 
-    /// Convenience overload for the common case: a target format and color with
-    /// default kernels.
+    /// Convenience overload: a target format and color with the default
+    /// kernels. It repackages the samples only: no ICC profile is applied
+    /// (IccHandling::Ignore) and an alpha channel the target lacks is dropped
+    /// (AlphaHandling::Discard).
     [[nodiscard]] FrameResult convert(const Frame& frame, PixelFormat pixel_format,
                                       const ColorSpec& color,
                                       Strict strict = Strict::AllowRecorded);

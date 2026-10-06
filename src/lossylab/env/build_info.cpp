@@ -7,7 +7,11 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <span>
+
+#include <lcms2.h>
+#include <zlib.h>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -34,6 +38,47 @@ namespace lossylab
             version.compiled_minor = static_cast<int>(AV_VERSION_MINOR(compiled));
             version.compiled_micro = static_cast<int>(AV_VERSION_MICRO(compiled));
             return version;
+        }
+
+        /// lcms2 encodes 2.14 as 2140.
+        LibraryVersion lcms2_library_version()
+        {
+            const auto split = [](LibraryVersion& version, const int encoded, const bool compiled)
+            {
+                (compiled ? version.compiled_major : version.major) = encoded / 1000;
+                (compiled ? version.compiled_minor : version.minor) = encoded % 1000 / 10;
+                (compiled ? version.compiled_micro : version.micro) = encoded % 10;
+            };
+            LibraryVersion version;
+            version.name = "lcms2";
+            split(version, cmsGetEncodedCMMversion(), false);
+            split(version, LCMS_VERSION, true);
+            return version;
+        }
+
+        /// zlib reports its runtime version only as a string, "1.3" or
+        /// "1.2.13"; ZLIB_VERNUM holds the compiled one as 0xMmrr.
+        LibraryVersion zlib_library_version()
+        {
+            LibraryVersion version;
+            version.name = "zlib";
+            std::sscanf(zlibVersion(), "%d.%d.%d", &version.major, &version.minor, &version.micro);
+            version.compiled_major = ZLIB_VERNUM >> 12;
+            version.compiled_minor = (ZLIB_VERNUM >> 8) & 0xf;
+            version.compiled_micro = (ZLIB_VERNUM >> 4) & 0xf;
+            return version;
+        }
+
+        /// {"name": "major.minor.micro", ...}
+        json::Value versions_by_name(const std::vector<LibraryVersion>& libraries)
+        {
+            json::Value versions = json::Value::object();
+            for (const LibraryVersion& library : libraries)
+            {
+                versions[library.name] = std::to_string(library.major) + '.' + std::to_string(library.minor) + '.' +
+                                         std::to_string(library.micro);
+            }
+            return versions;
         }
 
         License parse_license(const std::string& text)
@@ -82,6 +127,7 @@ namespace lossylab
             info.lossylab.dirty = LOSSYLAB_GIT_DIRTY != 0;
             info.lossylab.compiler = LOSSYLAB_COMPILER;
             info.lossylab.build_type = LOSSYLAB_BUILD_TYPE;
+            info.lossylab.libraries = {lcms2_library_version(), zlib_library_version()};
             info.ffmpeg = compute_ffmpeg_build();
             info.identity_hash = sha256(json::object({
                                                 {"lossylab", info.lossylab.to_json()},
@@ -167,23 +213,17 @@ namespace lossylab
             {"dirty", dirty},
             {"compiler", compiler},
             {"build_type", build_type},
+            {"libraries", versions_by_name(libraries)},
         });
     }
 
     json::Value FfmpegBuild::to_json() const
     {
-        json::Value library_versions = json::Value::object();
-        for (const LibraryVersion& library : libraries)
-        {
-            library_versions[library.name] =
-                std::to_string(library.major) + '.' + std::to_string(library.minor) + '.' +
-                std::to_string(library.micro);
-        }
         return json::object({
             {"version", version},
             {"configure_hash", configure_hash},
             {"license", lossylab::to_string(license)},
-            {"libraries", library_versions},
+            {"libraries", versions_by_name(libraries)},
         });
     }
 

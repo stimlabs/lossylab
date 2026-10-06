@@ -985,7 +985,7 @@ namespace
     }
 
     // -----------------------------------------------------------------------
-    // read_headers and Pipeline
+    // read_headers
     // -----------------------------------------------------------------------
 
     void test_read_headers_validates_before_it_gives_up()
@@ -1000,58 +1000,6 @@ namespace
         catch (const ConfigError&)
         {
         }
-    }
-
-    void test_a_pipeline_validates_its_spec_at_construction()
-    {
-        // Before a dataset starts, not on sample forty thousand.
-        PipelineSpec bad;
-        bad.add(StageKind::Convert, json::object({{"pix_fmt", "yuv420q"}}));
-        try
-        {
-            Pipeline pipeline(bad);
-            assert(false && "expected throw");
-        }
-        catch (const ConfigError&)
-        {
-        }
-
-        try
-        {
-            Pipeline pipeline{PipelineSpec()};
-            assert(false && "expected throw");
-        }
-        catch (const ConfigError&)
-        {
-        }
-    }
-
-    void test_a_valid_pipeline_constructs_and_keeps_its_spec()
-    {
-        PipelineSpec spec;
-        spec.add(StageKind::Convert, json::object({{"pix_fmt", "yuv420p"}}));
-
-        Pipeline pipeline(spec);
-        assert(pipeline.spec().size() == std::size_t{1});
-        assert(pipeline.spec().spec_id() == spec.spec_id());
-
-        try
-        {
-            (void)(pipeline.run(std::vector<Frame>{}));
-            assert(false && "expected throw");
-        }
-        catch (const ConfigError&)
-        {
-        }
-        try
-        {
-            (void)(pipeline.run(Frame()));
-            assert(false && "expected throw");
-        }
-        catch (const ConfigError&)
-        {
-        }
-        assert(throws_not_implemented([&] { static_cast<void>(pipeline.run(test_frame())); }));
     }
 
     // -----------------------------------------------------------------------
@@ -1120,7 +1068,5 @@ int main()
     test_selectors_compose();
     test_a_video_reader_reports_a_missing_stream_rather_than_failing_later();
     test_read_headers_validates_before_it_gives_up();
-    test_a_pipeline_validates_its_spec_at_construction();
-    test_a_valid_pipeline_constructs_and_keeps_its_spec();
     test_the_umbrella_header_compiles_and_covers_the_surface();
 }

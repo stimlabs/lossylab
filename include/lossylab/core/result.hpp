@@ -43,10 +43,11 @@ namespace lossylab
         [[nodiscard]] double bits_per_pixel() const noexcept;
     };
 
-    /// A pipeline's output: the frames, plus one record per stage.
+    /// A pipeline's output: the frame, and the record of every stage with
+    /// the hash of that frame.
     struct PipelineResult
     {
-        std::vector<Frame> frames;
+        Frame frame;
         ProcessingRecord record;
     };
 }
