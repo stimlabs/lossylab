@@ -113,22 +113,34 @@ namespace
         return color;
     }
 
-    /// An rgb24 frame after one MJPEG generation at `qscale` in
-    /// `pixel_format`, as a lossless save of the decoded JPEG holds it.
-    Frame after_mjpeg(const Frame& rgb, const int qscale, const char* pixel_format)
+    /// The options of a JPEG encode of an rgb24 frame, converted on the way.
+    EncodeImageOptions jpeg_options(const ImageCodec codec, const int quality, const char* pixel_format)
     {
         EncodeImageOptions options;
-        options.codec = ImageCodec::Mjpeg;
+        options.codec = codec;
         options.pixel_format = PixelFormat::from_name(pixel_format);
         options.color = jpeg_color();
-        options.rate_control = RateControl::quality(qscale);
+        options.rate_control = RateControl::quality(quality);
         options.strict = Strict::AllowRecorded;
+        return options;
+    }
+
+    /// An rgb24 frame after one generation of a JPEG `codec` at `quality` in
+    /// `pixel_format`, as a lossless save of the decoded JPEG holds it.
+    Frame after_jpeg(const Frame& rgb, const ImageCodec codec, const int quality, const char* pixel_format)
+    {
+        const EncodeImageOptions options = jpeg_options(codec, quality, pixel_format);
         const Frame decoded = roundtrip(rgb, options).frame;
         ConvertOptions to_rgb;
         to_rgb.pixel_format = PixelFormat::from_name("rgb24");
         to_rgb.color = rgb.color();
         to_rgb.chroma_up = KernelSpec{Kernel::Nearest, {}};
         return convert(decoded, to_rgb).frame;
+    }
+
+    Frame after_mjpeg(const Frame& rgb, const int qscale, const char* pixel_format)
+    {
+        return after_jpeg(rgb, ImageCodec::Mjpeg, qscale, pixel_format);
     }
 
     Frame crop_rgb(const Frame& rgb, const int left, const int top)
@@ -436,6 +448,41 @@ namespace
         assert(converted.evidence().jpeg_header_unused == "it was converted on decode");
     }
 
+    void test_a_libjpeg_quality_reads_back_as_itself()
+    {
+        const Frame pristine = texture();
+        for (const char* pixel_format : {"yuvj420p", "yuvj444p"})
+        {
+            for (const int quality : {30, 50, 75, 90, 95})
+            {
+                const EncodedResult encoded =
+                    encode_image(pristine, jpeg_options(ImageCodec::Jpeg, quality, pixel_format));
+
+                // From the file's header, exactly.
+                const DecodedImage image = decode_image(Source::from_memory(encoded.bytes, "jpg"));
+                assert(image.stream().jpeg->ijg_quality == quality && image.stream().jpeg->ijg_quality_exact);
+                const CompressionHistory from_header = compression_history(image, without_recompression());
+                assert(from_header.evidence().jpeg_tables == "header");
+                assert(from_header.evidence().jpeg->ijg_quality == quality);
+                assert(from_header.evidence().jpeg->ijg_match == 1.0);
+                assert(from_header.evidence().traces.front().quality == quality);
+
+                // From the pixels of an RGB save, as the same quality. At 30
+                // this texture's lattice is not detected (grid score 0.81).
+                if (quality < 50)
+                {
+                    continue;
+                }
+                const CompressionHistory from_pixels = compression_history(
+                    after_jpeg(pristine, ImageCodec::Jpeg, quality, pixel_format), without_recompression());
+                const JpegQuantizationEvidence& estimate = *from_pixels.evidence().jpeg;
+                assert(from_pixels.evidence().jpeg_tables == "pixels" && estimate.detected);
+                assert(estimate.ijg_quality == quality);
+                assert(estimate.ijg_match == 1.0);
+            }
+        }
+    }
+
     void test_a_jpeg_2000_saved_as_rgb_or_gray_shows_its_ratio()
     {
         if (!capabilities().supports(ImageCodec::Jpeg2000))
@@ -520,9 +567,10 @@ namespace
 
         // A codec without a quality scale is reported, not thrown.
         options.recompression_crop = 0;
-        options.recompression_codecs = {ImageCodec::Png};
+        options.recompression_codecs = {ImageCodec::Png, ImageCodec::Jpeg};
         const CompressionHistory history = compression_history(texture(64, 64), options);
         assert(history.evidence().recompression.errors.contains("png"));
+        assert(history.evidence().recompression.errors.contains("jpeg"));
     }
 
     void test_a_frame_with_embedded_data_is_analyzed_like_any_other()
@@ -708,6 +756,7 @@ int main()
     test_a_detected_jpeg_is_swept_with_mjpeg_alone();
     test_the_avx2_lattice_sums_equal_the_scalar_ones();
     test_a_jpeg_file_is_read_from_its_header();
+    test_a_libjpeg_quality_reads_back_as_itself();
     test_a_jpeg_2000_saved_as_rgb_or_gray_shows_its_ratio();
     test_the_record_serializes();
     test_bad_options_are_refused();

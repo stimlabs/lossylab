@@ -69,7 +69,8 @@ namespace lossylab
         std::string build_type;
 
         /// The libraries lossylab links besides FFmpeg: lcms2, whose color
-        /// transforms change pixels, and zlib. `to_json()` writes these as
+        /// transforms change pixels, zlib, and libjpeg-turbo, which writes
+        /// ImageCodec::Jpeg files. `to_json()` writes these as
         /// {"lcms2": "2.14.0", ...}.
         std::vector<LibraryVersion> libraries;
 

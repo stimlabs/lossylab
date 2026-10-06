@@ -6,6 +6,7 @@
 #include "lossylab/io/probe.hpp"
 #include "lossylab/measure/measure.hpp"
 
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <cstring>
@@ -132,8 +133,11 @@ namespace
     void test_encoding_is_deterministic()
     {
         const Frame source = source_in("yuvj420p", bt601_yuv(ColorRange::Full));
-        const EncodeImageOptions options = image_options(ImageCodec::Mjpeg, "yuvj420p", 4);
-        assert(encode_image(source, options).bytes == encode_image(source, options).bytes);
+        for (const EncodeImageOptions& options :
+             {image_options(ImageCodec::Mjpeg, "yuvj420p", 4), image_options(ImageCodec::Jpeg, "yuvj420p", 75)})
+        {
+            assert(encode_image(source, options).bytes == encode_image(source, options).bytes);
+        }
     }
 
     void test_mjpeg_refuses_what_jpeg_cannot_carry()
@@ -148,6 +152,147 @@ namespace
         EncodeImageOptions crf = image_options(ImageCodec::Mjpeg, "yuvj420p", 5);
         crf.rate_control = RateControl::crf(20);
         expect_throw<ConfigError>([&] { (void)encode_image(full, crf); });
+    }
+
+    /// The file's JPEG markers, as probe() reads them.
+    JpegInfo jpeg_info(const std::vector<std::uint8_t>& bytes)
+    {
+        return *probe(Source::from_memory(bytes, "jpg")).streams.front().jpeg;
+    }
+
+    struct JpegLayout
+    {
+        const char* pixel_format;
+        int horizontal_sampling;
+        int vertical_sampling;
+    };
+
+    constexpr std::array<JpegLayout, 4> jpeg_layouts{JpegLayout{"yuvj420p", 2, 2}, JpegLayout{"yuvj422p", 2, 1},
+                                                     JpegLayout{"yuvj440p", 1, 2}, JpegLayout{"yuvj444p", 1, 1}};
+
+    void test_jpeg_encodes_with_libjpegs_tables_at_an_ijg_quality()
+    {
+        for (const JpegLayout& layout : jpeg_layouts)
+        {
+            const Frame source = source_in(layout.pixel_format, bt601_yuv(ColorRange::Full));
+            for (const int quality : {1, 2, 25, 50, 75, 90, 99, 100})
+            {
+                const EncodedResult encoded =
+                    encode_image(source, image_options(ImageCodec::Jpeg, layout.pixel_format, quality));
+                assert(starts_with(encoded.bytes, 0, "\xFF\xD8"));
+
+                const JpegInfo info = jpeg_info(encoded.bytes);
+                assert(info.ijg_quality == quality && info.ijg_quality_exact);
+                assert(info.process == "baseline" && info.huffman_tables == "standard" && info.scan_count == 1);
+                assert(info.components.size() == 3);
+                assert(info.components[0].horizontal_sampling == layout.horizontal_sampling);
+                assert(info.components[0].vertical_sampling == layout.vertical_sampling);
+                for (std::size_t index = 1; index < 3; ++index)
+                {
+                    assert(info.components[index].horizontal_sampling == 1);
+                    assert(info.components[index].vertical_sampling == 1);
+                }
+
+                const Frame decoded = decode_image(Source::from_memory(encoded.bytes, "jpg")).frame;
+                assert(decoded.width() == 64 && decoded.height() == 48);
+                assert(decoded.pixel_format().name() == layout.pixel_format);
+            }
+        }
+    }
+
+    void test_jpeg_records_libjpeg_and_its_settings()
+    {
+        const Frame source = source_in("yuvj420p", bt601_yuv(ColorRange::Full));
+        const EncodedResult encoded = encode_image(source, image_options(ImageCodec::Jpeg, "yuvj420p", 80));
+
+        const StageRecord& record = encoded.record;
+        assert(record.kind() == StageKind::EncodeImage);
+        assert(record.implementation == "libjpeg-turbo");
+        assert(record.conversions.empty());
+        assert(record.frames.size() == 1);
+        assert(record.frames.front().picture_type == PictureType::I && record.frames.front().key_frame);
+        assert(record.frames.front().size_bytes == static_cast<std::int64_t>(encoded.bytes.size()));
+        assert(!record.frames.front().qp_mean.has_value());
+        assert(record.block_grid.has_value() && record.block_grid->kind == BlockGridKind::Dct8);
+
+        const EncodeImageEvidence& evidence = std::get<EncodeImageEvidence>(record.evidence);
+        assert(evidence.extension == "jpg" && !evidence.container.has_value());
+        assert(!evidence.resolved.fixed_qscale.has_value());
+        assert(evidence.resolved.options.at("quality") == "80");
+        assert(evidence.resolved.options.at("dct_method") == "islow");
+        assert(evidence.resolved.options.at("optimize_coding") == "0");
+        assert(evidence.resolved.options.at("progressive") == "0");
+        assert(evidence.resolved.options.at("sampling_factors") == "2x2,1x1,1x1");
+        assert(std::abs(evidence.achieved_bpp - encoded.bits_per_pixel()) < 1e-9);
+
+        const auto coarser = encode_image(source, image_options(ImageCodec::Jpeg, "yuvj420p", 30)).bytes.size();
+        assert(coarser < encoded.bytes.size());
+    }
+
+    void test_jpeg_fills_out_partial_blocks()
+    {
+        // 61x45 ends in partial blocks and MCUs on the right and at the bottom, in every layout.
+        for (const JpegLayout& layout : jpeg_layouts)
+        {
+            Frame source = Frame::allocate(61, 45, PixelFormat::from_name(layout.pixel_format),
+                                           bt601_yuv(ColorRange::Full));
+            for (int index = 0; index < source.plane_count(); ++index)
+            {
+                const PlaneView plane = source.plane(index);
+                for (int y = 0; y < plane.height; ++y)
+                {
+                    for (int x = 0; x < plane.width; ++x)
+                    {
+                        plane.row(y)[x] = static_cast<std::uint8_t>(64 + 2 * x + y + 16 * index);
+                    }
+                }
+            }
+
+            const EncodeImageOptions options = image_options(ImageCodec::Jpeg, layout.pixel_format, 95);
+            const FrameResult result = roundtrip(source, options, decode_like(source));
+            assert(result.frame.width() == 61 && result.frame.height() == 45);
+            assert(psnr_of(source, result.frame) > 40.0);
+        }
+    }
+
+    void test_jpeg_refuses_what_it_cannot_take()
+    {
+        const Frame full = source_in("yuvj420p", bt601_yuv(ColorRange::Full));
+        for (const double quality : {0.0, 101.0, 74.5})
+        {
+            expect_throw<ConfigError>(
+                [&] { (void)encode_image(full, image_options(ImageCodec::Jpeg, "yuvj420p", quality)); });
+        }
+
+        EncodeImageOptions crf = image_options(ImageCodec::Jpeg, "yuvj420p", 75);
+        crf.rate_control = RateControl::crf(20);
+        expect_throw<ConfigError>([&] { (void)encode_image(full, crf); });
+
+        EncodeImageOptions lossless = image_options(ImageCodec::Jpeg, "yuvj420p", 75);
+        lossless.lossless = true;
+        expect_throw<ConfigError>([&] { (void)encode_image(full, lossless); });
+
+        EncodeImageOptions with_options = image_options(ImageCodec::Jpeg, "yuvj420p", 75);
+        with_options.encoder_options = {{"optimize_coding", "1"}};
+        expect_throw<ConfigError>([&] { (void)encode_image(full, with_options); });
+
+        const Frame limited = source_in("yuv420p", bt601_yuv(ColorRange::Limited));
+        expect_throw<ConfigError>([&] { (void)encode_image(limited, image_options(ImageCodec::Jpeg, "yuv420p", 75)); });
+
+        // RGB and gray would go through libjpeg's own color handling.
+        const Frame rgb = rgb_source();
+        expect_throw<ConfigError>([&] { (void)encode_image(rgb, image_options(ImageCodec::Jpeg, "rgb24", 75)); });
+        const Frame gray = source_in("gray", bt601_yuv(ColorRange::Full));
+        expect_throw<ConfigError>([&] { (void)encode_image(gray, image_options(ImageCodec::Jpeg, "gray", 75)); });
+
+        // Converting RGB to YCbCr first is the library's own conversion, refused or recorded as usual.
+        EncodeImageOptions from_rgb = image_options(ImageCodec::Jpeg, "yuvj420p", 75);
+        from_rgb.color = bt601_yuv(ColorRange::Full);
+        expect_throw<ConversionRefused>([&] { (void)encode_image(rgb, from_rgb); });
+        from_rgb.strict = Strict::AllowRecorded;
+        const EncodedResult converted = encode_image(rgb, from_rgb);
+        assert(!converted.record.conversions.empty());
+        assert(converted.record.conversions.front().cause == ConversionCause::CodecConstraint);
     }
 
     void test_a_conversion_to_the_encoders_format_is_refused_or_recorded()
@@ -355,6 +500,7 @@ namespace
         ColorSpec jpeg_color = bt601_yuv(ColorRange::Full);
         return {
             {ImageCodec::Png, "rgb24", ColorSpec::srgb(), 50, true},
+            {ImageCodec::Jpeg, "yuvj420p", jpeg_color, 75, false},
             {ImageCodec::Mjpeg, "yuvj420p", jpeg_color, 5, false},
             {ImageCodec::WebP, "yuv420p", bt601_yuv(ColorRange::Limited), 80, false},
             {ImageCodec::Jxl, "rgb24", ColorSpec::srgb(), 1.0, false},
@@ -394,6 +540,25 @@ namespace
             assert(encoded.record.input.icc_profile == "Display P3");
             assert(encoded.record.output.icc_profile == (kept_profile ? "Display P3" : ""));
         }
+    }
+
+    void test_jpeg_keeps_the_profile_and_the_pixel_shape()
+    {
+        const Frame source = with_embedded(source_in("yuvj420p", bt601_yuv(ColorRange::Full)));
+        EncodeImageOptions options = image_options(ImageCodec::Jpeg, "yuvj420p", 75);
+        options.strict = Strict::AllowRecorded;
+        const EncodedResult encoded = encode_image(source, options);
+        assert(!records(encoded.record, "icc_profile"));
+        assert(!records(encoded.record, "sample_aspect_ratio"));
+        assert(records(encoded.record, "orientation"));
+
+        const ProbeResult written = probe(Source::from_memory(encoded.bytes, "jpg"));
+        assert(written.streams.front().icc_profile.has_value());
+        assert(written.streams.front().sample_aspect_ratio == (Rational{4, 3}));
+
+        // The orientation it cannot keep is refused unless dropping it is allowed.
+        options.strict = Strict::Refuse;
+        expect_throw<ConversionRefused>([&] { (void)encode_image(source, options); });
     }
 
     void test_an_output_that_cannot_keep_the_profile_is_refused()
@@ -451,6 +616,10 @@ int main()
     test_a_coarser_qscale_makes_a_smaller_file();
     test_encoding_is_deterministic();
     test_mjpeg_refuses_what_jpeg_cannot_carry();
+    test_jpeg_encodes_with_libjpegs_tables_at_an_ijg_quality();
+    test_jpeg_records_libjpeg_and_its_settings();
+    test_jpeg_fills_out_partial_blocks();
+    test_jpeg_refuses_what_it_cannot_take();
     test_a_conversion_to_the_encoders_format_is_refused_or_recorded();
     test_an_option_set_from_the_rate_control_cannot_be_overridden();
     test_lossy_webp_roundtrips_through_its_decoder();
@@ -460,6 +629,7 @@ int main()
     test_avif_is_muxed_into_an_avif_file();
     test_heif_cannot_be_encoded();
     test_the_record_states_what_each_output_kept();
+    test_jpeg_keeps_the_profile_and_the_pixel_shape();
     test_an_output_that_cannot_keep_the_profile_is_refused();
     test_a_frame_without_embedded_data_records_nothing();
     test_a_non_square_pixel_turns_with_the_image();

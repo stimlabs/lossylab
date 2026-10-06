@@ -1,7 +1,7 @@
 #pragma once
 
-/// Driving one FFmpeg encoder and muxing its packets in memory. Internal
-/// header.
+/// Driving one FFmpeg encoder and muxing its packets in memory, or
+/// libjpeg-turbo for ImageCodec::Jpeg. Internal header.
 
 #include "lossylab/codec/encode_types.hpp"
 #include "lossylab/core/color_spec.hpp"
@@ -17,6 +17,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace lossylab::detail
@@ -44,6 +45,11 @@ namespace lossylab::detail
         /// A fixed quantizer, in the encoder's quantizer units; sets
         /// AV_CODEC_FLAG_QSCALE.
         std::optional<int> fixed_qscale;
+
+        /// The IJG quality (1 to 100) libjpeg-turbo scales its standard
+        /// quantization tables to. libjpeg-turbo only.
+        std::optional<int> ijg_quality;
+
         std::optional<int> qmin;
         std::optional<int> qmax;
         std::int64_t bit_rate = 0;
@@ -106,4 +112,23 @@ namespace lossylab::detail
     /// A packet's picture type, key flag, size and, when the encoder reports
     /// one, the quantizer from its quality statistics.
     [[nodiscard]] FrameStats packet_stats(const AVPacket& packet, bool reports_qp);
+
+    /// The name capabilities() lists libjpeg-turbo's encoder under.
+    inline constexpr std::string_view libjpeg_encoder_name = "libjpeg-turbo";
+
+    /// A JPEG file from libjpeg-turbo, and the settings it was written with.
+    struct LibjpegEncode
+    {
+        std::vector<std::uint8_t> bytes;
+        EncoderResolution resolved;
+    };
+
+    /// Encodes an 8-bit planar YCbCr frame (4:2:0, 4:2:2, 4:4:0 or 4:4:4) at
+    /// `setup.ijg_quality`, with libjpeg's defaults otherwise: baseline,
+    /// standard Huffman tables, the integer DCT. The planes go in as they are
+    /// (libjpeg's raw data input), so libjpeg converts and resamples nothing;
+    /// the rows and columns that fill out the last blocks repeat the plane's
+    /// last row and column. Writes `setup.icc_profile` and the pixel shape,
+    /// as the JFIF density.
+    [[nodiscard]] LibjpegEncode encode_with_libjpeg(const Frame& frame, const EncoderSetup& setup);
 }

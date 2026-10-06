@@ -37,9 +37,10 @@ namespace
     void test_the_libraries_beside_ffmpeg_are_part_of_the_identity()
     {
         const LossylabBuild& info = build_info().lossylab;
-        assert(info.libraries.size() == std::size_t{2});
+        assert(info.libraries.size() == std::size_t{3});
         assert(info.libraries[0].name == "lcms2");
         assert(info.libraries[1].name == "zlib");
+        assert(info.libraries[2].name == "libjpeg-turbo");
         for (const LibraryVersion& library : info.libraries)
         {
             assert(library.major > 0);

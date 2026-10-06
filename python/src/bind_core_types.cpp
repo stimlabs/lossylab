@@ -267,11 +267,9 @@ namespace lossylab::pybind
             .def_static("from_dict", [](nb::dict value) { return BlockGrid::from_json(to_json(value)); });
 
         // ---- codec_id.hpp --------------------------------------------------
-        // Bound because capabilities()'s select_encoder/select_decoder/require_*
-        // take these as arguments, even though encoding itself isn't
-        // implemented yet.
         nb::enum_<ImageCodec>(m, "ImageCodec")
             .value("Png", ImageCodec::Png)
+            .value("Jpeg", ImageCodec::Jpeg)
             .value("Mjpeg", ImageCodec::Mjpeg)
             .value("WebP", ImageCodec::WebP)
             .value("Avif", ImageCodec::Avif)

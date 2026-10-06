@@ -11,10 +11,10 @@ def test_build_info_basic_fields():
     assert info.ffmpeg.license != lossylab.License.Unknown
 
 
-def test_lcms2_and_zlib_are_part_of_the_identity():
+def test_lcms2_zlib_and_libjpeg_turbo_are_part_of_the_identity():
     info = lossylab.build_info()
-    assert [library.name for library in info.lossylab.libraries] == ["lcms2", "zlib"]
-    assert set(info.to_dict()["lossylab"]["libraries"]) == {"lcms2", "zlib"}
+    assert [library.name for library in info.lossylab.libraries] == ["lcms2", "zlib", "libjpeg-turbo"]
+    assert set(info.to_dict()["lossylab"]["libraries"]) == {"lcms2", "zlib", "libjpeg-turbo"}
 
 
 def test_the_identity_names_the_commit_and_carries_a_sha256_hash():

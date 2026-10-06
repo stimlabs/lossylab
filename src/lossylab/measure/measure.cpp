@@ -1178,12 +1178,15 @@ namespace lossylab
             const Subsampling subsampling = format.subsampling();
             switch (codec)
             {
+            case ImageCodec::Jpeg:
             case ImageCodec::Mjpeg:
                 switch (subsampling)
                 {
                 case Subsampling::Gray:
                 case Subsampling::Yuv444: return PixelFormat::from_name("yuvj444p");
                 case Subsampling::Yuv422: return PixelFormat::from_name("yuvj422p");
+                case Subsampling::Yuv440:
+                    return PixelFormat::from_name(codec == ImageCodec::Jpeg ? "yuvj440p" : "yuvj420p");
                 default: return PixelFormat::from_name("yuvj420p");
                 }
             case ImageCodec::WebP: return PixelFormat::from_name("yuv420p");
@@ -1201,8 +1204,8 @@ namespace lossylab
             case ImageCodec::Png:
             case ImageCodec::Heif: break;
             }
-            throw ConfigError("recompression_curve() needs a lossy codec to sweep: MJPEG, WebP, AVIF, JPEG XL or "
-                              "JPEG 2000, not " + to_string(codec));
+            throw ConfigError("recompression_curve() needs a lossy codec to sweep: JPEG, MJPEG, WebP, AVIF, JPEG XL "
+                              "or JPEG 2000, not " + to_string(codec));
         }
 
         /// The color a codec's bitstream implies for what a frame leaves
@@ -1232,7 +1235,8 @@ namespace lossylab
                 color.range = ColorRange::Full;
                 return color;
             }
-            const bool fixed_by_codec = codec == ImageCodec::Mjpeg || codec == ImageCodec::WebP;
+            const bool fixed_by_codec =
+                codec == ImageCodec::Jpeg || codec == ImageCodec::Mjpeg || codec == ImageCodec::WebP;
             if (fixed_by_codec || frame_color.is_rgb())
             {
                 const ColorSpec implied = codec_implied_color(codec, target_format);

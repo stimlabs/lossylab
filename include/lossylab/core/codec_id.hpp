@@ -15,7 +15,8 @@ namespace lossylab
     enum class ImageCodec
     {
         Png,
-        Mjpeg,  ///< FFmpeg's JPEG implementation; a second encoder alongside PIL
+        Jpeg,   ///< libjpeg-turbo's encoder, at an IJG quality; FFmpeg's decoder
+        Mjpeg,  ///< FFmpeg's JPEG implementation, at a qscale; a second JPEG encoder
         WebP,
         Avif,
         Jxl,
@@ -100,7 +101,8 @@ namespace lossylab
     [[nodiscard]] std::vector<ImageCodec> all_image_codecs();
     [[nodiscard]] std::vector<VideoCodec> all_video_codecs();
 
-    /// The FFmpeg encoder names that can serve a codec, best first.
+    /// The encoder names that can serve a codec, best first: FFmpeg's, and
+    /// "libjpeg-turbo" for ImageCodec::Jpeg.
     ///
     /// Several encoders may implement one codec (libaom-av1, libsvtav1 and
     /// librav1e all produce AV1), so selection is a lookup against the build

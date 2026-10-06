@@ -26,10 +26,10 @@ jpeg_color.primaries = lossylab.ColorPrimaries.Bt709  # ...with sRGB's primaries
 jpeg_color.transfer = lossylab.TransferCharacteristic.Srgb
 
 jpeg = lossylab.RoundtripImageConfiguration()
-jpeg.encode.codec = lossylab.ImageCodec.Mjpeg
+jpeg.encode.codec = lossylab.ImageCodec.Jpeg
 jpeg.encode.pixel_format = lossylab.PixelFormat.from_name("yuvj420p")
 jpeg.encode.color = jpeg_color
-jpeg.encode.rate_control = lossylab.RateControl.quality(2)  # FFmpeg qscale 2, not an IJG quality
+jpeg.encode.rate_control = lossylab.RateControl.quality(90)  # IJG quality 90: libjpeg's tables at 90
 jpeg.encode.strict = lossylab.Strict.AllowRecorded
 jpeg.decode.conversion = to_srgb
 
@@ -106,14 +106,17 @@ Only these eight run in a pipeline. `add()` also accepts the other stage configu
 
   | Codec      | `quality(value)`                                                   |
   |------------|--------------------------------------------------------------------|
+  | `Jpeg`     | IJG quality, an integer from 1 to 100, higher is better            |
   | `Mjpeg`    | FFmpeg's `qscale`, an integer from 1 to 31, lower is better        |
   | `WebP`     | quality from 0 to 100, higher is better                            |
   | `Jxl`      | Butteraugli distance from 0.01 to 15, lower is better              |
   | `Avif`     | depends on the AVIF encoder of the build (crf or quantizer)        |
   | `Jpeg2000` | FFmpeg's `layer_rates`, an integer from 1 to 1000, lower is better |
 
-  `Mjpeg` sets FFmpeg's fixed `qscale` (`fixed_qscale`, `qmin` and `qmax` in the encode evidence). There is no setting for an IJG quality (libjpeg's 1 to 100), so a target given as an IJG quality has to be mapped to a `qscale` first.
-- **Pixel format.** `Mjpeg` takes `yuvj420p`, `yuvj422p` and `yuvj444p`, and their limited-range names `yuv420p`, `yuv422p` and `yuv444p`. It does not take `gray`, `yuvj440p`, `yuvj411p` or an RGB format, so there is no single-component JPEG; an achromatic stage before the encode gives flat chroma instead. Lossy `WebP` takes `yuv420p` or `yuva420p` only.
+  `Jpeg` encodes with libjpeg-turbo, which scales libjpeg's standard tables to the quality (`jpeg_set_quality()`, baseline): the IJG quality that `probe()` and `compression_history()` report is the value to pass, with no conversion. The output is baseline, with the standard Huffman tables and the integer DCT, as Pillow writes by default. Given the same 4:4:4 YCbCr, it is byte-identical to Pillow's `save(quality=q, subsampling=0)`. The encode evidence lists the settings under `resolved.options` (`quality`, `dct_method`, `optimize_coding`, `sampling_factors`, ...), and the libjpeg-turbo version is part of the build identity.
+
+  `Mjpeg` sets FFmpeg's fixed `qscale` (`fixed_qscale`, `qmin` and `qmax` in the encode evidence). Its tables are MPEG-1's intra matrix scaled by the `qscale`, with the DC entry fixed at 8, so no `qscale` gives libjpeg's tables at any IJG quality.
+- **Pixel format.** `Jpeg` takes `yuvj420p`, `yuvj422p`, `yuvj440p` and `yuvj444p`, and their limited-range names. libjpeg-turbo gets the planes as they are and converts or resamples nothing, so it takes no RGB or `gray`; converting to YCbCr is the library's own conversion, refused or recorded under `strict`. `Mjpeg` takes `yuvj420p`, `yuvj422p` and `yuvj444p`, and their limited-range names `yuv420p`, `yuv422p` and `yuv444p`. It does not take `gray`, `yuvj440p`, `yuvj411p` or an RGB format. Neither writes a single-component JPEG; an achromatic stage before the encode gives flat chroma instead. Lossy `WebP` takes `yuv420p` or `yuva420p` only.
 - **Color.** `encode.color` must be set when the encode converts from RGB. `ColorSpec.jpeg()` alone has BT.470BG primaries and the SMPTE 170M transfer, and converting sRGB to those is not implemented, so the example keeps sRGB's primaries and transfer and changes only the matrix and range. JPEG needs full range, the BT.601 matrix and centered chroma; lossy WebP needs limited range.
 - **`strict`.** The encode converts the rgb24 frame to the pixel format and color to encode in, and the decode back converts again. With `Strict.Refuse`, the default of `EncodeImageOptions`, the encode refuses that conversion with `ConversionRefused`; with `AllowRecorded` it runs it and lists every changed property (`pix_fmt`, `subsampling`, `color_matrix`, `chroma_location`, `color_tags`) in the stage record's `conversions`. The alternative is a `ConvertOptions` stage to the encode's format first. `EncodeImageOptions` is the only stage option that defaults to `Refuse`; `DecodeImageOptions`, `ConvertOptions`, `OrientOptions` and the roundtrip's `decode` default to `AllowRecorded`.
 

@@ -1257,6 +1257,8 @@ namespace lossylab
                                32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 200};
                 plan.fine_step = 1;
                 break;
+            case ImageCodec::Jpeg:
+                throw ConfigError("compression_history() sweeps JPEG with Mjpeg; it cannot recompress with Jpeg yet");
             case ImageCodec::Png:
             case ImageCodec::Heif:
                 throw ConfigError("compression_history() cannot recompress with " + to_string(codec) +
@@ -1274,6 +1276,7 @@ namespace lossylab
             {
             case ImageCodec::Jxl:
             case ImageCodec::Jpeg2000: return subsampling != Subsampling::Gray;
+            case ImageCodec::Jpeg:
             case ImageCodec::Mjpeg:
             case ImageCodec::WebP:
             case ImageCodec::Avif:

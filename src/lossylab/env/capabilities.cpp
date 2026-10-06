@@ -137,6 +137,24 @@ namespace lossylab
                    (codec.capabilities & AV_CODEC_CAP_HYBRID) != 0;
         }
 
+        /// The libjpeg-turbo encoder, which lossylab links beside FFmpeg. It
+        /// takes 8-bit YCbCr planes as they are, downsampled already, and has
+        /// no options: its settings follow from the encode's own.
+        CodecInfo libjpeg_encoder_info()
+        {
+            CodecInfo info;
+            info.name = "libjpeg-turbo";
+            info.long_name = "libjpeg-turbo JPEG";
+            info.codec_name = "mjpeg";
+            info.is_encoder = true;
+            for (const char* name : {"yuvj420p", "yuvj422p", "yuvj440p", "yuvj444p", "yuv420p", "yuv422p", "yuv440p",
+                                     "yuv444p"})
+            {
+                info.pixel_formats.push_back(PixelFormat::from_name(name));
+            }
+            return info;
+        }
+
         CodecInfo read_codec(const AVCodec& codec, const bool encoder)
         {
             CodecInfo info;
@@ -428,6 +446,7 @@ namespace lossylab
                 available.m_decoders.push_back(read_codec(*codec, false));
             }
         }
+        available.m_encoders.push_back(libjpeg_encoder_info());
 
         void* filter_iter = nullptr;
         const AVFilter* filter = nullptr;

@@ -293,8 +293,8 @@ namespace lossylab
 
     struct RecompressionOptions
     {
-        /// The codec to re-encode with: MJPEG, WebP (lossy), AVIF, JPEG XL or
-        /// JPEG 2000.
+        /// The codec to re-encode with: JPEG (libjpeg-turbo, at an IJG
+        /// quality), MJPEG, WebP (lossy), AVIF, JPEG XL or JPEG 2000.
         /// Its encode_image() rules apply at every point, with the quality
         /// parameter in RateControl::quality() units.
         ImageCodec codec = ImageCodec::Mjpeg;
@@ -313,7 +313,8 @@ namespace lossylab
         /// The format to re-encode in. Unset, the codec's own format nearest
         /// the frame's: for MJPEG yuvj444p, yuvj422p or yuvj420p by the
         /// frame's chroma subsampling (yuvj420p for RGB, yuvj444p with
-        /// neutral chroma for gray), for WebP yuv420p, for AVIF 8-bit
+        /// neutral chroma for gray), the same for JPEG but with yuvj440p for
+        /// 4:4:0, for WebP yuv420p, for AVIF 8-bit
         /// yuv444p, yuv422p or yuv420p (yuv420p for RGB, gray for gray), and
         /// for JPEG XL and JPEG 2000 rgb24, or gray for gray. None of these has alpha:
         /// alpha is dropped and only the color planes are measured.

@@ -266,7 +266,9 @@ namespace lossylab
         /// whole quality scale and a fine one around the curve's notch. WebP
         /// by default. JPEG needs none: its tables are read directly. AVIF,
         /// JPEG XL and JPEG 2000 are accepted, but see recompression_curve()
-        /// for how little their curves have been checked. JPEG 2000 sweeps
+        /// for how little their curves have been checked. A JPEG sweep runs
+        /// with Mjpeg; Jpeg is not swept, and reported under
+        /// `recompression.errors`. JPEG 2000 sweeps
         /// nominal ratios 4 to 200, so a file at ratio 4 or less (all but
         /// lossless) is not found. A codec this build cannot
         /// both encode and decode is skipped, and listed in the evidence. A

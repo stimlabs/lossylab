@@ -490,6 +490,43 @@ namespace lossylab
             return frames;
         }
 
+        /// One image's file, its frame statistics, and the encoder's settings.
+        struct EncodedImage
+        {
+            std::vector<std::uint8_t> bytes;
+            std::vector<FrameStats> frames;
+            EncoderResolution resolved;
+        };
+
+        EncodedImage encode_with_ffmpeg(const Frame& frame, const detail::EncoderPlan& plan)
+        {
+            detail::EncoderSession session(plan.setup);
+            session.send(frame, 0);
+            session.finish();
+            if (session.packets().size() != 1)
+            {
+                throw Error("encode_image(): encoder '" + plan.setup.encoder_name + "' produced " +
+                            std::to_string(session.packets().size()) + " packets for one image");
+            }
+
+            EncodedImage encoded;
+            encoded.frames = frame_stats(session.packets(), plan.reports_qp);
+            encoded.bytes = plan.muxer.empty() ? detail::concatenate_packets(session.packets())
+                                               : detail::mux_packets(plan.muxer, session.context(), session.packets());
+            encoded.resolved = session.resolved_settings();
+            return encoded;
+        }
+
+        EncodedImage encode_with_libjpeg(const Frame& frame, const detail::EncoderPlan& plan)
+        {
+            detail::LibjpegEncode libjpeg = detail::encode_with_libjpeg(frame, plan.setup);
+            FrameStats stats;
+            stats.picture_type = PictureType::I;
+            stats.key_frame = true;
+            stats.size_bytes = static_cast<std::int64_t>(libjpeg.bytes.size());
+            return EncodedImage{std::move(libjpeg.bytes), {stats}, std::move(libjpeg.resolved)};
+        }
+
         double bits_per_pixel(const std::size_t bytes, const FormatDescription& format, const std::size_t frames)
         {
             return static_cast<double>(bytes) * 8.0 /
@@ -651,19 +688,11 @@ namespace lossylab
         plan.setup.global_header = !plan.muxer.empty() && detail::muxer_wants_global_header(plan.muxer);
         set_embedded(encoded_frame, plan.setup);
 
-        detail::EncoderSession session(plan.setup);
-        session.send(encoded_frame, 0);
-        session.finish();
-        if (session.packets().size() != 1)
-        {
-            throw Error("encode_image(): encoder '" + encoder.name + "' produced " +
-                        std::to_string(session.packets().size()) + " packets for one image");
-        }
-
-        record.frames = frame_stats(session.packets(), plan.reports_qp);
-        std::vector<std::uint8_t> bytes = plan.muxer.empty()
-                                              ? detail::concatenate_packets(session.packets())
-                                              : detail::mux_packets(plan.muxer, session.context(), session.packets());
+        EncodedImage encoded = encoder.name == detail::libjpeg_encoder_name
+                                   ? encode_with_libjpeg(encoded_frame, plan)
+                                   : encode_with_ffmpeg(encoded_frame, plan);
+        std::vector<std::uint8_t> bytes = std::move(encoded.bytes);
+        record.frames = std::move(encoded.frames);
 
         record.output = encoded_frame.describe();
         account_for_embedded(encoded_frame, bytes, plan.extension, encoder.name, options.strict, record,
@@ -673,7 +702,7 @@ namespace lossylab
             plan.muxer.empty() ? std::nullopt : std::optional<std::string>(plan.muxer),
             plan.extension,
             encoded_frame.color(),
-            session.resolved_settings(),
+            std::move(encoded.resolved),
             bits_per_pixel(bytes.size(), record.output, 1),
             std::nullopt};
         record.duration_ms = clock.duration_ms();

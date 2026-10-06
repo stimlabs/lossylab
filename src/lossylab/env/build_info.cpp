@@ -13,6 +13,10 @@
 #include <lcms2.h>
 #include <zlib.h>
 
+// jpeglib.h needs FILE and size_t declared ahead of it.
+#include <cstddef>
+#include <jpeglib.h>
+
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavfilter/avfilter.h>
@@ -66,6 +70,18 @@ namespace lossylab
             version.compiled_major = ZLIB_VERNUM >> 12;
             version.compiled_minor = (ZLIB_VERNUM >> 8) & 0xf;
             version.compiled_micro = (ZLIB_VERNUM >> 4) & 0xf;
+            return version;
+        }
+
+        /// libjpeg-turbo has no runtime version query, so both halves are the
+        /// headers' LIBJPEG_TURBO_VERSION_NUMBER, 2.1.5 as 2001005.
+        LibraryVersion libjpeg_turbo_library_version()
+        {
+            LibraryVersion version;
+            version.name = "libjpeg-turbo";
+            version.major = version.compiled_major = LIBJPEG_TURBO_VERSION_NUMBER / 1000000;
+            version.minor = version.compiled_minor = LIBJPEG_TURBO_VERSION_NUMBER / 1000 % 1000;
+            version.micro = version.compiled_micro = LIBJPEG_TURBO_VERSION_NUMBER % 1000;
             return version;
         }
 
@@ -127,7 +143,8 @@ namespace lossylab
             info.lossylab.dirty = LOSSYLAB_GIT_DIRTY != 0;
             info.lossylab.compiler = LOSSYLAB_COMPILER;
             info.lossylab.build_type = LOSSYLAB_BUILD_TYPE;
-            info.lossylab.libraries = {lcms2_library_version(), zlib_library_version()};
+            info.lossylab.libraries = {lcms2_library_version(), zlib_library_version(),
+                                       libjpeg_turbo_library_version()};
             info.ffmpeg = compute_ffmpeg_build();
             info.identity_hash = sha256(json::object({
                                                 {"lossylab", info.lossylab.to_json()},

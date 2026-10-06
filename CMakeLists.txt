@@ -43,6 +43,12 @@ find_package(ZLIB REQUIRED)
 # lcms2 converts embedded ICC profiles to sRGB. FFmpeg's libjxl loads it already.
 pkg_check_modules(LCMS2 REQUIRED IMPORTED_TARGET lcms2>=2.13)
 
+# libjpeg-turbo encodes JPEG at an IJG quality with libjpeg's own tables, which FFmpeg's MJPEG encoder cannot.
+# 2.0 added jpeg_write_icc_profile().
+pkg_check_modules(LIBJPEG REQUIRED IMPORTED_TARGET libjpeg>=2.0)
+
+message(STATUS "libjpeg-turbo: ${LIBJPEG_VERSION} from ${LIBJPEG_LIBDIR}")
+
 # ---------------------------------------------------------------------------
 # Library
 # ---------------------------------------------------------------------------
@@ -87,6 +93,7 @@ add_library(lossylab STATIC
         src/lossylab/codec/encode.cpp
         src/lossylab/codec/encoder_plans.cpp
         src/lossylab/codec/encoder_session.cpp
+        src/lossylab/codec/libjpeg_encoder.cpp
         src/lossylab/motion/animate_still.cpp
         src/lossylab/measure/measure.cpp
         src/lossylab/measure/compression_history.cpp
@@ -118,7 +125,7 @@ target_include_directories(lossylab
 )
 
 # FFmpeg is an implementation detail: no public header includes libav*.
-target_link_libraries(lossylab PRIVATE PkgConfig::FFMPEG ZLIB::ZLIB PkgConfig::LCMS2)
+target_link_libraries(lossylab PRIVATE PkgConfig::FFMPEG ZLIB::ZLIB PkgConfig::LCMS2 PkgConfig::LIBJPEG)
 lossylab_set_warnings(lossylab)
 set_target_properties(lossylab PROPERTIES POSITION_INDEPENDENT_CODE ON)
 

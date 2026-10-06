@@ -114,7 +114,8 @@ namespace lossylab
     /// it once during validation, in the parent, before workers are spawned.
     [[nodiscard]] bool hardware_device_usable(std::string_view name);
 
-    /// What the linked FFmpeg can actually do.
+    /// What the linked FFmpeg can actually do, plus the libjpeg-turbo encoder
+    /// lossylab links beside it.
     ///
     /// The library's API declares the complete surface the design calls for;
     /// this is how a caller finds out which parts of it this particular build

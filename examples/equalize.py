@@ -3,13 +3,15 @@
 Reads a JSON Lines file with one object per file:
 
     {"path": "a/b.jpg", "crop": [16, 16, 1024, 768], "orientation": 6, "achromatic": false,
-     "jpeg_pixel_format": "yuvj420p"}
+     "jpeg_pixel_format": "yuvj420p", "jpeg_quality": 85}
 
 - "crop": x, y, width and height of the rectangle to keep, in the file's stored orientation; null keeps everything.
 - "orientation": the EXIF orientation (1 to 8) to turn the image upright from.
 - "achromatic": true replaces every pixel by its BT.601 luma.
-- "jpeg_pixel_format": the subsampling of a JPEG at qscale 2 the image goes through ("yuvj420p", "yuvj422p" or
+- "jpeg_pixel_format": the subsampling of a JPEG the image goes through ("yuvj420p", "yuvj422p", "yuvj440p" or
   "yuvj444p"); null for none.
+- "jpeg_quality": that JPEG's IJG quality (1 to 100), as probe() and compression_history() report it; libjpeg-turbo
+  encodes with libjpeg's tables at it. Required with "jpeg_pixel_format".
 
 Every file is decoded to sRGB rgb24 (ICC profiles converted, alpha over black, swscale's bicubic chroma upsampler).
 Each result is written to the output directory as a uint8 array of shape (height, width, 3), in a .npy file named by
@@ -70,10 +72,10 @@ def spec_for(steps):
         spec.add(lossylab.AchromaticOptions())
     if steps.get("jpeg_pixel_format") is not None:
         jpeg = lossylab.RoundtripImageConfiguration()
-        jpeg.encode.codec = lossylab.ImageCodec.Mjpeg
+        jpeg.encode.codec = lossylab.ImageCodec.Jpeg
         jpeg.encode.pixel_format = lossylab.PixelFormat.from_name(steps["jpeg_pixel_format"])
         jpeg.encode.color = jpeg_color()
-        jpeg.encode.rate_control = lossylab.RateControl.quality(2)
+        jpeg.encode.rate_control = lossylab.RateControl.quality(steps["jpeg_quality"])
         jpeg.encode.strict = lossylab.Strict.AllowRecorded
         jpeg.decode.conversion = to_srgb24()
         spec.add(jpeg)

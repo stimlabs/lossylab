@@ -46,7 +46,9 @@ namespace lossylab
                                        std::int64_t max_rate,
                                        std::int64_t buffer_size);
 
-        /// Image codecs' quality scale, in each encoder's own units: MJPEG's
+        /// Image codecs' quality scale, in each encoder's own units: JPEG's
+        /// IJG quality (an integer from 1 to 100, higher is better, the one
+        /// probe() and compression_history() report), MJPEG's
         /// qscale (an integer from 1 to 31, lower is better), WebP's quality
         /// (0 to 100, higher is better; for lossless WebP an effort), JPEG
         /// XL's Butteraugli distance (0.01 to 15, lower is better), and for
@@ -184,7 +186,8 @@ namespace lossylab
 
         /// As for EncodeVideoOptions. Lossy WebP takes yuv420p or yuva420p
         /// and lossless WebP bgra, the formats libwebp encodes without a
-        /// conversion of its own.
+        /// conversion of its own; JPEG takes yuvj420p, yuvj422p, yuvj440p or
+        /// yuvj444p, which libjpeg-turbo takes as they are.
         PixelFormat pixel_format;
 
         /// As for EncodeVideoOptions. A format that cannot signal color
@@ -197,7 +200,8 @@ namespace lossylab
         KernelSpec chroma_down{Kernel::Area, {}};
 
         /// Encode losslessly. PNG requires it; WebP, JPEG XL and JPEG 2000
-        /// (the reversible 5/3 wavelet) support it; MJPEG and AVIF refuse it.
+        /// (the reversible 5/3 wavelet) support it; JPEG, MJPEG and AVIF
+        /// refuse it.
         /// PNG, lossless JPEG XL and lossless JPEG 2000 have no quality
         /// parameter, and ignore the rate control. Lossy JPEG 2000 takes a
         /// quality that is FFmpeg's nominal compression ratio (layer_rates),

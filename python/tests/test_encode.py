@@ -1,3 +1,4 @@
+import io
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +30,14 @@ def mjpeg_options(qscale):
     return options
 
 
+def jpeg_options(quality, pixel_format):
+    options = lossylab.EncodeImageOptions()
+    options.codec = lossylab.ImageCodec.Jpeg
+    options.pixel_format = lossylab.PixelFormat.from_name(pixel_format)
+    options.rate_control = lossylab.RateControl.quality(quality)
+    return options
+
+
 def moving_clip(frame_count):
     frames = []
     for index in range(frame_count):
@@ -52,6 +61,33 @@ def test_encode_image_returns_a_file_and_its_record():
 
     decoded = lossylab.decode_image(lossylab.Source.from_bytes(encoded.bytes)).frame
     assert (decoded.width(), decoded.height()) == (64, 48)
+
+
+def test_jpeg_encodes_at_an_ijg_quality():
+    encoded = lossylab.encode_image(jpeg_ready_frame(), jpeg_options(85, "yuvj420p"))
+    assert encoded.bytes[:2] == b"\xff\xd8"
+    assert encoded.record.implementation == "libjpeg-turbo"
+    assert encoded.record.evidence.resolved.options["quality"] == "85"
+
+    jpeg = lossylab.probe(lossylab.Source.from_bytes(encoded.bytes)).streams[0].jpeg
+    assert jpeg.ijg_quality == 85
+    assert jpeg.ijg_quality_exact
+
+
+@pytest.mark.parametrize("quality", [1, 10, 50, 75, 95, 100])
+def test_jpeg_writes_the_bytes_pillow_writes_for_the_same_ycbcr(quality):
+    image_module = pytest.importorskip("PIL.Image")
+    rgb = lossylab.decode_image(lossylab.Source.from_path(str(DATA_DIR / "testsrc_64x48.png"))).frame
+    frame = lossylab.convert(rgb, lossylab.PixelFormat.from_name("yuvj444p"), bt601(lossylab.ColorRange.Full)).frame
+    encoded = lossylab.encode_image(frame, jpeg_options(quality, "yuvj444p"))
+
+    # 4:4:4 YCbCr goes through Pillow's libjpeg-turbo without a conversion or resampling as well.
+    ycbcr = np.stack([np.asarray(frame.plane(index)) for index in range(3)], axis=-1)
+    pillow_bytes = io.BytesIO()
+    image_module.frombytes("YCbCr", (frame.width(), frame.height()), ycbcr.tobytes()).save(
+        pillow_bytes, format="JPEG", quality=quality, subsampling=0
+    )
+    assert encoded.bytes == pillow_bytes.getvalue()
 
 
 def test_an_image_roundtrip_is_one_record():

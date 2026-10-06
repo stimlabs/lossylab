@@ -75,6 +75,28 @@ namespace lossylab::detail
                    subsampling != Subsampling::Gray;
         }
 
+        /// What either JPEG encoder can carry: lossy, full range, BT.601 and
+        /// centered chroma, none of which JPEG signals.
+        void require_jpeg(const EncodeImageOptions& options, const PixelFormat& pixel_format, const ColorSpec& color)
+        {
+            if (options.lossless)
+            {
+                throw ConfigError("encode_image() has no lossless JPEG");
+            }
+            if (color.range != ColorRange::Full)
+            {
+                throw ConfigError("JPEG stores full-range samples; convert to full range first");
+            }
+            if (!is_bt601(color.matrix))
+            {
+                throw ConfigError("JPEG implies the BT.601 matrix, and cannot signal " + color.describe());
+            }
+            if (has_subsampled_chroma(pixel_format) && color.chroma_location != ChromaLocation::Center)
+            {
+                throw ConfigError("JPEG implies centered chroma, and cannot signal " + color.describe());
+            }
+        }
+
         /// Adds the caller's encoder options, which may not override one the
         /// library derived from the rate control or GOP structure.
         void add_caller_options(EncoderPlan& plan, const std::map<std::string, std::string>& caller_options)
@@ -151,27 +173,24 @@ namespace lossylab::detail
             plan.extension = "png";
             break;
 
+        case ImageCodec::Jpeg:
+        {
+            require_jpeg(options, pixel_format, color);
+            require_mode(rate_control, {RateControl::Mode::Quality}, encoder_name);
+            const QualityScale scale{1, 100, true, "an IJG quality, an integer from 1 to 100, higher is better",
+                                     true};
+            plan.setup.ijg_quality = static_cast<int>(scaled_value(rate_control, encoder_name, scale, plan));
+            plan.block_grid = BlockGrid::for_kind(BlockGridKind::Dct8);
+            plan.extension = "jpg";
+            break;
+        }
+
         case ImageCodec::Mjpeg:
         {
-            if (options.lossless)
-            {
-                throw ConfigError("encode_image() has no lossless JPEG");
-            }
+            require_jpeg(options, pixel_format, color);
             require_mode(rate_control, {RateControl::Mode::Quality}, encoder_name);
             const QualityScale scale{1, 31, true, "qscale, an integer from 1 to 31, lower is better"};
             const int qscale = static_cast<int>(scaled_value(rate_control, encoder_name, scale, plan));
-            if (color.range != ColorRange::Full)
-            {
-                throw ConfigError("JPEG stores full-range samples; convert to full range first");
-            }
-            if (!is_bt601(color.matrix))
-            {
-                throw ConfigError("JPEG implies the BT.601 matrix, and cannot signal " + color.describe());
-            }
-            if (has_subsampled_chroma(pixel_format) && color.chroma_location != ChromaLocation::Center)
-            {
-                throw ConfigError("JPEG implies centered chroma, and cannot signal " + color.describe());
-            }
             plan.setup.fixed_qscale = qscale;
             plan.setup.qmin = qscale;
             plan.setup.qmax = qscale;

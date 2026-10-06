@@ -9,6 +9,7 @@ namespace lossylab
         switch (codec)
         {
         case ImageCodec::Png: return "png";
+        case ImageCodec::Jpeg: return "jpeg";
         case ImageCodec::Mjpeg: return "mjpeg";
         case ImageCodec::WebP: return "webp";
         case ImageCodec::Avif: return "avif";
@@ -63,7 +64,8 @@ namespace lossylab
     ImageCodec image_codec_from_string(const std::string_view name)
     {
         if (name == "png") { return ImageCodec::Png; }
-        if (name == "mjpeg" || name == "jpeg") { return ImageCodec::Mjpeg; }
+        if (name == "jpeg" || name == "jpg") { return ImageCodec::Jpeg; }
+        if (name == "mjpeg") { return ImageCodec::Mjpeg; }
         if (name == "webp") { return ImageCodec::WebP; }
         if (name == "avif") { return ImageCodec::Avif; }
         if (name == "jxl" || name == "jpegxl") { return ImageCodec::Jxl; }
@@ -108,7 +110,7 @@ namespace lossylab
 
     std::vector<ImageCodec> all_image_codecs()
     {
-        return {ImageCodec::Png, ImageCodec::Mjpeg, ImageCodec::WebP,
+        return {ImageCodec::Png, ImageCodec::Jpeg, ImageCodec::Mjpeg, ImageCodec::WebP,
                 ImageCodec::Avif, ImageCodec::Jxl, ImageCodec::Heif, ImageCodec::Jpeg2000};
     }
 
@@ -122,6 +124,7 @@ namespace lossylab
         switch (codec)
         {
         case ImageCodec::Png: return {"png"};
+        case ImageCodec::Jpeg: return {"libjpeg-turbo"};
         case ImageCodec::Mjpeg: return {"mjpeg"};
         case ImageCodec::WebP: return {"libwebp", "libwebp_anim"};
         // libaom first: it is the encoder libavif uses, and the only one that
@@ -199,6 +202,7 @@ namespace lossylab
         switch (codec)
         {
         case ImageCodec::Png: return {"png"};
+        case ImageCodec::Jpeg:
         case ImageCodec::Mjpeg: return {"mjpeg"};
         case ImageCodec::WebP: return {"webp", "libwebp"};
         case ImageCodec::Avif: return {"libdav1d", "av1"};
