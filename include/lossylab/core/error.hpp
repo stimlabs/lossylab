@@ -28,6 +28,10 @@ namespace lossylab
     public:
         UnsupportedCapability(std::string kind, std::string name, std::string identity_hash);
 
+        /// For a capability lossylab itself lacks, whatever the FFmpeg build:
+        /// `message` replaces the default "not available in this FFmpeg build".
+        UnsupportedCapability(std::string kind, std::string name, std::string identity_hash, std::string message);
+
         /// "encoder", "decoder", "filter", "hwaccel", "backend", "muxer".
         [[nodiscard]] const std::string& kind() const noexcept { return m_kind; }
         [[nodiscard]] const std::string& name() const noexcept { return m_name; }

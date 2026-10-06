@@ -32,6 +32,17 @@ namespace lossylab
     {
     }
 
+    UnsupportedCapability::UnsupportedCapability(std::string kind,
+                                                 std::string name,
+                                                 std::string identity_hash,
+                                                 std::string message)
+        : Error(std::move(message)),
+          m_kind(std::move(kind)),
+          m_name(std::move(name)),
+          m_identity_hash(std::move(identity_hash))
+    {
+    }
+
     ConversionRefused::ConversionRefused(std::string from, std::string to, std::string context)
         : Error(refused_message(from, to, context)),
           m_from(std::move(from)),

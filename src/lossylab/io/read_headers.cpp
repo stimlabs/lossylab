@@ -652,7 +652,9 @@ namespace lossylab
         info.codec_name = codec_name != nullptr ? codec_name : "unknown";
         if (!is_interpreted(codec_id))
         {
-            throw UnsupportedCapability("bitstream parser", info.codec_name, build_info().identity_hash);
+            throw UnsupportedCapability("bitstream parser", info.codec_name, build_info().identity_hash,
+                                        "read_headers() does not interpret '" + info.codec_name +
+                                            "'; it reads H.264, HEVC, MPEG-2, VP9 and AV1");
         }
 
         for (unsigned int index = 0; index < format.nb_streams; ++index)

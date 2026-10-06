@@ -51,7 +51,7 @@ def test_to_dict_carries_the_schema_version():
 
 
 def test_an_uninterpreted_codec_raises_unsupported_capability():
-    with pytest.raises(lossylab.UnsupportedCapability):
+    with pytest.raises(lossylab.UnsupportedCapability, match=r"read_headers\(\) does not interpret 'png'"):
         read_fixture("testsrc_64x48.png")
 
 

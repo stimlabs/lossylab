@@ -200,6 +200,7 @@ namespace
         catch (const UnsupportedCapability& error)
         {
             assert(error.name() == "png");
+            assert(std::string(error.what()).starts_with("read_headers() does not interpret 'png'"));
         }
     }
 
