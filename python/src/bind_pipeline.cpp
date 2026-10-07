@@ -46,12 +46,18 @@ namespace lossylab::pybind
             .def_rw("frame", &PipelineResult::frame)
             .def_rw("record", &PipelineResult::record);
 
+        nb::enum_<RecordDetail>(m, "RecordDetail")
+            .value("Full", RecordDetail::Full)
+            .value("Lean", RecordDetail::Lean);
+
         nb::class_<Pipeline>(m, "Pipeline")
             .def(nb::init<PipelineSpec>(), "spec"_a)
-            .def("run", nb::overload_cast<const Source&, std::uint64_t>(&Pipeline::run, nb::const_), "source"_a,
-                 "seed"_a = 0, nb::call_guard<nb::gil_scoped_release>())
-            .def("run", nb::overload_cast<const Frame&, std::uint64_t>(&Pipeline::run, nb::const_), "frame"_a,
-                 "seed"_a = 0, nb::call_guard<nb::gil_scoped_release>())
+            .def("run", nb::overload_cast<const Source&, std::uint64_t, RecordDetail>(&Pipeline::run, nb::const_),
+                 "source"_a, "seed"_a = 0, "record_detail"_a = RecordDetail::Full,
+                 nb::call_guard<nb::gil_scoped_release>())
+            .def("run", nb::overload_cast<const Frame&, std::uint64_t, RecordDetail>(&Pipeline::run, nb::const_),
+                 "frame"_a, "seed"_a = 0, "record_detail"_a = RecordDetail::Full,
+                 nb::call_guard<nb::gil_scoped_release>())
             .def("spec", &Pipeline::spec, nb::rv_policy::reference_internal);
     }
 }

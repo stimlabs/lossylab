@@ -173,9 +173,11 @@ namespace lossylab::pybind
         bind_file_result<PipelineResult>(m, "PipelineFileResult");
         m.def(
             "capture_run",
-            [](const Source& source, const Pipeline& pipeline, const std::uint64_t seed)
-            { return capture("pipeline", source, [&] { return pipeline.run(source, seed); }); },
-            "source"_a, "pipeline"_a, "seed"_a = 0, nb::call_guard<nb::gil_scoped_release>(),
-            "pipeline.run(source, seed), with any exception it raises returned as a FileError instead.");
+            [](const Source& source, const Pipeline& pipeline, const std::uint64_t seed, const RecordDetail detail)
+            { return capture("pipeline", source, [&] { return pipeline.run(source, seed, detail); }); },
+            "source"_a, "pipeline"_a, "seed"_a = 0, "record_detail"_a = RecordDetail::Full,
+            nb::call_guard<nb::gil_scoped_release>(),
+            "pipeline.run(source, seed, record_detail), with any exception it raises returned as a FileError "
+            "instead.");
     }
 }

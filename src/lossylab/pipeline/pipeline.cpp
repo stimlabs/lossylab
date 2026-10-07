@@ -67,10 +67,17 @@ namespace lossylab
                 configuration);
         }
 
-        /// Runs the stages from `first` on, then states the seed and the
-        /// output's hash.
+        /// The record a run starts from: with the build and machine for a
+        /// full record, empty for a lean one.
+        ProcessingRecord initial_record(const RecordDetail detail)
+        {
+            return detail == RecordDetail::Full ? ProcessingRecord::for_this_build() : ProcessingRecord{};
+        }
+
+        /// Runs the stages from `first` on, then states the seed and, for a
+        /// full record, the output's hash.
         PipelineResult run_stages(const PipelineSpec& spec, const std::size_t first, Frame frame,
-                                  ProcessingRecord record, const std::uint64_t seed)
+                                  ProcessingRecord record, const std::uint64_t seed, const RecordDetail detail)
         {
             for (std::size_t index = first; index < spec.size(); ++index)
             {
@@ -80,7 +87,10 @@ namespace lossylab
             }
             record.validate_continuity();
             record.set_seed(seed);
-            record.set_output_sha256(frame.samples_sha256());
+            if (detail == RecordDetail::Full)
+            {
+                record.set_output_sha256(frame.samples_sha256());
+            }
             return PipelineResult{std::move(frame), std::move(record)};
         }
     }
@@ -103,7 +113,7 @@ namespace lossylab
         return m_impl->spec;
     }
 
-    PipelineResult Pipeline::run(const Source& source, const std::uint64_t seed) const
+    PipelineResult Pipeline::run(const Source& source, const std::uint64_t seed, const RecordDetail detail) const
     {
         const PipelineSpec& spec = m_impl->spec;
         const auto* decode_options = std::get_if<DecodeImageOptions>(&spec.stages().front().configuration);
@@ -116,11 +126,14 @@ namespace lossylab
             throw ConfigError("the pipeline spec was written for " + *spec.source_sha256() + ", not for " +
                               source.sha256());
         }
-        const DecodedImage decoded = decode_image(source, *decode_options);
-        return run_stages(spec, 1, decoded.frame, decoded.processing_record(), seed);
+        DecodedImage decoded = decode_image(source, *decode_options);
+        ProcessingRecord record = initial_record(detail);
+        record.set_origin(std::move(decoded.probe));
+        record.append(std::move(decoded.record), std::move(decoded.configuration));
+        return run_stages(spec, 1, std::move(decoded.frame), std::move(record), seed, detail);
     }
 
-    PipelineResult Pipeline::run(const Frame& frame, const std::uint64_t seed) const
+    PipelineResult Pipeline::run(const Frame& frame, const std::uint64_t seed, const RecordDetail detail) const
     {
         const PipelineSpec& spec = m_impl->spec;
         if (frame.empty())
@@ -131,6 +144,6 @@ namespace lossylab
         {
             throw ConfigError("Pipeline::run() on a frame cannot start with a decode");
         }
-        return run_stages(spec, 0, frame, ProcessingRecord::for_this_build(), seed);
+        return run_stages(spec, 0, frame, initial_record(detail), seed, detail);
     }
 }

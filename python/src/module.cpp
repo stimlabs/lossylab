@@ -12,8 +12,9 @@ NB_MODULE(_lossylab, m)
     lossylab::pybind::bind_io(m);
     lossylab::pybind::bind_video_reader(m);
     lossylab::pybind::bind_measure(m);
-    lossylab::pybind::bind_file_result(m);
     lossylab::pybind::bind_convert(m);
     lossylab::pybind::bind_encode(m);
     lossylab::pybind::bind_pipeline(m);
+    // After bind_pipeline: capture_run's default record_detail needs RecordDetail bound.
+    lossylab::pybind::bind_file_result(m);
 }

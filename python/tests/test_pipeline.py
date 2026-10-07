@@ -76,7 +76,9 @@ def test_the_array_is_a_copy_when_rows_are_padded():
     pixels = frame.to_numpy()
     assert pixels.shape == (5, 33, 3) and pixels.flags.c_contiguous
     assert numpy.all(pixels == 7)
-    planar = lossylab.Frame.allocate(4, 4, lossylab.PixelFormat.from_name("yuv420p"), lossylab.ColorSpec.bt709_limited())
+    planar = lossylab.Frame.allocate(
+        4, 4, lossylab.PixelFormat.from_name("yuv420p"), lossylab.ColorSpec.bt709_limited()
+    )
     with pytest.raises(lossylab.ConfigError):
         planar.to_numpy()
 
@@ -117,3 +119,39 @@ def test_a_pipeline_on_a_frame_skips_the_decode():
     result = lossylab.Pipeline(spec).run(frame)
     assert result.record.origin is None
     assert result.frame.to_numpy().shape == (48, 64, 3)
+
+
+def test_a_lean_record_leaves_out_the_build_and_the_hash():
+    source = lossylab.Source.from_path(str(JPEG))
+    pipeline = lossylab.Pipeline(_equalization())
+    full = pipeline.run(source, seed=5)
+    lean = pipeline.run(source, seed=5, record_detail=lossylab.RecordDetail.Lean)
+
+    assert numpy.array_equal(lean.frame.to_numpy(), full.frame.to_numpy())
+    assert [stage.kind for stage in lean.record.stages()] == [stage.kind for stage in full.record.stages()]
+    assert lean.record.seed == 5
+    assert lean.record.origin is not None
+    assert lean.record.build is None and lean.record.diagnostics is None
+    assert lean.record.output_sha256 is None
+    assert full.record.build is not None
+
+    replay = lossylab.PipelineSpec.from_record(lean.record)
+    assert pipeline.run(source).record.output_sha256 == lossylab.Pipeline(replay).run(source).record.output_sha256
+
+    captured = lossylab.capture_run(source, pipeline, seed=5, record_detail=lossylab.RecordDetail.Lean)
+    assert captured.ok()
+    assert captured.value().record.output_sha256 is None
+
+
+def test_an_array_runs_through_a_pipeline():
+    pixels = numpy.random.default_rng(0).integers(0, 256, size=(24, 40, 3), dtype=numpy.uint8)
+    spec = lossylab.PipelineSpec()
+    crop = lossylab.CropOptions()
+    crop.x, crop.y, crop.width, crop.height = 8, 4, 16, 8
+    spec.add(crop)
+
+    result = lossylab.Pipeline(spec).run(lossylab.Frame.from_numpy(pixels), record_detail=lossylab.RecordDetail.Lean)
+    output = result.frame.to_numpy(writable=True)
+    assert numpy.array_equal(output, pixels[4:12, 8:24])
+    assert output.flags.writeable
+    assert numpy.array_equal(numpy.from_dlpack(result.frame), pixels[4:12, 8:24])

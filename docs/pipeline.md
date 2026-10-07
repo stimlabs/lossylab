@@ -50,8 +50,8 @@ else:
 The array is an ordinary NumPy array, so any writer that takes one (an HDF5 dataset, a memory map) can store it. [examples/equalize.py](../examples/equalize.py) runs a whole steps file on a thread pool.
 
 - `Pipeline(spec)` validates the spec against this build before anything runs. It checks that there are stages, that a decode comes first or not at all, that every stage can run in a pipeline, and that the build has every encoder and backend the spec names. `spec.validate()` runs the same check without building a pipeline.
-- `run(source, seed=0)` needs a decode as the first stage. `run(frame, seed=0)` starts from a frame and must not have one.
-- `capture_run(source, pipeline, seed=0)` returns a failing file as a `FileError` instead of raising. Use it on a thread pool; `run` releases the GIL.
+- `run(source, seed=0, record_detail=RecordDetail.Full)` needs a decode as the first stage. `run(frame, ...)` starts from a frame and must not have one. See [Record detail](#record-detail) for `record_detail`.
+- `capture_run(source, pipeline, seed=0, record_detail=RecordDetail.Full)` returns a failing file as a `FileError` instead of raising. Use it on a thread pool; `run` releases the GIL.
 - `PipelineSpec.to_dict()` and `from_dict()` (or `parse()` for JSON text) store and load a spec.
 - `add(options, label="")` appends a stage and returns the spec. The label tells apart several stages of the same kind and appears in error messages.
 
@@ -193,9 +193,42 @@ All of them derive from `lossylab.Error`. `capture_run()` returns every error `r
 
 `from_dict()` and `parse()` accept the same document. `source_sha256` and `label` may be left out; every configuration field must be present, and a missing one raises `RuntimeError` naming the key (`key 'y' not found`). Write a spec with `to_dict()` rather than by hand.
 
+## Arrays in and out
+
+A pipeline can run inside a dataloader on pixels that are already decoded, and hand its output to any array library:
+
+```python
+import numpy
+import lossylab
+
+
+class Degrade:
+    def __init__(self, spec_dict):
+        self.spec_dict = spec_dict  # a stored spec without a decode stage
+
+    def __call__(self, pixels: numpy.ndarray) -> numpy.ndarray:
+        pipeline = lossylab.Pipeline(lossylab.PipelineSpec.from_dict(self.spec_dict))
+        result = pipeline.run(lossylab.Frame.from_numpy(pixels), record_detail=lossylab.RecordDetail.Lean)
+        return result.frame.to_numpy(writable=True)
+```
+
+- `Frame.from_numpy(array)` copies a uint8 array of shape (height, width, 3) into an sRGB rgb24 frame, with no ICC profile, no orientation and square pixels. The array may have any strides, so a slice or a BGR view (`array[..., ::-1]`) works. Any other dtype or shape raises `ConfigError` naming it.
+- `Frame.to_numpy()` is read-only. `to_numpy(writable=True)` returns an array that may be written to: a view of the frame when its rows carry no padding, a copy otherwise. A frame sharing its buffer is detached first. Whether writes reach the frame depends on that padding; change a frame through `writable_plane()`.
+- A frame with one plane of whole-byte samples (rgb24, gray, ...) implements DLPack: `numpy.from_dlpack(frame)`, or any other library's `from_dlpack`, takes it without a copy, padding included. The export is writable, and a frame sharing its buffer is detached first.
+- Building a `Pipeline` costs only the check against this build's capabilities, which are enumerated once per process, so a pipeline can be built per call.
+
+## Record detail
+
+`record_detail` sets what a run puts in its record:
+
+- `RecordDetail.Full`, the default: every stage with its evidence and configuration, the seed, the origin of a decode, the build and machine (`record.build`, `record.diagnostics`) and `record.output_sha256`.
+- `RecordDetail.Lean`: the same, without the build, the machine and the output hash. These are the costly parts per sample: the build's identity is the same for every run of a worker, and the hash reads every output sample. Store `lossylab.build_info().to_dict()` once per worker instead.
+
+Both check that each stage's input is the previous stage's output. `PipelineSpec.from_record()` replays a lean record like a full one.
+
 ## Output and replay
 
-- `record.output_sha256` is `Frame.samples_sha256()` of the output: a SHA-256 over its description and its samples, row by row without padding.
+- `record.output_sha256` is `Frame.samples_sha256()` of the output: a SHA-256 over its description and its samples, row by row without padding. A lean record leaves it unset.
 - `record.seed` is the seed `run()` was given. A stage that draws at random will derive its own stream from the seed and its position, so one seed reproduces the whole run. No stage draws at random yet.
 - `PipelineSpec.from_record(record)` turns a record back into its spec: the configurations the stages ran with, and the source's hash from the decode. Running it on the same file with the same build gives the same `output_sha256`.
 - `spec.spec_id()` is a SHA-256 of the spec. Two specs with the same id run the same stages, with the same options, in the same order. Two specs compare equal with `==` when their `to_dict()` is equal.

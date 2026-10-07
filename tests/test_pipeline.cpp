@@ -133,6 +133,39 @@ namespace
         assert(!result.record.origin().has_value());
         assert(result.record.output_sha256().has_value());
     }
+
+    void test_a_lean_record_leaves_out_the_build_and_the_hash()
+    {
+        const Source source = Source::from_path(data_path("testsrc_64x48_q75.jpg"));
+        const Pipeline pipeline(equalization());
+        const PipelineResult full = pipeline.run(source, 7);
+        const PipelineResult lean = pipeline.run(source, 7, RecordDetail::Lean);
+
+        assert(lean.frame.samples_sha256() == full.frame.samples_sha256());
+        assert(lean.record.size() == full.record.size());
+        for (std::size_t index = 0; index < lean.record.size(); ++index)
+        {
+            assert(lean.record.stages()[index].kind() == full.record.stages()[index].kind());
+        }
+        assert(lean.record.origin().has_value());
+        assert(lean.record.seed() == std::optional<std::uint64_t>(7));
+        assert(lean.record.build().is_null() && lean.record.diagnostics().is_null());
+        assert(!lean.record.output_sha256().has_value());
+        assert(!full.record.build().is_null());
+
+        // A lean record replays to the full run's output.
+        const PipelineSpec replay = PipelineSpec::from_record(lean.record);
+        assert(Pipeline(replay).run(source).record.output_sha256() == full.record.output_sha256());
+
+        const Frame frame = decode_image(Source::from_path(data_path("testsrc_64x48.png"))).frame;
+        PipelineSpec spec;
+        spec.add(CropOptions{0, 0, 8, 8}).add(AchromaticOptions{});
+        const PipelineResult lean_frame = Pipeline(spec).run(frame, 0, RecordDetail::Lean);
+        assert(lean_frame.record.size() == 2);
+        assert(lean_frame.record.build().is_null());
+        assert(!lean_frame.record.output_sha256().has_value());
+        assert(lean_frame.frame.samples_sha256() == Pipeline(spec).run(frame).record.output_sha256());
+    }
 }
 
 int main()
@@ -141,4 +174,5 @@ int main()
     test_a_run_and_its_replays_give_the_same_pixels();
     test_a_spec_refuses_another_file_and_the_wrong_start();
     test_a_frame_runs_without_a_decode();
+    test_a_lean_record_leaves_out_the_build_and_the_hash();
 }
