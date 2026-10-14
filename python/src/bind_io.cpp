@@ -97,7 +97,8 @@ namespace lossylab::pybind
                  nb::sig("def primary_video_stream(self) -> StreamInfo | None"))
             .def("primary_tile_grid", &ProbeResult::primary_tile_grid, nb::rv_policy::reference_internal,
                  nb::sig("def primary_tile_grid(self) -> TileGrid | None"))
-            .def("additional_images", &ProbeResult::additional_images);
+            .def("additional_images", &ProbeResult::additional_images)
+            .def_static("from_dict", [](nb::dict value) { return ProbeResult::from_json(to_json(value)); });
 
         m.def("probe", &probe, "source"_a, nb::call_guard<nb::gil_scoped_release>());
 

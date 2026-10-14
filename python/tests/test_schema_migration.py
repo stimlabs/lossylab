@@ -36,6 +36,16 @@ def test_schema_version_error_is_a_config_error():
     assert issubclass(lossylab.SchemaVersionError, lossylab.ConfigError)
 
 
+def test_a_probe_result_round_trips_and_checks_the_version():
+    probe = lossylab.probe(lossylab.Source.from_path(str(RECORDS_DIR.parent / "testsrc_64x48.jpg")))
+    stored = probe.to_dict()
+    assert lossylab.ProbeResult.from_dict(stored).to_dict() == stored
+
+    stored["schema_version"] = 1
+    with pytest.raises(lossylab.SchemaVersionError):
+        lossylab.ProbeResult.from_dict(stored)
+
+
 def test_a_file_error_checks_the_version_too():
     error = lossylab.capture_probe(lossylab.Source.from_bytes(b"\x5a" * 256)).error()
     stored = error.to_dict()
