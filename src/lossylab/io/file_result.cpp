@@ -133,7 +133,8 @@ namespace lossylab
 
     FileError FileError::from_json(const json::Value& document)
     {
-        const json::Value value = schema_migrations().upgrade(document);
+        json::Value upgraded;
+        const json::Value& value = schema_migrations().upgrade(document, upgraded);
         FileError error;
         error.kind = file_error_kind_from_string(value.at("kind").get<std::string>());
         error.operation = value.at("operation").get<std::string>();

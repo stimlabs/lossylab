@@ -335,6 +335,19 @@ namespace
         assert(ProcessingRecord::from_json(written).to_json() == written);
     }
 
+    void test_a_schema_14_convert_states_what_happened_to_an_alpha_channel()
+    {
+        json::Value dropping = schema_14_record("record_schema14_image.json");
+        dropping["stages"][1]["input"]["pixel_format"] = "rgba";
+        const ProcessingRecord dropped = ProcessingRecord::from_json(dropping);
+        assert(std::get<ConvertEvidence>(dropped.stages()[1].evidence).alpha == "discarded");
+
+        json::Value keeping = dropping;
+        keeping["stages"][1]["output"]["pixel_format"] = "yuva420p";
+        const ProcessingRecord kept = ProcessingRecord::from_json(keeping);
+        assert(std::get<ConvertEvidence>(kept.stages()[1].evidence).alpha == "none");
+    }
+
     void test_a_schema_14_decode_with_half_a_target_takes_the_rest_from_its_output()
     {
         const ProcessingRecord migrated =
@@ -688,6 +701,7 @@ int main()
     test_a_schema_15_crop_after_another_grid_needs_a_block_corner_for_whole_blocks();
     test_a_schema_version_this_build_does_not_read_is_refused();
     test_a_schema_14_image_record_is_migrated_to_the_current_schema();
+    test_a_schema_14_convert_states_what_happened_to_an_alpha_channel();
     test_a_schema_14_decode_with_half_a_target_takes_the_rest_from_its_output();
     test_a_schema_14_video_roundtrip_is_migrated_to_the_current_schema();
     test_a_schema_14_decode_that_cannot_be_completed_is_refused();

@@ -596,7 +596,8 @@ namespace lossylab
 
     ProbeResult ProbeResult::from_json(const json::Value& value)
     {
-        return reflect::from_json<ProbeResult>(schema_migrations().upgrade(value));
+        json::Value upgraded;
+        return reflect::from_json<ProbeResult>(schema_migrations().upgrade(value, upgraded));
     }
 
     ProbeResult probe(const Source& source)

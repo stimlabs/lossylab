@@ -35,7 +35,7 @@ namespace lossylab
         }
     }
 
-    json::Value SchemaMigrations::upgrade(const json::Value& document) const
+    const json::Value& SchemaMigrations::upgrade(const json::Value& document, json::Value& storage) const
     {
         const auto stated = document.is_object() ? document.find("schema_version") : document.end();
         if (stated == document.end() || !stated->is_number_integer())
@@ -56,7 +56,13 @@ namespace lossylab
                                          std::to_string(m_oldest_supported) + ", and not migrated");
         }
 
-        json::Value upgraded = document;
+        if (version == schema_version)
+        {
+            return document;
+        }
+
+        storage = document;
+        json::Value& upgraded = storage;
         for (int from = version; from < schema_version; ++from)
         {
             const SchemaMigrationStep& step = m_steps[static_cast<std::size_t>(from - m_oldest_supported)];
@@ -76,6 +82,6 @@ namespace lossylab
             }
             upgraded["schema_version"] = from + 1;
         }
-        return upgraded;
+        return storage;
     }
 }

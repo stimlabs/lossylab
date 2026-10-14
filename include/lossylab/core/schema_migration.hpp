@@ -20,7 +20,7 @@ namespace lossylab
         /// The output type that refused, e.g. "ProcessingRecord".
         [[nodiscard]] const std::string& type_name() const noexcept { return m_type_name; }
 
-        /// The `schema_version` the document states; the step it could not leave for a refused migration.
+        /// The `schema_version` the document states, also when a migration step refused it on the way up.
         [[nodiscard]] int version() const noexcept { return m_version; }
 
     private:
@@ -67,9 +67,10 @@ namespace lossylab
         [[nodiscard]] const std::vector<SchemaMigrationStep>& steps() const noexcept { return m_steps; }
 
         /// The document in the current layout, with `schema_version` set to the current one; the argument is
-        /// untouched. Throws SchemaVersionError for a missing, non-integer, newer or unsupported version, and
-        /// when a step refuses.
-        [[nodiscard]] json::Value upgrade(const json::Value& document) const;
+        /// untouched. A document already in the current layout is returned as it is, without a copy; an older one
+        /// is copied into `storage`, upgraded there, and `storage` is returned. Throws SchemaVersionError for a
+        /// missing, non-integer, newer or unsupported version, and when a step refuses.
+        [[nodiscard]] const json::Value& upgrade(const json::Value& document, json::Value& storage) const;
 
     private:
         std::string m_type_name;

@@ -578,7 +578,8 @@ namespace lossylab
 
     ProcessingRecord ProcessingRecord::from_json(const json::Value& document)
     {
-        const json::Value value = schema_migrations().upgrade(document);
+        json::Value upgraded;
+        const json::Value& value = schema_migrations().upgrade(document, upgraded);
 
         ProcessingRecord record;
         record.m_build = json::member(value, "build");

@@ -34,6 +34,22 @@ namespace
         return json::object({{"schema_version", version}, {"old_field", 7}});
     }
 
+    json::Value upgraded_copy(const SchemaMigrations& migrations, const json::Value& document)
+    {
+        json::Value storage;
+        return migrations.upgrade(document, storage);
+    }
+
+    void upgrade_without_rewrite(const json::Value& document)
+    {
+        static_cast<void>(upgraded_copy(made_up_type(nullptr), document));
+    }
+
+    void upgrade_refusing(const json::Value& document)
+    {
+        static_cast<void>(upgraded_copy(made_up_type(refuse_with_reason), document));
+    }
+
     template <typename Callable>
     SchemaVersionError expect_refusal(Callable&& callable)
     {
@@ -54,7 +70,7 @@ namespace
         const SchemaMigrations migrations = made_up_type(rename_old_field);
         const json::Value input = document_at(schema_version - 1);
 
-        const json::Value upgraded = migrations.upgrade(input);
+        const json::Value upgraded = upgraded_copy(migrations, input);
 
         assert(upgraded.at("schema_version") == schema_version);
         assert(upgraded.at("new_field") == 7 && !upgraded.contains("old_field"));
@@ -63,41 +79,57 @@ namespace
 
     void test_a_step_without_a_rewrite_only_moves_the_version_on()
     {
-        const json::Value upgraded = made_up_type(nullptr).upgrade(document_at(schema_version - 1));
+        const json::Value upgraded = upgraded_copy(made_up_type(nullptr), document_at(schema_version - 1));
         assert(upgraded.at("schema_version") == schema_version && upgraded.at("old_field") == 7);
     }
 
-    void test_a_current_document_is_returned_as_it_is()
+    void test_a_current_document_is_returned_without_a_copy()
     {
+        const SchemaMigrations migrations = made_up_type(rename_old_field);
         const json::Value current = document_at(schema_version);
-        assert(made_up_type(rename_old_field).upgrade(current) == current);
+        json::Value storage;
+
+        const json::Value& returned = migrations.upgrade(current, storage);
+
+        assert(&returned == &current);
+        assert(storage.is_null());
+    }
+
+    void test_an_older_document_is_returned_from_the_storage()
+    {
+        const SchemaMigrations migrations = made_up_type(rename_old_field);
+        const json::Value older = document_at(schema_version - 1);
+        json::Value storage;
+
+        const json::Value& returned = migrations.upgrade(older, storage);
+
+        assert(&returned == &storage);
     }
 
     void test_a_newer_document_is_refused()
     {
         const SchemaVersionError error =
-            expect_refusal([] { static_cast<void>(made_up_type(nullptr).upgrade(document_at(schema_version + 1))); });
+            expect_refusal([] { upgrade_without_rewrite(document_at(schema_version + 1)); });
         assert(error.type_name() == "MadeUp" && error.version() == schema_version + 1);
     }
 
     void test_a_document_older_than_the_oldest_supported_is_refused()
     {
         const SchemaVersionError error =
-            expect_refusal([] { static_cast<void>(made_up_type(nullptr).upgrade(document_at(schema_version - 2))); });
+            expect_refusal([] { upgrade_without_rewrite(document_at(schema_version - 2)); });
         assert(error.version() == schema_version - 2);
     }
 
     void test_a_document_without_a_version_is_refused()
     {
-        expect_refusal([] { static_cast<void>(made_up_type(nullptr).upgrade(json::object({{"old_field", 7}}))); });
-        expect_refusal([] { static_cast<void>(made_up_type(nullptr).upgrade(document_at(1.5))); });
-        expect_refusal([] { static_cast<void>(made_up_type(nullptr).upgrade(json::Value::array())); });
+        expect_refusal([] { upgrade_without_rewrite(json::object({{"old_field", 7}})); });
+        expect_refusal([] { upgrade_without_rewrite(document_at(1.5)); });
+        expect_refusal([] { upgrade_without_rewrite(json::Value::array()); });
     }
 
     void test_a_step_that_refuses_names_the_type_the_versions_and_the_reason()
     {
-        const SchemaVersionError error = expect_refusal(
-            [] { static_cast<void>(made_up_type(refuse_with_reason).upgrade(document_at(schema_version - 1))); });
+        const SchemaVersionError error = expect_refusal([] { upgrade_refusing(document_at(schema_version - 1)); });
         const std::string message = error.what();
         assert(error.type_name() == "MadeUp");
         assert(message.find("old_field was renamed") != std::string::npos);
@@ -109,7 +141,7 @@ namespace
         bool caught_as_config_error = false;
         try
         {
-            static_cast<void>(made_up_type(refuse_with_reason).upgrade(document_at(schema_version - 1)));
+            upgrade_refusing(document_at(schema_version - 1));
         }
         catch (const ConfigError&)
         {
@@ -154,7 +186,8 @@ int main()
 {
     test_a_step_rewrites_the_document_and_moves_its_version_on();
     test_a_step_without_a_rewrite_only_moves_the_version_on();
-    test_a_current_document_is_returned_as_it_is();
+    test_a_current_document_is_returned_without_a_copy();
+    test_an_older_document_is_returned_from_the_storage();
     test_a_newer_document_is_refused();
     test_a_document_older_than_the_oldest_supported_is_refused();
     test_a_document_without_a_version_is_refused();
