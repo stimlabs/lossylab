@@ -185,9 +185,9 @@ namespace
         assert(record.total_compression_generations() == 1);
     }
 
-    /// A record as schema 15 wrote it: a 4:2:0 JPEG encode whose grid is the 8x8 transform block, then a 24x24
-    /// crop that measured itself against that grid.
-    json::Value schema_15_jpeg_then_crop_record_json()
+    /// A record as schema 15 wrote it: a 4:2:0 JPEG encode whose grid is the 8x8 transform block, then a square
+    /// crop at (crop_x, 0), a whole number of 8 pixel blocks, that measured itself against that grid.
+    json::Value schema_15_jpeg_then_crop_record_json(const int crop_x, const int crop_size)
     {
         ProcessingRecord record;
 
@@ -208,9 +208,9 @@ namespace
         crop.evidence = crop_evidence;
         crop.implementation = "lossylab";
         crop.input = encode.output;
-        crop.output = format(24, 24, "yuvj420p", ColorSpec::bt601_full());
-        crop.transform = CoordinateTransform::crop(0, 0);
-        record.append(crop, CropOptions{0, 0, 24, 24});
+        crop.output = format(crop_size, crop_size, "yuvj420p", ColorSpec::bt601_full());
+        crop.transform = CoordinateTransform::crop(crop_x, 0);
+        record.append(crop, CropOptions{crop_x, 0, crop_size, crop_size});
 
         json::Value as_json = record.to_json();
         as_json["schema_version"] = 15;
@@ -219,7 +219,7 @@ namespace
 
     void test_a_schema_15_record_is_migrated_to_the_current_schema()
     {
-        const ProcessingRecord migrated = ProcessingRecord::from_json(schema_15_jpeg_then_crop_record_json());
+        const ProcessingRecord migrated = ProcessingRecord::from_json(schema_15_jpeg_then_crop_record_json(0, 24));
 
         const BlockGrid& grid = *migrated.stages()[0].block_grid;
         assert(grid.kind == BlockGridKind::JpegMcu && grid.block_width == 16 && grid.block_height == 16);
@@ -231,6 +231,39 @@ namespace
         assert(migrated.effective_block_grid()->block_width == 16);
 
         assert(migrated.to_json().at("schema_version").get<std::int64_t>() == schema_version);
+
+        // 16 is a whole number of 16 pixel blocks, but x = 8 is not on a block corner of the 16 pixel grid.
+        const ProcessingRecord shifted = ProcessingRecord::from_json(schema_15_jpeg_then_crop_record_json(8, 16));
+        const CropEvidence& shifted_crop = std::get<CropEvidence>(shifted.stages()[1].evidence);
+        assert(shifted_crop.block_grid->phase_x == 8 && shifted_crop.block_grid->phase_y == 0);
+        assert(shifted_crop.whole_blocks == std::optional<bool>(false));
+    }
+
+    void test_a_schema_15_crop_after_another_grid_needs_a_block_corner_for_whole_blocks()
+    {
+        // A crop at x = 8 of a 16 pixel macroblock grid, 16 pixels wide: whole blocks in size only.
+        ProcessingRecord record;
+        const StageRecord encode = encode_stage(64, 64, BlockGridKind::Macroblock16);
+        append(record, encode);
+
+        StageRecord crop;
+        CropEvidence crop_evidence;
+        crop_evidence.block_grid = encode.block_grid->apply_transform(CoordinateTransform::crop(8, 0));
+        crop_evidence.whole_blocks = true;
+        crop.evidence = crop_evidence;
+        crop.implementation = "lossylab";
+        crop.input = encode.output;
+        crop.output = format(16, 16, "yuv420p", ColorSpec::bt709_limited());
+        crop.transform = CoordinateTransform::crop(8, 0);
+        record.append(crop, CropOptions{8, 0, 16, 16});
+
+        json::Value as_json = record.to_json();
+        as_json["schema_version"] = 15;
+        const ProcessingRecord migrated = ProcessingRecord::from_json(as_json);
+
+        const CropEvidence& migrated_crop = std::get<CropEvidence>(migrated.stages()[1].evidence);
+        assert(migrated_crop.block_grid->kind == BlockGridKind::Macroblock16 && migrated_crop.block_grid->phase_x == 8);
+        assert(migrated_crop.whole_blocks == std::optional<bool>(false));
     }
 
     void test_a_schema_version_this_build_does_not_read_is_refused()
@@ -652,6 +685,7 @@ int main()
     test_compression_generations_are_counted();
     test_a_lossy_origin_counts_toward_the_total_but_not_the_stage_count();
     test_a_schema_15_record_is_migrated_to_the_current_schema();
+    test_a_schema_15_crop_after_another_grid_needs_a_block_corner_for_whole_blocks();
     test_a_schema_version_this_build_does_not_read_is_refused();
     test_a_schema_14_image_record_is_migrated_to_the_current_schema();
     test_a_schema_14_decode_with_half_a_target_takes_the_rest_from_its_output();

@@ -34,6 +34,10 @@ def test_a_crop_records_where_the_prior_grid_falls():
     assert not misaligned.record.evidence.whole_blocks
     assert numpy.array_equal(numpy.asarray(misaligned.frame.plane(0)), numpy.asarray(rgb.plane(0))[3:23, 5:37])
 
+    shifted = lossylab.crop(rgb, _crop_options(5, 3, 32, 16), grid)
+    assert shifted.record.evidence.block_grid.phase_x != 0
+    assert not shifted.record.evidence.whole_blocks
+
     with pytest.raises(lossylab.ConfigError):
         lossylab.crop(rgb, _crop_options(40, 0, 32, 16))
 

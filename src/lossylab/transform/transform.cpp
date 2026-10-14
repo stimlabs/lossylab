@@ -45,9 +45,10 @@ namespace lossylab
         CropEvidence evidence;
         if (block_grid.has_value())
         {
-            evidence.block_grid = block_grid->apply_transform(record.transform);
-            evidence.whole_blocks =
-                options.width % block_grid->block_width == 0 && options.height % block_grid->block_height == 0;
+            const BlockGrid grid = block_grid->apply_transform(record.transform);
+            evidence.block_grid = grid;
+            evidence.whole_blocks = grid.valid && grid.phase_x == 0 && grid.phase_y == 0 &&
+                                    options.width % grid.block_width == 0 && options.height % grid.block_height == 0;
         }
         record.evidence = evidence;
         record.output = output.describe();

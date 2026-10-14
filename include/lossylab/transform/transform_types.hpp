@@ -26,9 +26,9 @@ namespace lossylab
         /// A nonzero phase means the crop does not start on a block corner.
         std::optional<BlockGrid> block_grid;
 
-        /// True when the crop's width and height are whole blocks of that
-        /// grid, so a rotation or flip afterwards keeps it starting on a
-        /// block corner too.
+        /// True when the crop is exactly a set of that grid's blocks: it
+        /// starts on a block corner and its width and height are whole
+        /// blocks. False for an invalid grid; nullopt when none was known.
         std::optional<bool> whole_blocks;
     };
 

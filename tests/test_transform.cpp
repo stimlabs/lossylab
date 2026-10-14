@@ -106,6 +106,12 @@ namespace
         assert(misaligned.block_grid->phase_x != 0 && misaligned.block_grid->phase_y != 0);
         assert(misaligned.whole_blocks == false);
 
+        // Whole blocks in size, but not starting on a block corner.
+        const CropEvidence shifted =
+            std::get<CropEvidence>(crop(rgb, CropOptions{5, 3, 32, 16}, grid).record.evidence);
+        assert(shifted.block_grid->phase_x != 0 && shifted.block_grid->phase_y != 0);
+        assert(shifted.whole_blocks == false);
+
         expect_throw<ConfigError>([&] { (void)crop(jpeg.frame, CropOptions{5, 3, 32, 20}); });
         assert(!std::get<CropEvidence>(crop(rgb, CropOptions{0, 0, 8, 8}).record.evidence).block_grid);
     }

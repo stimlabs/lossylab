@@ -404,10 +404,12 @@ namespace lossylab
                 {
                     if (const std::optional<BlockGrid> grid = earlier.effective_block_grid(); grid.has_value())
                     {
+                        const BlockGrid crop_grid = grid->apply_transform(stage.transform);
                         CropEvidence evidence;
-                        evidence.block_grid = grid->apply_transform(stage.transform);
-                        evidence.whole_blocks =
-                            crop->width % grid->block_width == 0 && crop->height % grid->block_height == 0;
+                        evidence.block_grid = crop_grid;
+                        evidence.whole_blocks = crop_grid.valid && crop_grid.phase_x == 0 &&
+                                                crop_grid.phase_y == 0 && crop->width % crop_grid.block_width == 0 &&
+                                                crop->height % crop_grid.block_height == 0;
                         stage.evidence = evidence;
                     }
                 }
@@ -546,6 +548,19 @@ namespace lossylab
                 configurations.push_back(configuration_from_json(stages[i].kind(), configuration_documents[i]));
             }
             migrate_jpeg_encode_grids(stages, configurations);
+
+            // Schema 15's `whole_blocks` held only whether the crop's width and height were whole blocks.
+            // Schema 16's also needs the crop to start on a block corner of a valid grid.
+            for (StageRecord& stage : stages)
+            {
+                if (auto* evidence = std::get_if<CropEvidence>(&stage.evidence);
+                    evidence != nullptr && evidence->block_grid.has_value() && evidence->whole_blocks.has_value())
+                {
+                    const BlockGrid& grid = *evidence->block_grid;
+                    evidence->whole_blocks =
+                        *evidence->whole_blocks && grid.valid && grid.phase_x == 0 && grid.phase_y == 0;
+                }
+            }
             document["stages"] = json::to_array(stages);
         }
     }
@@ -556,7 +571,8 @@ namespace lossylab
             "ProcessingRecord", 14,
             {{14, "decode targets became conversions, plus a seed, an output hash and conversion evidence",
               record_from_schema_14},
-             {15, "a JPEG encode's block grid became the minimum coded unit", record_from_schema_15}});
+             {15, "a JPEG encode's block grid became the minimum coded unit, and whole_blocks needs an aligned crop",
+              record_from_schema_15}});
         return migrations;
     }
 

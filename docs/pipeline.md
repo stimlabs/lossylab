@@ -126,7 +126,7 @@ The order of the stages is part of the result:
 
 - **Crop before an encode.** The new compression's grid then starts where the crop starts. A crop on the prior JPEG grid makes the new grid coincide with it, an aligned double compression.
 - **Orient before an encode.** A transposing orientation turns 4:2:2 into 4:4:0, so after an encode it would change the subsampling the encode produced.
-- **Crop before orient, when the crop is placed on the prior grid.** The grid is known in the file's stored orientation. A crop whose width and height are whole blocks keeps its grid after any rotation or flip.
+- **Crop before orient, when the crop is placed on the prior grid.** The grid is known in the file's stored orientation. A crop whose evidence has `whole_blocks` true stays on the grid after any rotation or flip.
 - **Colors and alpha before achromatic.** The luma is then computed from the sRGB colors.
 
 ## Decoding to sRGB rgb24
@@ -152,7 +152,7 @@ The four-argument `convert(frame, pixel_format, color, strict)` repackages the s
 A decoded JPEG records the grid of its minimum coded units as the decode stage's `block_grid`, of kind `JpegMcu`: 8×8 for 4:4:4 and gray, 16×8 for 4:2:2, 16×16 for 4:2:0. In a pipeline, a crop stage receives that grid. Its evidence holds:
 
 - `block_grid`: the grid in the crop's coordinates, with `kind`, `block_width`, `block_height`, `phase_x` and `phase_y`. A nonzero `phase_x` or `phase_y` means the crop does not start on a block corner. It is `None` when no grid was known, for example for a PNG source.
-- `whole_blocks`: whether the crop's width and height are whole blocks.
+- `whole_blocks`: whether the crop is exactly a set of the grid's blocks: both phases are 0 and its width and height are whole blocks. It is `False` when the grid is no longer valid, for example after a resize, and `None` when no grid was known.
 
 Misaligned crops are allowed. The evidence states them. To find the origin of an aligned crop, round `x` and `y` to multiples of the block size (16 for 4:2:0) before building the spec.
 
@@ -192,6 +192,85 @@ All of them derive from `lossylab.Error`. `capture_run()` returns every error `r
 ```
 
 `from_dict()` and `parse()` accept the same document. `source_sha256` and `label` may be left out; every configuration field must be present, and a missing one raises `RuntimeError` naming the key (`key 'y' not found`). Write a spec with `to_dict()` rather than by hand.
+
+## Specs anchored on a file's history
+
+`PipelineSpec.from_record()` copies the stages a record already ran. An augmentation does the opposite: it reads what the file's history is, and builds stages that answer it. The record of a run is not the template; the file's evidence is the anchor.
+
+`compression_history(image).evidence.traces` lists the lossy compressions the file went through, each with its `codec`, `quality` and `subsampling`. The spec's recompression depends on it:
+
+| The file's history                          | Recompression the spec adds                                                              |
+|---------------------------------------------|------------------------------------------------------------------------------------------|
+| No trace (PNG, lossless WebP): pristine     | Any lossy codec; it is the file's first compression                                      |
+| A JPEG trace at IJG quality *q*             | The same library at a quality away from *q*, so the new table does not repeat the old    |
+| A JPEG trace                                | `Mjpeg` instead of `Jpeg` (or the reverse): a different quantization table family        |
+| A JPEG trace                                | Another codec, such as WebP: a different library and transform                           |
+
+Two stages around it also follow from the file: the EXIF orientation (`image.stream().orientation`) becomes an `OrientOptions` stage, and a crop origin can be rounded to the prior JPEG grid (`image.record.block_grid`) or offset from it. See [Where a crop falls on the prior grid](#where-a-crop-falls-on-the-prior-grid).
+
+The caller draws the choice, so randomness stays outside the library. This function returns a spec from one file; a dataloader gives it an `rng` seeded per worker:
+
+```python
+import random
+
+import lossylab
+
+
+def srgb_rgb24():
+    conversion = lossylab.ConvertOptions()
+    conversion.pixel_format = lossylab.PixelFormat.from_name("rgb24")
+    conversion.color = lossylab.ColorSpec.srgb()
+    return conversion
+
+
+def roundtrip(codec, quality):
+    color = lossylab.ColorSpec.srgb()  # matrix and range as the codec requires, sRGB primaries and transfer
+    if codec == lossylab.ImageCodec.WebP:
+        color.matrix, color.range = lossylab.ColorMatrix.Bt470bg, lossylab.ColorRange.Limited
+        color.chroma_location, pixel_format = lossylab.ChromaLocation.Center, "yuv420p"
+    else:
+        color.matrix, color.range = lossylab.ColorMatrix.Bt470bg, lossylab.ColorRange.Full
+        color.chroma_location, pixel_format = lossylab.ChromaLocation.Center, "yuvj420p"
+    configuration = lossylab.RoundtripImageConfiguration()
+    configuration.encode.codec = codec
+    configuration.encode.pixel_format = lossylab.PixelFormat.from_name(pixel_format)
+    configuration.encode.color = color
+    configuration.encode.rate_control = lossylab.RateControl.quality(quality)
+    configuration.encode.strict = lossylab.Strict.AllowRecorded
+    configuration.decode.conversion = srgb_rgb24()
+    return configuration
+
+
+def recompression_spec(source, rng: random.Random):
+    image = lossylab.decode_image(source)
+    traces = lossylab.compression_history(image).evidence.traces
+    jpeg_traces = [trace for trace in traces if trace.codec == lossylab.ImageCodec.Mjpeg]
+
+    decode = lossylab.DecodeImageOptions()
+    decode.conversion = srgb_rgb24()
+    spec = lossylab.PipelineSpec()
+    spec.add(decode)
+    if image.stream().orientation:
+        upright = lossylab.OrientOptions()
+        upright.orientation = image.stream().orientation
+        spec.add(upright)
+
+    if jpeg_traces:  # JPEG already: another quality, a table at least 10 IJG steps away from the file's
+        prior = round(jpeg_traces[0].quality)
+        quality = rng.choice([value for value in range(30, 96, 5) if abs(value - prior) >= 10])
+        spec.add(roundtrip(lossylab.ImageCodec.Jpeg, quality), f"jpeg q{quality} after q{prior}")
+    else:  # pristine: its first lossy compression
+        spec.add(roundtrip(lossylab.ImageCodec.WebP, rng.randrange(40, 95)), "webp")
+    return spec
+
+
+source = lossylab.Source.from_path("photo.jpg")
+spec = recompression_spec(source, random.Random(7))
+result = lossylab.Pipeline(spec).run(source, record_detail=lossylab.RecordDetail.Lean)
+```
+
+- The label (`jpeg q55 after q90`) names the history the stage answers. The record does not store that history, so keep `compression_history(image).to_dict()` beside it.
+- `compression_history()` analyzes the pixels when a file has no JPEG header tables, which costs time per file. For a dataset, compute the anchors once in an audit pass and store them; the dataloader builds each spec from the stored anchors.
 
 ## Arrays in and out
 
