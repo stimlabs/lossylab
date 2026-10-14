@@ -55,5 +55,5 @@ When two records of the same input disagree, the record must say where to look:
 ## Rules
 
 - JSON field names are the C++ member names, never renamed. A stage's `"kind"` is the one computed field: it is the type of its evidence.
-- Every record states its `schema_version`. A change to the layout bumps it.
+- Every record states its `schema_version`. A change to the layout, or to what a field means, bumps it. `ProcessingRecord.from_dict()` upgrades the previous schema (15) to the current one on load and raises `ConfigError` for any other version, so `to_dict()` always writes the current schema with data that follows it. Schema 16 records a JPEG encode's block grid as the minimum coded unit (`jpeg_mcu`, 16×16 for 4:2:0), where 15 recorded the 8×8 transform block.
 - Values are the resolved ones, never as the caller passed them.

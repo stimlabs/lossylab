@@ -180,7 +180,7 @@ namespace lossylab::detail
             const QualityScale scale{1, 100, true, "an IJG quality, an integer from 1 to 100, higher is better",
                                      true};
             plan.setup.ijg_quality = static_cast<int>(scaled_value(rate_control, encoder_name, scale, plan));
-            plan.block_grid = BlockGrid::for_kind(BlockGridKind::Dct8);
+            plan.block_grid = BlockGrid::jpeg_mcu(pixel_format.log2_chroma_width(), pixel_format.log2_chroma_height());
             plan.extension = "jpg";
             break;
         }
@@ -194,7 +194,7 @@ namespace lossylab::detail
             plan.setup.fixed_qscale = qscale;
             plan.setup.qmin = qscale;
             plan.setup.qmax = qscale;
-            plan.block_grid = BlockGrid::for_kind(BlockGridKind::Dct8);
+            plan.block_grid = BlockGrid::jpeg_mcu(pixel_format.log2_chroma_width(), pixel_format.log2_chroma_height());
             plan.reports_qp = true;
             plan.extension = "jpg";
             break;

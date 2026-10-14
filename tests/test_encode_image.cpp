@@ -105,7 +105,8 @@ namespace
         assert(record.frames.front().qp_mean == 5.0);
         assert(record.frames.front().picture_type == PictureType::I);
         assert(record.frames.front().size_bytes == static_cast<std::int64_t>(encoded.bytes.size()));
-        assert(record.block_grid.has_value() && record.block_grid->kind == BlockGridKind::Dct8);
+        assert(record.block_grid.has_value() && record.block_grid->kind == BlockGridKind::JpegMcu);
+        assert(record.block_grid->block_width == 16 && record.block_grid->block_height == 16);
         const EncodeImageEvidence& evidence = std::get<EncodeImageEvidence>(record.evidence);
         assert(evidence.resolved.fixed_qscale == 5);
         assert(evidence.resolved.bitexact);
@@ -213,7 +214,8 @@ namespace
         assert(record.frames.front().picture_type == PictureType::I && record.frames.front().key_frame);
         assert(record.frames.front().size_bytes == static_cast<std::int64_t>(encoded.bytes.size()));
         assert(!record.frames.front().qp_mean.has_value());
-        assert(record.block_grid.has_value() && record.block_grid->kind == BlockGridKind::Dct8);
+        assert(record.block_grid.has_value() && record.block_grid->kind == BlockGridKind::JpegMcu);
+        assert(record.block_grid->block_width == 16 && record.block_grid->block_height == 16);
 
         const EncodeImageEvidence& evidence = std::get<EncodeImageEvidence>(record.evidence);
         assert(evidence.extension == "jpg" && !evidence.container.has_value());

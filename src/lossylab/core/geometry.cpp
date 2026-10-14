@@ -283,6 +283,14 @@ namespace lossylab
         return grid;
     }
 
+    BlockGrid BlockGrid::jpeg_mcu(const int log2_chroma_width, const int log2_chroma_height) noexcept
+    {
+        BlockGrid grid = for_kind(BlockGridKind::JpegMcu);
+        grid.block_width = 8 << log2_chroma_width;
+        grid.block_height = 8 << log2_chroma_height;
+        return grid;
+    }
+
     BlockGrid BlockGrid::apply_transform(const CoordinateTransform& transform) const noexcept
     {
         BlockGrid result = *this;

@@ -126,11 +126,11 @@ namespace lossylab
     /// coordinates.
     enum class BlockGridKind
     {
-        Dct8,        ///< JPEG / MJPEG / WebP 8x8 DCT grid
+        Dct8,        ///< 8x8 DCT grid, e.g. JPEG XL's smallest transform
         Macroblock16, ///< H.264 macroblocks
         Ctu32,       ///< HEVC / VP9 / AV1 coding tree units
         Ctu64,
-        JpegMcu      ///< a decoded JPEG's minimum coded units: 8x8, 16x8 or 16x16 with its chroma subsampling
+        JpegMcu      ///< a JPEG's minimum coded units, as encoded or decoded: 8x8, 16x8 or 16x16 with its chroma subsampling
     };
 
     std::string to_string(BlockGridKind kind);
@@ -153,6 +153,10 @@ namespace lossylab
         bool valid = true;
 
         static BlockGrid for_kind(BlockGridKind kind) noexcept;
+
+        /// A JPEG's minimum coded unit: 8x8 luma blocks, widened by the chroma subsampling given as the
+        /// power of two chroma planes are smaller by (1 for 4:2:0 in both axes).
+        static BlockGrid jpeg_mcu(int log2_chroma_width, int log2_chroma_height) noexcept;
 
         /// Returns the grid as seen after `transform` is applied. An integer
         /// translation shifts the phase; a quarter turn or flip about whole

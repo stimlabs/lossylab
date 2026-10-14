@@ -1,6 +1,7 @@
 #include "lossylab/core/error.hpp"
 #include "lossylab/core/record.hpp"
 #include "lossylab/core/reflect.hpp"
+#include "lossylab/core/schema_version.hpp"
 #include "lossylab/env/build_info.hpp"
 
 #include <cassert>
@@ -180,6 +181,74 @@ namespace
 
         record.set_origin(std::nullopt);
         assert(record.total_compression_generations() == 1);
+    }
+
+    /// A record as schema 15 wrote it: a 4:2:0 JPEG encode whose grid is the 8x8 transform block, then a 24x24
+    /// crop that measured itself against that grid.
+    json::Value schema_15_jpeg_then_crop_record_json()
+    {
+        ProcessingRecord record;
+
+        StageRecord encode = encode_stage(64, 64, BlockGridKind::Dct8);
+        encode.evidence = EncodeImageEvidence{};
+        encode.implementation = "libjpeg-turbo";
+        encode.input = format(64, 64, "yuvj420p", ColorSpec::bt601_full());
+        encode.output = encode.input;
+        EncodeImageOptions encode_options;
+        encode_options.codec = ImageCodec::Jpeg;
+        encode_options.pixel_format = PixelFormat::from_name("yuvj420p");
+        record.append(encode, encode_options);
+
+        StageRecord crop;
+        CropEvidence crop_evidence;
+        crop_evidence.block_grid = BlockGrid::for_kind(BlockGridKind::Dct8);
+        crop_evidence.whole_blocks = true;
+        crop.evidence = crop_evidence;
+        crop.implementation = "lossylab";
+        crop.input = encode.output;
+        crop.output = format(24, 24, "yuvj420p", ColorSpec::bt601_full());
+        crop.transform = CoordinateTransform::crop(0, 0);
+        record.append(crop, CropOptions{0, 0, 24, 24});
+
+        json::Value as_json = record.to_json();
+        as_json["schema_version"] = 15;
+        return as_json;
+    }
+
+    void test_a_schema_15_record_is_migrated_to_the_current_schema()
+    {
+        const ProcessingRecord migrated = ProcessingRecord::from_json(schema_15_jpeg_then_crop_record_json());
+
+        const BlockGrid& grid = *migrated.stages()[0].block_grid;
+        assert(grid.kind == BlockGridKind::JpegMcu && grid.block_width == 16 && grid.block_height == 16);
+
+        // 24 is not a whole number of 16 pixel blocks, though it was of 8 pixel ones.
+        const CropEvidence& crop = std::get<CropEvidence>(migrated.stages()[1].evidence);
+        assert(crop.block_grid->kind == BlockGridKind::JpegMcu && crop.block_grid->block_width == 16);
+        assert(crop.whole_blocks == std::optional<bool>(false));
+        assert(migrated.effective_block_grid()->block_width == 16);
+
+        assert(migrated.to_json().at("schema_version").get<std::int64_t>() == schema_version);
+    }
+
+    void test_a_schema_version_this_build_does_not_read_is_refused()
+    {
+        for (const int version : {schema_version + 1, 14})
+        {
+            json::Value as_json = ProcessingRecord().to_json();
+            as_json["schema_version"] = version;
+
+            bool refused = false;
+            try
+            {
+                static_cast<void>(ProcessingRecord::from_json(as_json));
+            }
+            catch (const ConfigError&)
+            {
+                refused = true;
+            }
+            assert(refused);
+        }
     }
 
     void test_one_hardware_stage_makes_the_whole_record_irreproducible()
@@ -492,6 +561,8 @@ int main()
     test_re_encoding_after_a_resize_establishes_a_fresh_grid();
     test_compression_generations_are_counted();
     test_a_lossy_origin_counts_toward_the_total_but_not_the_stage_count();
+    test_a_schema_15_record_is_migrated_to_the_current_schema();
+    test_a_schema_version_this_build_does_not_read_is_refused();
     test_one_hardware_stage_makes_the_whole_record_irreproducible();
     test_conversions_are_collected_across_stages();
     test_continuity_catches_a_conversion_outside_the_record();

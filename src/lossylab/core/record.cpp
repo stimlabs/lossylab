@@ -360,8 +360,75 @@ namespace lossylab
         });
     }
 
+    namespace
+    {
+        /// The oldest layout from_json() still reads.
+        constexpr int oldest_supported_schema_version = 15;
+
+        /// The EncodeImageOptions a stage ran with when it is an image encode or roundtrip, else nullptr.
+        const EncodeImageOptions* image_encode_options(const StageRecord& stage,
+                                                       const StageConfiguration& configuration) noexcept
+        {
+            switch (stage.kind())
+            {
+            case StageKind::EncodeImage: return std::get_if<EncodeImageOptions>(&configuration);
+            case StageKind::RoundtripImage:
+                if (const auto* roundtrip = std::get_if<RoundtripImageConfiguration>(&configuration))
+                {
+                    return &roundtrip->encode;
+                }
+                return nullptr;
+            default: return nullptr;
+            }
+        }
+
+        /// Schema 15 recorded a JPEG or MJPEG encode's grid as the 8x8 transform block, whatever the
+        /// subsampling. Schema 16 records the minimum coded unit, as a decode of the same bytes does. The
+        /// subsampling is the encoder's input pixel format, which the stage's configuration holds. A crop
+        /// that followed such a stage measured itself against the old grid, so its evidence is redone.
+        void migrate_schema_15_to_16(std::vector<StageRecord>& stages,
+                                     const std::vector<StageConfiguration>& configurations)
+        {
+            ProcessingRecord earlier;
+            bool migrated_grid = false;
+            for (std::size_t i = 0; i < stages.size(); ++i)
+            {
+                StageRecord& stage = stages[i];
+                if (const EncodeImageOptions* encode = image_encode_options(stage, configurations[i]);
+                    encode != nullptr && stage.block_grid.has_value() && stage.block_grid->kind == BlockGridKind::Dct8 &&
+                    (encode->codec == ImageCodec::Jpeg || encode->codec == ImageCodec::Mjpeg))
+                {
+                    stage.block_grid = BlockGrid::jpeg_mcu(encode->pixel_format.log2_chroma_width(),
+                                                           encode->pixel_format.log2_chroma_height());
+                    migrated_grid = true;
+                }
+                else if (const auto* crop = std::get_if<CropOptions>(&configurations[i]);
+                         migrated_grid && crop != nullptr && std::holds_alternative<CropEvidence>(stage.evidence))
+                {
+                    if (const std::optional<BlockGrid> grid = earlier.effective_block_grid(); grid.has_value())
+                    {
+                        CropEvidence evidence;
+                        evidence.block_grid = grid->apply_transform(stage.transform);
+                        evidence.whole_blocks =
+                            crop->width % grid->block_width == 0 && crop->height % grid->block_height == 0;
+                        stage.evidence = evidence;
+                    }
+                }
+                earlier.append(stage, configurations[i]);
+            }
+        }
+    }
+
     ProcessingRecord ProcessingRecord::from_json(const json::Value& value)
     {
+        const int version = static_cast<int>(value.at("schema_version").get<std::int64_t>());
+        if (version < oldest_supported_schema_version || version > schema_version)
+        {
+            throw ConfigError("processing record has schema_version " + std::to_string(version) +
+                              "; this build reads " + std::to_string(oldest_supported_schema_version) + " to " +
+                              std::to_string(schema_version));
+        }
+
         ProcessingRecord record;
         record.m_build = json::member(value, "build");
         record.m_diagnostics = json::member(value, "diagnostics");
@@ -385,10 +452,18 @@ namespace lossylab
             throw ConfigError("processing record has " + std::to_string(stages.size()) + " stages but " +
                               std::to_string(configurations.size()) + " configurations");
         }
+        std::vector<StageConfiguration> parsed_configurations;
         for (std::size_t i = 0; i < stages.size(); ++i)
         {
-            StageConfiguration configuration = configuration_from_json(stages[i].kind(), configurations[i]);
-            record.append(std::move(stages[i]), std::move(configuration));
+            parsed_configurations.push_back(configuration_from_json(stages[i].kind(), configurations[i]));
+        }
+        if (version == 15)
+        {
+            migrate_schema_15_to_16(stages, parsed_configurations);
+        }
+        for (std::size_t i = 0; i < stages.size(); ++i)
+        {
+            record.append(std::move(stages[i]), std::move(parsed_configurations[i]));
         }
         return record;
     }

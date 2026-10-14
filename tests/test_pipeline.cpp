@@ -84,7 +84,7 @@ namespace
         assert(crop.block_grid->phase_x == 0 && crop.block_grid->phase_y == 0 && crop.whole_blocks == true);
 
         // The new JPEG's grid is the one left at the end.
-        assert(record.effective_block_grid()->kind == BlockGridKind::Dct8);
+        assert(record.effective_block_grid()->kind == BlockGridKind::JpegMcu);
     }
 
     void test_a_run_and_its_replays_give_the_same_pixels()
