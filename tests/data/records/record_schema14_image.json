@@ -1,0 +1,638 @@
+{
+  "schema_version": 14,
+  "build": {
+    "lossylab": {
+      "commit": "64f8b43a77615151b5fa27ce40b60f3975de162b",
+      "dirty": true,
+      "compiler": "GNU 13.3.0",
+      "build_type": "Release"
+    },
+    "ffmpeg": {
+      "version": "n8.1.3",
+      "configure_hash": "sha256:01445cd7c4583f4289e10158c0eb9f7d5ab5feb8da07d7a301e6578a68b7cd39",
+      "license": "GPL-3.0",
+      "libraries": {
+        "libavutil": "60.26.103",
+        "libavcodec": "62.28.103",
+        "libavformat": "62.12.103",
+        "libavfilter": "11.14.103",
+        "libswscale": "9.5.103",
+        "libswresample": "6.3.103"
+      }
+    },
+    "identity_hash": "sha256:be0cc66c3b4a89211c978f11e069b12348872cdd3cdc93101b48e96f4d542fd9"
+  },
+  "diagnostics": {
+    "architecture": "x86_64",
+    "os": "linux",
+    "avx2": true
+  },
+  "origin": {
+    "format_name": "jpeg_pipe",
+    "format_long_name": "piped jpeg sequence",
+    "duration_us": null,
+    "bit_rate": null,
+    "size_bytes": 1255,
+    "streams": [
+      {
+        "index": 0,
+        "type": "video",
+        "codec_name": "mjpeg",
+        "codec_long_name": "Motion JPEG",
+        "profile": "Baseline",
+        "level": null,
+        "width": 64,
+        "height": 48,
+        "pixel_format": "yuvj420p",
+        "bit_depth": 8,
+        "color": {
+          "matrix": "bt470bg",
+          "range": "pc",
+          "primaries": "unknown",
+          "transfer": "unknown",
+          "chroma_location": "center"
+        },
+        "color_fully_tagged": false,
+        "frame_rate": {
+          "num": 25,
+          "den": 1
+        },
+        "average_frame_rate": {
+          "num": 25,
+          "den": 1
+        },
+        "time_base": {
+          "num": 1,
+          "den": 25
+        },
+        "sample_aspect_ratio": {
+          "num": 1,
+          "den": 1
+        },
+        "is_variable_frame_rate": false,
+        "rotation": null,
+        "orientation": null,
+        "orientation_source": "",
+        "orientation_availability": "not_present",
+        "icc_profile": null,
+        "icc_profile_availability": "not_present",
+        "icc_matches_tagged_color": null,
+        "frame_count": null,
+        "duration_us": null,
+        "bit_rate": null,
+        "metadata": {},
+        "has_hdr_metadata": false,
+        "is_default": false,
+        "is_dependent": false,
+        "image_container": null,
+        "jpeg": {
+          "process": "baseline",
+          "arithmetic_coding": false,
+          "precision": 8,
+          "components": [
+            {
+              "id": 1,
+              "horizontal_sampling": 2,
+              "vertical_sampling": 2,
+              "quantization_table": 0
+            },
+            {
+              "id": 2,
+              "horizontal_sampling": 1,
+              "vertical_sampling": 1,
+              "quantization_table": 0
+            },
+            {
+              "id": 3,
+              "horizontal_sampling": 1,
+              "vertical_sampling": 1,
+              "quantization_table": 0
+            }
+          ],
+          "quantization_tables": [
+            {
+              "id": 0,
+              "precision": 8,
+              "values": [
+                8,
+                12,
+                14,
+                16,
+                19,
+                20,
+                21,
+                25,
+                12,
+                12,
+                16,
+                18,
+                20,
+                21,
+                25,
+                27,
+                14,
+                16,
+                19,
+                20,
+                21,
+                25,
+                25,
+                28,
+                16,
+                16,
+                19,
+                20,
+                21,
+                25,
+                27,
+                30,
+                16,
+                19,
+                20,
+                21,
+                24,
+                26,
+                30,
+                36,
+                19,
+                20,
+                21,
+                24,
+                26,
+                30,
+                36,
+                43,
+                19,
+                20,
+                21,
+                25,
+                28,
+                34,
+                42,
+                51,
+                20,
+                21,
+                26,
+                28,
+                34,
+                42,
+                51,
+                62
+              ]
+            }
+          ],
+          "ijg_quality": 82,
+          "ijg_quality_exact": false,
+          "huffman_tables": "custom",
+          "restart_interval": 0,
+          "scan_count": 1,
+          "segments": [
+            {
+              "marker": "APP0",
+              "identifier": "JFIF",
+              "size_bytes": 14
+            },
+            {
+              "marker": "COM",
+              "identifier": "",
+              "size_bytes": 14
+            }
+          ],
+          "comment": "Lavc62.11.100",
+          "adobe_transform": null,
+          "has_end_of_image": true,
+          "trailing_bytes": 0
+        }
+      }
+    ],
+    "tile_grids": [],
+    "metadata": {},
+    "major_brand": "",
+    "compatible_brands": [],
+    "claimed_extension": "jpg",
+    "format_mismatch": false
+  },
+  "configurations": [
+    {
+      "pixel_format": "rgb24",
+      "color": {
+        "matrix": "gbr",
+        "range": "pc",
+        "primaries": "bt709",
+        "transfer": "iec61966-2-1",
+        "chroma_location": "unspecified"
+      },
+      "assumed_color": {
+        "matrix": "gbr",
+        "range": "pc",
+        "primaries": "bt709",
+        "transfer": "iec61966-2-1",
+        "chroma_location": "unspecified"
+      },
+      "orientation": "report",
+      "strict": "allow_recorded"
+    },
+    {
+      "pixel_format": "yuvj420p",
+      "color": {
+        "matrix": "bt470bg",
+        "range": "pc",
+        "primaries": "bt709",
+        "transfer": "iec61966-2-1",
+        "chroma_location": "center"
+      },
+      "chroma_down": {
+        "kernel": "area",
+        "params": {
+          "param_a": null,
+          "param_b": null
+        }
+      },
+      "chroma_up": {
+        "kernel": "bilinear",
+        "params": {
+          "param_a": null,
+          "param_b": null
+        }
+      },
+      "backend": "swscale",
+      "strict": "allow_recorded"
+    },
+    {
+      "encode": {
+        "codec": "mjpeg",
+        "rate_control": {
+          "mode": "quality",
+          "value": 5.0,
+          "rate": 0,
+          "max_rate": 0,
+          "buffer_size": 0
+        },
+        "pixel_format": "yuvj420p",
+        "color": null,
+        "lossless": false,
+        "encoder_options": {},
+        "thread_count": 1,
+        "strict": "refuse"
+      },
+      "decode": {
+        "pixel_format": "rgb24",
+        "color": {
+          "matrix": "gbr",
+          "range": "pc",
+          "primaries": "bt709",
+          "transfer": "iec61966-2-1",
+          "chroma_location": "unspecified"
+        },
+        "assumed_color": {
+          "matrix": "bt470bg",
+          "range": "pc",
+          "primaries": "bt709",
+          "transfer": "iec61966-2-1",
+          "chroma_location": "center"
+        },
+        "orientation": "report",
+        "strict": "allow_recorded"
+      }
+    }
+  ],
+  "stages": [
+    {
+      "kind": "decode_image",
+      "implementation": "mjpeg",
+      "evidence": {
+        "source_sha256": "sha256:878cf70868028ad187f0d2ec32ada23de6ec777b82e57be313c5e99c54957d23",
+        "stream_index": 0,
+        "tile_grid_id": null,
+        "orientation_handling": "reported"
+      },
+      "modifies_state": true,
+      "input": {
+        "width": 64,
+        "height": 48,
+        "pixel_format": "yuvj420p",
+        "color": {
+          "matrix": "bt470bg",
+          "range": "pc",
+          "primaries": "unknown",
+          "transfer": "unknown",
+          "chroma_location": "center"
+        },
+        "icc_profile": "",
+        "orientation": null,
+        "sample_aspect_ratio": {
+          "num": 1,
+          "den": 1
+        }
+      },
+      "output": {
+        "width": 64,
+        "height": 48,
+        "pixel_format": "rgb24",
+        "color": {
+          "matrix": "gbr",
+          "range": "pc",
+          "primaries": "bt709",
+          "transfer": "iec61966-2-1",
+          "chroma_location": "unspecified"
+        },
+        "icc_profile": "",
+        "orientation": null,
+        "sample_aspect_ratio": {
+          "num": 1,
+          "den": 1
+        }
+      },
+      "conversions": [
+        {
+          "property": "color_tags",
+          "from": "bt470bg/pc/unknown/unknown/center",
+          "to": "bt470bg/pc/bt709/iec61966-2-1/center",
+          "cause": "requested",
+          "performed_by": "assumed_color"
+        },
+        {
+          "property": "pix_fmt",
+          "from": "yuvj420p",
+          "to": "rgb24",
+          "cause": "requested",
+          "performed_by": "swscale"
+        },
+        {
+          "property": "subsampling",
+          "from": "420",
+          "to": "rgb",
+          "cause": "requested",
+          "performed_by": "swscale"
+        },
+        {
+          "property": "color_matrix",
+          "from": "bt470bg",
+          "to": "gbr",
+          "cause": "requested",
+          "performed_by": "swscale"
+        },
+        {
+          "property": "chroma_location",
+          "from": "center",
+          "to": "unspecified",
+          "cause": "requested",
+          "performed_by": "swscale"
+        }
+      ],
+      "transform": {
+        "scale_x": 1.0,
+        "shear_x": 0.0,
+        "translate_x": 0.0,
+        "shear_y": 0.0,
+        "scale_y": 1.0,
+        "translate_y": 0.0
+      },
+      "block_grid": null,
+      "frames": [],
+      "seed": null,
+      "reproducible": true,
+      "duration_ms": 0.693757,
+      "ffmpeg_duration_ms": 0.551857
+    },
+    {
+      "kind": "convert",
+      "implementation": "swscale",
+      "evidence": {
+        "kernel_role": "chroma_down"
+      },
+      "modifies_state": true,
+      "input": {
+        "width": 64,
+        "height": 48,
+        "pixel_format": "rgb24",
+        "color": {
+          "matrix": "gbr",
+          "range": "pc",
+          "primaries": "bt709",
+          "transfer": "iec61966-2-1",
+          "chroma_location": "unspecified"
+        },
+        "icc_profile": "",
+        "orientation": null,
+        "sample_aspect_ratio": {
+          "num": 1,
+          "den": 1
+        }
+      },
+      "output": {
+        "width": 64,
+        "height": 48,
+        "pixel_format": "yuvj420p",
+        "color": {
+          "matrix": "bt470bg",
+          "range": "pc",
+          "primaries": "bt709",
+          "transfer": "iec61966-2-1",
+          "chroma_location": "center"
+        },
+        "icc_profile": "",
+        "orientation": null,
+        "sample_aspect_ratio": {
+          "num": 1,
+          "den": 1
+        }
+      },
+      "conversions": [
+        {
+          "property": "pix_fmt",
+          "from": "rgb24",
+          "to": "yuvj420p",
+          "cause": "requested",
+          "performed_by": "swscale"
+        },
+        {
+          "property": "subsampling",
+          "from": "rgb",
+          "to": "420",
+          "cause": "requested",
+          "performed_by": "swscale"
+        },
+        {
+          "property": "color_matrix",
+          "from": "gbr",
+          "to": "bt470bg",
+          "cause": "requested",
+          "performed_by": "swscale"
+        },
+        {
+          "property": "chroma_location",
+          "from": "unspecified",
+          "to": "center",
+          "cause": "requested",
+          "performed_by": "swscale"
+        }
+      ],
+      "transform": {
+        "scale_x": 1.0,
+        "shear_x": 0.0,
+        "translate_x": 0.0,
+        "shear_y": 0.0,
+        "scale_y": 1.0,
+        "translate_y": 0.0
+      },
+      "block_grid": null,
+      "frames": [],
+      "seed": null,
+      "reproducible": true,
+      "duration_ms": 0.053191,
+      "ffmpeg_duration_ms": 0.051238000000000006
+    },
+    {
+      "kind": "roundtrip_image",
+      "implementation": "mjpeg+mjpeg",
+      "evidence": {
+        "encode": {
+          "container": null,
+          "extension": "jpg",
+          "color": {
+            "matrix": "bt470bg",
+            "range": "pc",
+            "primaries": "bt709",
+            "transfer": "iec61966-2-1",
+            "chroma_location": "center"
+          },
+          "resolved": {
+            "time_base": {
+              "num": 1,
+              "den": 1
+            },
+            "thread_count": 1,
+            "bitexact": true,
+            "fixed_qscale": 5,
+            "qmin": 5,
+            "qmax": 5,
+            "bit_rate": 0,
+            "max_rate": 0,
+            "buffer_size": 0,
+            "gop_size": 12,
+            "keyint_min": 25,
+            "max_b_frames": 0,
+            "closed_gop": false,
+            "global_header": false,
+            "options": {}
+          },
+          "achieved_bpp": 3.2942708333333335,
+          "search": null
+        },
+        "decode": {
+          "source_sha256": "sha256:9648e9c1d89190dd144198fd6a2c1cdd7523a535f999580a4d758c9b596c705e",
+          "stream_index": 0,
+          "tile_grid_id": null,
+          "orientation_handling": "reported"
+        }
+      },
+      "modifies_state": true,
+      "input": {
+        "width": 64,
+        "height": 48,
+        "pixel_format": "yuvj420p",
+        "color": {
+          "matrix": "bt470bg",
+          "range": "pc",
+          "primaries": "bt709",
+          "transfer": "iec61966-2-1",
+          "chroma_location": "center"
+        },
+        "icc_profile": "",
+        "orientation": null,
+        "sample_aspect_ratio": {
+          "num": 1,
+          "den": 1
+        }
+      },
+      "output": {
+        "width": 64,
+        "height": 48,
+        "pixel_format": "rgb24",
+        "color": {
+          "matrix": "gbr",
+          "range": "pc",
+          "primaries": "bt709",
+          "transfer": "iec61966-2-1",
+          "chroma_location": "unspecified"
+        },
+        "icc_profile": "",
+        "orientation": null,
+        "sample_aspect_ratio": {
+          "num": 1,
+          "den": 1
+        }
+      },
+      "conversions": [
+        {
+          "property": "color_tags",
+          "from": "bt470bg/pc/unknown/unknown/center",
+          "to": "bt470bg/pc/bt709/iec61966-2-1/center",
+          "cause": "requested",
+          "performed_by": "assumed_color"
+        },
+        {
+          "property": "pix_fmt",
+          "from": "yuvj420p",
+          "to": "rgb24",
+          "cause": "requested",
+          "performed_by": "swscale"
+        },
+        {
+          "property": "subsampling",
+          "from": "420",
+          "to": "rgb",
+          "cause": "requested",
+          "performed_by": "swscale"
+        },
+        {
+          "property": "color_matrix",
+          "from": "bt470bg",
+          "to": "gbr",
+          "cause": "requested",
+          "performed_by": "swscale"
+        },
+        {
+          "property": "chroma_location",
+          "from": "center",
+          "to": "unspecified",
+          "cause": "requested",
+          "performed_by": "swscale"
+        }
+      ],
+      "transform": {
+        "scale_x": 1.0,
+        "shear_x": 0.0,
+        "translate_x": 0.0,
+        "shear_y": 0.0,
+        "scale_y": 1.0,
+        "translate_y": 0.0
+      },
+      "block_grid": {
+        "kind": "dct8",
+        "block_width": 8,
+        "block_height": 8,
+        "phase_x": 0,
+        "phase_y": 0,
+        "valid": true
+      },
+      "frames": [
+        {
+          "index": 0,
+          "pts": 0,
+          "picture_type": "I",
+          "key_frame": true,
+          "size_bytes": 1265,
+          "qp_min": 5.0,
+          "qp_max": 5.0,
+          "qp_mean": 5.0
+        }
+      ],
+      "seed": null,
+      "reproducible": true,
+      "duration_ms": 0.385092,
+      "ffmpeg_duration_ms": 0.317692
+    }
+  ]
+}

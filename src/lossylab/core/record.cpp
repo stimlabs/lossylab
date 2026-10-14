@@ -362,9 +362,6 @@ namespace lossylab
 
     namespace
     {
-        /// The oldest layout from_json() still reads.
-        constexpr int oldest_supported_schema_version = 15;
-
         /// The EncodeImageOptions a stage ran with when it is an image encode or roundtrip, else nullptr.
         const EncodeImageOptions* image_encode_options(const StageRecord& stage,
                                                        const StageConfiguration& configuration) noexcept
@@ -386,8 +383,8 @@ namespace lossylab
         /// subsampling. Schema 16 records the minimum coded unit, as a decode of the same bytes does. The
         /// subsampling is the encoder's input pixel format, which the stage's configuration holds. A crop
         /// that followed such a stage measured itself against the old grid, so its evidence is redone.
-        void migrate_schema_15_to_16(std::vector<StageRecord>& stages,
-                                     const std::vector<StageConfiguration>& configurations)
+        void migrate_jpeg_encode_grids(std::vector<StageRecord>& stages,
+                                       const std::vector<StageConfiguration>& configurations)
         {
             ProcessingRecord earlier;
             bool migrated_grid = false;
@@ -419,15 +416,153 @@ namespace lossylab
         }
     }
 
-    ProcessingRecord ProcessingRecord::from_json(const json::Value& value)
+    namespace
     {
-        const int version = static_cast<int>(value.at("schema_version").get<std::int64_t>());
-        if (version < oldest_supported_schema_version || version > schema_version)
+        /// Schema 14 stored a decode's target as a pixel format and a color, either of which could be unset.
+        /// Schema 15 stores a full conversion. What the older decode converted with was swscale at the
+        /// `ConvertOptions` defaults of that version: an area kernel down, a bilinear kernel up, no ICC
+        /// handling and an alpha channel dropped. A half-set target takes its other half from what the stage
+        /// recorded as its output.
+        json::Value conversion_from_schema_14(const json::Value& pixel_format, const json::Value& color,
+                                              const json::Value& strict, const json::Value& output)
         {
-            throw ConfigError("processing record has schema_version " + std::to_string(version) +
-                              "; this build reads " + std::to_string(oldest_supported_schema_version) + " to " +
-                              std::to_string(schema_version));
+            if (pixel_format.is_null() && color.is_null())
+            {
+                return json::Value();
+            }
+
+            ConvertOptions conversion;
+            conversion.pixel_format = PixelFormat::from_json(pixel_format.is_null() ? output.at("pixel_format")
+                                                                                    : pixel_format);
+            conversion.color = ColorSpec::from_json(color.is_null() ? output.at("color") : color);
+            if (conversion.pixel_format.name() == "none" || !conversion.color.is_fully_specified())
+            {
+                throw MigrationRefused("the decode's target is not fully specified, and the stage's output does "
+                                       "not complete it");
+            }
+            conversion.chroma_down = KernelSpec{Kernel::Area, {}};
+            conversion.chroma_up = KernelSpec{Kernel::Bilinear, {}};
+            conversion.icc = IccHandling::Ignore;
+            conversion.alpha = AlphaHandling::Discard;
+
+            json::Value as_json = reflect::to_json(conversion);
+            as_json["strict"] = strict;
+            return as_json;
         }
+
+        void migrate_decode_image_options_from_schema_14(json::Value& options, const json::Value& output)
+        {
+            options["conversion"] = conversion_from_schema_14(json::member(options, "pixel_format"),
+                                                              json::member(options, "color"),
+                                                              options.at("strict"), output);
+            options.erase("pixel_format");
+            options.erase("color");
+        }
+
+        void migrate_video_reader_options_from_schema_14(json::Value& reader, const json::Value& output)
+        {
+            reader["conversion"] = conversion_from_schema_14(json::member(reader, "pixel_format"),
+                                                             json::member(reader, "color"), reader.at("strict"),
+                                                             output);
+            reader.erase("pixel_format");
+            reader.erase("color");
+            reader.erase("strict");
+        }
+
+        void add_chroma_down_from_schema_14(json::Value& options)
+        {
+            options["chroma_down"] = reflect::to_json(KernelSpec{Kernel::Area, {}});
+        }
+
+        /// Schema 15 added a seed and an output hash to the record; stage options for decoding fold the target
+        /// pixel format and color into a conversion; image encodes and conversions gained fields; conversion
+        /// evidence says how color and alpha were handled. The ICC and alpha facts a schema 14 conversion cannot
+        /// state are the ones its code implied: no profile applied, alpha dropped when the target had none.
+        void record_from_schema_14(json::Value& document)
+        {
+            json::Value& stages = document.at("stages");
+            json::Value& configurations = document.at("configurations");
+            if (stages.size() != configurations.size())
+            {
+                throw MigrationRefused("the record has " + std::to_string(stages.size()) + " stages but " +
+                                       std::to_string(configurations.size()) + " configurations");
+            }
+            for (std::size_t i = 0; i < stages.size(); ++i)
+            {
+                json::Value& stage = stages[i];
+                json::Value& configuration = configurations[i];
+                const std::string kind = stage.at("kind").get<std::string>();
+                const json::Value& output = stage.at("output");
+                if (kind == "decode_image")
+                {
+                    migrate_decode_image_options_from_schema_14(configuration, output);
+                }
+                else if (kind == "decode_video")
+                {
+                    migrate_video_reader_options_from_schema_14(configuration.at("reader"), output);
+                }
+                else if (kind == "encode_image")
+                {
+                    add_chroma_down_from_schema_14(configuration);
+                }
+                else if (kind == "roundtrip_image")
+                {
+                    add_chroma_down_from_schema_14(configuration.at("encode"));
+                    migrate_decode_image_options_from_schema_14(configuration.at("decode"), output);
+                }
+                else if (kind == "roundtrip_video")
+                {
+                    migrate_video_reader_options_from_schema_14(configuration.at("decode").at("reader"), output);
+                }
+                else if (kind == "convert")
+                {
+                    configuration["icc"] = to_string(IccHandling::Ignore);
+                    configuration["alpha"] = to_string(AlphaHandling::Discard);
+
+                    json::Value& evidence = stage.at("evidence");
+                    const bool dropped_alpha = PixelFormat::from_json(stage.at("input").at("pixel_format")).has_alpha() &&
+                                               !PixelFormat::from_json(output.at("pixel_format")).has_alpha();
+                    evidence["color_transform"] = "none";
+                    evidence["icc_profile_sha256"] = json::Value();
+                    evidence["alpha"] = dropped_alpha ? "discarded" : "none";
+                }
+            }
+            document["seed"] = json::Value();
+            document["output_sha256"] = json::Value();
+        }
+
+        void record_from_schema_15(json::Value& document)
+        {
+            std::vector<StageRecord> stages = json::from_array<StageRecord>(document.at("stages"));
+            const json::Value& configuration_documents = document.at("configurations");
+            if (configuration_documents.size() != stages.size())
+            {
+                throw MigrationRefused("the record has " + std::to_string(stages.size()) + " stages but " +
+                                       std::to_string(configuration_documents.size()) + " configurations");
+            }
+            std::vector<StageConfiguration> configurations;
+            for (std::size_t i = 0; i < stages.size(); ++i)
+            {
+                configurations.push_back(configuration_from_json(stages[i].kind(), configuration_documents[i]));
+            }
+            migrate_jpeg_encode_grids(stages, configurations);
+            document["stages"] = json::to_array(stages);
+        }
+    }
+
+    const SchemaMigrations& ProcessingRecord::schema_migrations()
+    {
+        static const SchemaMigrations migrations(
+            "ProcessingRecord", 14,
+            {{14, "decode targets became conversions, plus a seed, an output hash and conversion evidence",
+              record_from_schema_14},
+             {15, "a JPEG encode's block grid became the minimum coded unit", record_from_schema_15}});
+        return migrations;
+    }
+
+    ProcessingRecord ProcessingRecord::from_json(const json::Value& document)
+    {
+        const json::Value value = schema_migrations().upgrade(document);
 
         ProcessingRecord record;
         record.m_build = json::member(value, "build");
@@ -435,7 +570,7 @@ namespace lossylab
         const json::Value& origin = value.at("origin");
         if (!origin.is_null())
         {
-            record.set_origin(ProbeResult::from_json(origin));
+            record.set_origin(reflect::from_json<ProbeResult>(origin));
         }
         if (const json::Value& seed = value.at("seed"); !seed.is_null())
         {
@@ -452,18 +587,10 @@ namespace lossylab
             throw ConfigError("processing record has " + std::to_string(stages.size()) + " stages but " +
                               std::to_string(configurations.size()) + " configurations");
         }
-        std::vector<StageConfiguration> parsed_configurations;
         for (std::size_t i = 0; i < stages.size(); ++i)
         {
-            parsed_configurations.push_back(configuration_from_json(stages[i].kind(), configurations[i]));
-        }
-        if (version == 15)
-        {
-            migrate_schema_15_to_16(stages, parsed_configurations);
-        }
-        for (std::size_t i = 0; i < stages.size(); ++i)
-        {
-            record.append(std::move(stages[i]), std::move(parsed_configurations[i]));
+            StageConfiguration configuration = configuration_from_json(stages[i].kind(), configurations[i]);
+            record.append(std::move(stages[i]), std::move(configuration));
         }
         return record;
     }

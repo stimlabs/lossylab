@@ -6,6 +6,8 @@
 
 #include <cassert>
 #include <cmath>
+#include <fstream>
+#include <sstream>
 #include <utility>
 
 using namespace lossylab;
@@ -233,7 +235,7 @@ namespace
 
     void test_a_schema_version_this_build_does_not_read_is_refused()
     {
-        for (const int version : {schema_version + 1, 14})
+        for (const int version : {schema_version + 1, 13})
         {
             json::Value as_json = ProcessingRecord().to_json();
             as_json["schema_version"] = version;
@@ -243,12 +245,100 @@ namespace
             {
                 static_cast<void>(ProcessingRecord::from_json(as_json));
             }
-            catch (const ConfigError&)
+            catch (const SchemaVersionError&)
             {
                 refused = true;
             }
             assert(refused);
         }
+    }
+
+    /// A record written by the build at schema 14, as `ProcessingRecord::to_json()` wrote it then.
+    json::Value schema_14_record(const char* name)
+    {
+        std::ifstream file(std::string(LOSSYLAB_TEST_DATA_DIR) + "/records/" + name);
+        assert(file.good());
+        std::stringstream text;
+        text << file.rdbuf();
+        const json::Value document = json::parse(text.str());
+        assert(document.at("schema_version") == 14);
+        return document;
+    }
+
+    void test_a_schema_14_image_record_is_migrated_to_the_current_schema()
+    {
+        const json::Value document = schema_14_record("record_schema14_image.json");
+        const ProcessingRecord migrated = ProcessingRecord::from_json(document);
+
+        assert(migrated.size() == 3);
+        assert(!migrated.seed().has_value() && !migrated.output_sha256().has_value());
+        assert(migrated.origin().has_value());
+
+        const auto& decode = std::get<DecodeImageOptions>(migrated.configurations()[0]);
+        assert(decode.conversion.has_value());
+        assert(decode.conversion->pixel_format == PixelFormat::from_name("rgb24"));
+        assert(decode.conversion->color == ColorSpec::srgb());
+        assert(decode.conversion->chroma_up.kernel == Kernel::Bilinear);
+        assert(decode.conversion->icc == IccHandling::Ignore && decode.conversion->alpha == AlphaHandling::Discard);
+        assert(decode.conversion->strict == decode.strict);
+
+        const auto& convert = std::get<ConvertOptions>(migrated.configurations()[1]);
+        assert(convert.icc == IccHandling::Ignore && convert.alpha == AlphaHandling::Discard);
+        const auto& convert_evidence = std::get<ConvertEvidence>(migrated.stages()[1].evidence);
+        assert(convert_evidence.color_transform == "none" && convert_evidence.alpha == "none");
+        assert(!convert_evidence.icc_profile_sha256.has_value());
+
+        const auto& roundtrip = std::get<RoundtripImageConfiguration>(migrated.configurations()[2]);
+        assert(roundtrip.encode.chroma_down.kernel == Kernel::Area);
+        assert(roundtrip.decode.conversion.has_value());
+        assert(roundtrip.decode.conversion->pixel_format == PixelFormat::from_name("rgb24"));
+
+        // The MJPEG encode's grid went through both steps: schema 16 knows it is 4:2:0.
+        const BlockGrid& grid = *migrated.stages()[2].block_grid;
+        assert(grid.kind == BlockGridKind::JpegMcu && grid.block_width == 16 && grid.block_height == 16);
+
+        const json::Value written = migrated.to_json();
+        assert(written.at("schema_version") == schema_version);
+        assert(ProcessingRecord::from_json(written).to_json() == written);
+    }
+
+    void test_a_schema_14_decode_with_half_a_target_takes_the_rest_from_its_output()
+    {
+        const ProcessingRecord migrated =
+            ProcessingRecord::from_json(schema_14_record("record_schema14_half_target.json"));
+
+        const auto& decode = std::get<DecodeImageOptions>(migrated.configurations()[0]);
+        assert(decode.conversion.has_value());
+        assert(decode.conversion->pixel_format == PixelFormat::from_name("rgb24"));
+        assert(decode.conversion->color == migrated.stages()[0].output.color);
+    }
+
+    void test_a_schema_14_video_roundtrip_is_migrated_to_the_current_schema()
+    {
+        const ProcessingRecord migrated = ProcessingRecord::from_json(schema_14_record("record_schema14_video.json"));
+
+        const auto& roundtrip = std::get<RoundtripVideoConfiguration>(migrated.configurations()[0]);
+        assert(roundtrip.decode.reader.conversion.has_value());
+        assert(roundtrip.decode.reader.conversion->pixel_format == PixelFormat::from_name("yuv420p"));
+        assert(roundtrip.decode.reader.conversion->strict == Strict::AllowRecorded);
+        assert(migrated.to_json().at("schema_version") == schema_version);
+    }
+
+    void test_a_schema_14_decode_that_cannot_be_completed_is_refused()
+    {
+        json::Value document = schema_14_record("record_schema14_half_target.json");
+        document["stages"][0]["output"]["color"] = ColorSpec().to_json();
+
+        bool refused = false;
+        try
+        {
+            static_cast<void>(ProcessingRecord::from_json(document));
+        }
+        catch (const SchemaVersionError& error)
+        {
+            refused = std::string(error.what()).find("not fully specified") != std::string::npos;
+        }
+        assert(refused);
     }
 
     void test_one_hardware_stage_makes_the_whole_record_irreproducible()
@@ -563,6 +653,10 @@ int main()
     test_a_lossy_origin_counts_toward_the_total_but_not_the_stage_count();
     test_a_schema_15_record_is_migrated_to_the_current_schema();
     test_a_schema_version_this_build_does_not_read_is_refused();
+    test_a_schema_14_image_record_is_migrated_to_the_current_schema();
+    test_a_schema_14_decode_with_half_a_target_takes_the_rest_from_its_output();
+    test_a_schema_14_video_roundtrip_is_migrated_to_the_current_schema();
+    test_a_schema_14_decode_that_cannot_be_completed_is_refused();
     test_one_hardware_stage_makes_the_whole_record_irreproducible();
     test_conversions_are_collected_across_stages();
     test_continuity_catches_a_conversion_outside_the_record();

@@ -4,6 +4,7 @@
 #include "lossylab/core/json.hpp"
 #include "lossylab/core/json_io.hpp"
 #include "lossylab/core/reflect.hpp"
+#include "lossylab/core/schema_migration.hpp"
 #include "lossylab/env/log.hpp"
 #include "lossylab/io/source.hpp"
 
@@ -83,7 +84,10 @@ namespace lossylab
         [[nodiscard]] static FileError from_current_exception(std::string operation, std::string source);
 
         [[nodiscard]] json::Value to_json() const;
+
+        /// Reads a document of any `schema_version` in `schema_migrations()`, upgrading it first.
         static FileError from_json(const json::Value& value);
+        [[nodiscard]] static const SchemaMigrations& schema_migrations();
     };
 
     LOSSYLAB_REFLECT(FileError, kind, operation, source, message, details);

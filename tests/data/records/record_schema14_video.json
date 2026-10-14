@@ -1,0 +1,254 @@
+{
+  "schema_version": 14,
+  "build": {
+    "lossylab": {
+      "commit": "64f8b43a77615151b5fa27ce40b60f3975de162b",
+      "dirty": true,
+      "compiler": "GNU 13.3.0",
+      "build_type": "Release"
+    },
+    "ffmpeg": {
+      "version": "n8.1.3",
+      "configure_hash": "sha256:01445cd7c4583f4289e10158c0eb9f7d5ab5feb8da07d7a301e6578a68b7cd39",
+      "license": "GPL-3.0",
+      "libraries": {
+        "libavutil": "60.26.103",
+        "libavcodec": "62.28.103",
+        "libavformat": "62.12.103",
+        "libavfilter": "11.14.103",
+        "libswscale": "9.5.103",
+        "libswresample": "6.3.103"
+      }
+    },
+    "identity_hash": "sha256:be0cc66c3b4a89211c978f11e069b12348872cdd3cdc93101b48e96f4d542fd9"
+  },
+  "diagnostics": {
+    "architecture": "x86_64",
+    "os": "linux",
+    "avx2": true
+  },
+  "origin": null,
+  "configurations": [
+    {
+      "encode": {
+        "codec": "h264",
+        "backend": "software",
+        "rate_control": {
+          "mode": "crf",
+          "value": 30.0,
+          "rate": 0,
+          "max_rate": 0,
+          "buffer_size": 0
+        },
+        "gop": {
+          "keyframe_interval": 250,
+          "b_frames": 0,
+          "scene_change_detection": true,
+          "b_pyramid": false,
+          "closed_gop": false
+        },
+        "container": "",
+        "pixel_format": "yuv420p",
+        "color": null,
+        "frame_rate": {
+          "num": 25,
+          "den": 1
+        },
+        "encoder_options": {},
+        "thread_count": 1,
+        "strict": "refuse"
+      },
+      "decode": {
+        "reader": {
+          "stream_index": 0,
+          "pixel_format": "yuv420p",
+          "color": {
+            "matrix": "bt709",
+            "range": "tv",
+            "primaries": "bt709",
+            "transfer": "bt709",
+            "chroma_location": "left"
+          },
+          "assumed_color": {
+            "matrix": "bt709",
+            "range": "tv",
+            "primaries": "bt709",
+            "transfer": "bt709",
+            "chroma_location": "left"
+          },
+          "export_qp_maps": false,
+          "export_motion_vectors": false,
+          "thread_count": 1,
+          "strict": "allow_recorded"
+        },
+        "frame_indices": [
+          0,
+          1,
+          2,
+          3
+        ]
+      }
+    }
+  ],
+  "stages": [
+    {
+      "kind": "roundtrip_video",
+      "implementation": "libx264+h264",
+      "evidence": {
+        "encode": {
+          "container": "h264",
+          "extension": "h264",
+          "frame_count": 4,
+          "color": {
+            "matrix": "bt709",
+            "range": "tv",
+            "primaries": "bt709",
+            "transfer": "bt709",
+            "chroma_location": "left"
+          },
+          "resolved": {
+            "time_base": {
+              "num": 1,
+              "den": 25
+            },
+            "thread_count": 1,
+            "bitexact": true,
+            "fixed_qscale": null,
+            "qmin": -1,
+            "qmax": -1,
+            "bit_rate": 0,
+            "max_rate": 0,
+            "buffer_size": 0,
+            "gop_size": 250,
+            "keyint_min": -1,
+            "max_b_frames": 0,
+            "closed_gop": true,
+            "global_header": false,
+            "options": {
+              "b-pyramid": "0",
+              "crf": "30.000000",
+              "sc_threshold": "40"
+            }
+          },
+          "achieved_bpp": 1.0205078125,
+          "search": null
+        },
+        "decode": {
+          "source_sha256": "sha256:346b597ebea941ea547e5e71385099d0ea39cc69390691a448685895190b0b11",
+          "tagged_color": {
+            "matrix": "bt709",
+            "range": "tv",
+            "primaries": "bt709",
+            "transfer": "bt709",
+            "chroma_location": "left"
+          },
+          "color_fully_tagged": true,
+          "frames_decoded": 4,
+          "selector": {
+            "select": "all"
+          }
+        }
+      },
+      "modifies_state": true,
+      "input": {
+        "width": 64,
+        "height": 64,
+        "pixel_format": "yuv420p",
+        "color": {
+          "matrix": "bt709",
+          "range": "tv",
+          "primaries": "bt709",
+          "transfer": "bt709",
+          "chroma_location": "left"
+        },
+        "icc_profile": "",
+        "orientation": null,
+        "sample_aspect_ratio": {
+          "num": 1,
+          "den": 1
+        }
+      },
+      "output": {
+        "width": 64,
+        "height": 64,
+        "pixel_format": "yuv420p",
+        "color": {
+          "matrix": "bt709",
+          "range": "tv",
+          "primaries": "bt709",
+          "transfer": "bt709",
+          "chroma_location": "left"
+        },
+        "icc_profile": "",
+        "orientation": null,
+        "sample_aspect_ratio": {
+          "num": 1,
+          "den": 1
+        }
+      },
+      "conversions": [],
+      "transform": {
+        "scale_x": 1.0,
+        "shear_x": 0.0,
+        "translate_x": 0.0,
+        "shear_y": 0.0,
+        "scale_y": 1.0,
+        "translate_y": 0.0
+      },
+      "block_grid": {
+        "kind": "macroblock16",
+        "block_width": 16,
+        "block_height": 16,
+        "phase_x": 0,
+        "phase_y": 0,
+        "valid": true
+      },
+      "frames": [
+        {
+          "index": 0,
+          "pts": 0,
+          "picture_type": "I",
+          "key_frame": true,
+          "size_bytes": 1371,
+          "qp_min": 35.0,
+          "qp_max": 35.0,
+          "qp_mean": 35.0
+        },
+        {
+          "index": 1,
+          "pts": 1,
+          "picture_type": "P",
+          "key_frame": false,
+          "size_bytes": 206,
+          "qp_min": 35.0,
+          "qp_max": 35.0,
+          "qp_mean": 35.0
+        },
+        {
+          "index": 2,
+          "pts": 2,
+          "picture_type": "P",
+          "key_frame": false,
+          "size_bytes": 311,
+          "qp_min": 35.0,
+          "qp_max": 35.0,
+          "qp_mean": 35.0
+        },
+        {
+          "index": 3,
+          "pts": 3,
+          "picture_type": "P",
+          "key_frame": false,
+          "size_bytes": 202,
+          "qp_min": 35.0,
+          "qp_max": 35.0,
+          "qp_mean": 35.0
+        }
+      ],
+      "seed": null,
+      "reproducible": true,
+      "duration_ms": 2.052758,
+      "ffmpeg_duration_ms": 1.935548
+    }
+  ]
+}

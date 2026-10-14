@@ -585,9 +585,18 @@ namespace lossylab
         return value;
     }
 
+    const SchemaMigrations& ProbeResult::schema_migrations()
+    {
+        // The layout is the same in every version from 14 on.
+        static const SchemaMigrations migrations(
+            "ProbeResult", 14,
+            {{14, "layout unchanged", nullptr}, {15, "layout unchanged", nullptr}});
+        return migrations;
+    }
+
     ProbeResult ProbeResult::from_json(const json::Value& value)
     {
-        return reflect::from_json<ProbeResult>(value);
+        return reflect::from_json<ProbeResult>(schema_migrations().upgrade(value));
     }
 
     ProbeResult probe(const Source& source)

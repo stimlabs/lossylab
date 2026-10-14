@@ -122,8 +122,18 @@ namespace lossylab
         });
     }
 
-    FileError FileError::from_json(const json::Value& value)
+    const SchemaMigrations& FileError::schema_migrations()
     {
+        // The layout is the same in every version from 14 on.
+        static const SchemaMigrations migrations(
+            "FileError", 14,
+            {{14, "layout unchanged", nullptr}, {15, "layout unchanged", nullptr}});
+        return migrations;
+    }
+
+    FileError FileError::from_json(const json::Value& document)
+    {
+        const json::Value value = schema_migrations().upgrade(document);
         FileError error;
         error.kind = file_error_kind_from_string(value.at("kind").get<std::string>());
         error.operation = value.at("operation").get<std::string>();

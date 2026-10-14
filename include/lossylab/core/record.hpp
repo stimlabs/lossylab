@@ -6,6 +6,7 @@
 #include "lossylab/core/pixel_format.hpp"
 #include "lossylab/core/rational.hpp"
 #include "lossylab/core/reflect.hpp"
+#include "lossylab/core/schema_migration.hpp"
 #include "lossylab/core/stage_evidence.hpp"
 #include "lossylab/core/stage_kind.hpp"
 #include "lossylab/core/strict.hpp"
@@ -252,7 +253,10 @@ namespace lossylab
         void validate_continuity() const;
 
         [[nodiscard]] json::Value to_json() const;
+
+        /// Reads a document of any `schema_version` in `schema_migrations()`, upgrading it first.
         static ProcessingRecord from_json(const json::Value& value);
+        [[nodiscard]] static const SchemaMigrations& schema_migrations();
 
     private:
         json::Value m_build;

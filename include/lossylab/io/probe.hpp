@@ -6,6 +6,7 @@
 #include "lossylab/core/pixel_format.hpp"
 #include "lossylab/core/rational.hpp"
 #include "lossylab/core/reflect.hpp"
+#include "lossylab/core/schema_migration.hpp"
 #include "lossylab/io/icc_profile.hpp"
 #include "lossylab/io/source.hpp"
 
@@ -455,7 +456,10 @@ namespace lossylab
         /// The reflected fields, plus `schema_version` and the derived
         /// `encoder`, which from_json() ignores.
         [[nodiscard]] json::Value to_json() const;
+
+        /// Reads a document of any `schema_version` in `schema_migrations()`, upgrading it first.
         static ProbeResult from_json(const json::Value& value);
+        [[nodiscard]] static const SchemaMigrations& schema_migrations();
     };
 
     LOSSYLAB_REFLECT(ProbeResult, format_name, format_long_name, duration_us, bit_rate, size_bytes, streams,

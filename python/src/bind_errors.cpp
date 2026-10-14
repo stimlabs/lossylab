@@ -1,6 +1,7 @@
 #include "bindings.hpp"
 
 #include "lossylab/core/error.hpp"
+#include "lossylab/core/schema_migration.hpp"
 
 #include <nanobind/stl/string.h>
 
@@ -40,7 +41,8 @@ namespace lossylab::pybind
         // plain Error.
         auto error_exc = nb::exception<lossylab::Error>(m, "Error");
 
-        nb::exception<lossylab::ConfigError>(m, "ConfigError", error_exc);
+        auto config_exc = nb::exception<lossylab::ConfigError>(m, "ConfigError", error_exc);
+        nb::exception<lossylab::SchemaVersionError>(m, "SchemaVersionError", config_exc);
 
         static nb::handle capability_type =
             nb::exception<lossylab::UnsupportedCapability>(m, "UnsupportedCapability", error_exc);
