@@ -232,9 +232,16 @@ namespace lossylab
         /// with the same seeds yields identical output.
         [[nodiscard]] bool is_reproducible() const noexcept;
 
-        /// Total bits per pixel across compression stages, and the number of
-        /// compression generations the data has been through.
+        /// The number of compression stages in the record (encodes and
+        /// roundtrips). The compression of the file the history started from,
+        /// if any, is not counted: see `total_compression_generations()`.
         [[nodiscard]] int compression_generations() const noexcept;
+
+        /// `compression_generations()` plus one when the origin's primary
+        /// video stream uses a codec that is lossy in practice (JPEG, H.264,
+        /// HEVC, VP8, VP9, AV1, MPEG-1/2/4, Theora, ProRes). A record without
+        /// an origin, or with a lossless or unrecognized codec, adds nothing.
+        [[nodiscard]] int total_compression_generations() const noexcept;
 
         /// Every conversion across every stage, flattened, in order.
         [[nodiscard]] ConversionList all_conversions() const;

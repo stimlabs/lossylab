@@ -5,6 +5,9 @@
 #include "lossylab/core/schema_version.hpp"
 #include "lossylab/env/build_info.hpp"
 
+#include <algorithm>
+#include <array>
+#include <string_view>
 #include <utility>
 
 namespace lossylab
@@ -292,6 +295,25 @@ namespace lossylab
                 break;
             default:
                 break;
+            }
+        }
+        return generations;
+    }
+
+    int ProcessingRecord::total_compression_generations() const noexcept
+    {
+        static constexpr std::array<std::string_view, 11> lossy_codecs = {
+            "mjpeg", "h264", "hevc", "vp8", "vp9", "av1", "mpeg1video", "mpeg2video", "mpeg4", "theora", "prores"};
+
+        int generations = compression_generations();
+        if (m_origin.has_value())
+        {
+            if (const StreamInfo* stream = m_origin->primary_video_stream())
+            {
+                if (std::find(lossy_codecs.begin(), lossy_codecs.end(), stream->codec_name) != lossy_codecs.end())
+                {
+                    ++generations;
+                }
             }
         }
         return generations;

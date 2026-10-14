@@ -154,6 +154,34 @@ namespace
         assert(record.compression_generations() == 2);
     }
 
+    ProbeResult origin_with_codec(const std::string& codec_name)
+    {
+        StreamInfo stream;
+        stream.type = "video";
+        stream.codec_name = codec_name;
+        stream.is_default = true;
+
+        ProbeResult origin;
+        origin.streams.push_back(stream);
+        return origin;
+    }
+
+    void test_a_lossy_origin_counts_toward_the_total_but_not_the_stage_count()
+    {
+        ProcessingRecord record;
+        append(record, encode_stage(640, 480, BlockGridKind::Dct8));
+
+        record.set_origin(origin_with_codec("mjpeg"));
+        assert(record.compression_generations() == 1);
+        assert(record.total_compression_generations() == 2);
+
+        record.set_origin(origin_with_codec("png"));
+        assert(record.total_compression_generations() == 1);
+
+        record.set_origin(std::nullopt);
+        assert(record.total_compression_generations() == 1);
+    }
+
     void test_one_hardware_stage_makes_the_whole_record_irreproducible()
     {
         ProcessingRecord record;
@@ -463,6 +491,7 @@ int main()
     test_a_later_resize_destroys_the_grid();
     test_re_encoding_after_a_resize_establishes_a_fresh_grid();
     test_compression_generations_are_counted();
+    test_a_lossy_origin_counts_toward_the_total_but_not_the_stage_count();
     test_one_hardware_stage_makes_the_whole_record_irreproducible();
     test_conversions_are_collected_across_stages();
     test_continuity_catches_a_conversion_outside_the_record();

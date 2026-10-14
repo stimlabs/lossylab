@@ -73,6 +73,7 @@ namespace lossylab::pybind
             .def("effective_block_grid", &ProcessingRecord::effective_block_grid)
             .def("is_reproducible", &ProcessingRecord::is_reproducible)
             .def("compression_generations", &ProcessingRecord::compression_generations)
+            .def("total_compression_generations", &ProcessingRecord::total_compression_generations)
             .def("all_conversions", &ProcessingRecord::all_conversions)
             .def("validate_continuity", &ProcessingRecord::validate_continuity)
             .def("to_dict", [](const ProcessingRecord& self) { return to_python(self.to_json()); })
