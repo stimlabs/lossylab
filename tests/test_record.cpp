@@ -185,6 +185,33 @@ namespace
         assert(record.total_compression_generations() == 1);
     }
 
+    ProbeResult webp_origin(const std::string& compression)
+    {
+        ProbeResult origin = origin_with_codec("webp");
+        ImageContainerInfo container;
+        container.compression = compression;
+        origin.streams.front().image_container = container;
+        return origin;
+    }
+
+    void test_a_webp_origin_counts_by_its_container_compression()
+    {
+        ProcessingRecord record;
+        append(record, encode_stage(640, 480, BlockGridKind::Dct8));
+
+        record.set_origin(webp_origin("lossy"));
+        assert(record.total_compression_generations() == 2);
+
+        record.set_origin(webp_origin("mixed"));
+        assert(record.total_compression_generations() == 2);
+
+        record.set_origin(webp_origin("lossless"));
+        assert(record.total_compression_generations() == 1);
+
+        record.set_origin(origin_with_codec("webp"));
+        assert(record.total_compression_generations() == 1);
+    }
+
     /// A record as schema 15 wrote it: a 4:2:0 JPEG encode whose grid is the 8x8 transform block, then a square
     /// crop at (crop_x, 0), a whole number of 8 pixel blocks, that measured itself against that grid.
     json::Value schema_15_jpeg_then_crop_record_json(const int crop_x, const int crop_size)
@@ -697,6 +724,7 @@ int main()
     test_re_encoding_after_a_resize_establishes_a_fresh_grid();
     test_compression_generations_are_counted();
     test_a_lossy_origin_counts_toward_the_total_but_not_the_stage_count();
+    test_a_webp_origin_counts_by_its_container_compression();
     test_a_schema_15_record_is_migrated_to_the_current_schema();
     test_a_schema_15_crop_after_another_grid_needs_a_block_corner_for_whole_blocks();
     test_a_schema_version_this_build_does_not_read_is_refused();

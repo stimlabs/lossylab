@@ -240,8 +240,10 @@ namespace lossylab
 
         /// `compression_generations()` plus one when the origin's primary
         /// video stream uses a codec that is lossy in practice (JPEG, H.264,
-        /// HEVC, VP8, VP9, AV1, MPEG-1/2/4, Theora, ProRes). A record without
-        /// an origin, or with a lossless or unrecognized codec, adds nothing.
+        /// HEVC, VP8, VP9, AV1, MPEG-1/2/4, Theora, ProRes), or is a WebP
+        /// whose `image_container.compression` is "lossy" or "mixed". A record
+        /// without an origin, or with a lossless or unrecognized codec, adds
+        /// nothing.
         [[nodiscard]] int total_compression_generations() const noexcept;
 
         /// Every conversion across every stage, flattened, in order.

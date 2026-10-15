@@ -310,7 +310,12 @@ namespace lossylab
         {
             if (const StreamInfo* stream = m_origin->primary_video_stream())
             {
-                if (std::find(lossy_codecs.begin(), lossy_codecs.end(), stream->codec_name) != lossy_codecs.end())
+                const bool lossy_codec =
+                    std::find(lossy_codecs.begin(), lossy_codecs.end(), stream->codec_name) != lossy_codecs.end();
+                const std::optional<std::string>& container_compression =
+                    stream->image_container.has_value() ? stream->image_container->compression : std::nullopt;
+                const bool lossy_container = container_compression == "lossy" || container_compression == "mixed";
+                if (lossy_codec || lossy_container)
                 {
                     ++generations;
                 }
