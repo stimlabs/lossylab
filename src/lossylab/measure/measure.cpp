@@ -1333,8 +1333,8 @@ namespace lossylab
         }
         record.output = reference.describe();
 
-        // The curve compares samples only, whatever ICC profile, orientation
-        // or pixel shape the encoders could or could not keep.
+        // The curve compares samples only, whatever ICC profile, orientation,
+        // pixel shape or chroma location the encoders could or could not keep.
         Frame samples = reference;
         samples.clear_embedded();
 
@@ -1342,6 +1342,7 @@ namespace lossylab
         encode_options.codec = options.codec;
         encode_options.pixel_format = pixel_format;
         encode_options.encoder_options = options.encoder_options;
+        encode_options.strict = Strict::AllowRecorded;
 
         ConvertOptions conversion;
         conversion.pixel_format = pixel_format;

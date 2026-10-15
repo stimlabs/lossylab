@@ -46,13 +46,17 @@ namespace lossylab::detail
 
         /// The file extension of the output, for decoding it back.
         std::string extension;
+        /// Whether the output can carry the chroma location, so that reading
+        /// it back tells whether the encoder kept it.
+        bool signals_chroma_location = false;
     };
 
     /// Validates `options` against what the encoder and its format can carry
     /// and translates them. `pixel_format` and `color` are those of the frame
-    /// the encoder receives.
+    /// the encoder receives, and `has_icc_profile` whether it carries one.
     [[nodiscard]] EncoderPlan plan_image_encode(const std::string& encoder_name, const EncodeImageOptions& options,
-                                                const PixelFormat& pixel_format, const ColorSpec& color);
+                                                const PixelFormat& pixel_format, const ColorSpec& color,
+                                                bool has_icc_profile);
 
     /// As above for video. The container is the one the options name, or the
     /// codec's elementary stream format when they name none.

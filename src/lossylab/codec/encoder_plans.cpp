@@ -87,6 +87,35 @@ namespace lossylab::detail
             }
         }
 
+        bool is_srgb(const ColorSpec& color)
+        {
+            return color.primaries == ColorPrimaries::Bt709 && color.transfer == TransferCharacteristic::Srgb;
+        }
+
+        /// What FFmpeg's JP2 header says of the samples, which is all it
+        /// says: sRGB for RGB, and sYCC for YUV, which is BT.601 at full range
+        /// on sRGB primaries and transfer, with chroma at the top left, where
+        /// the reference grid places a subsampled component.
+        void require_jp2_color(const PixelFormat& pixel_format, const ColorSpec& color)
+        {
+            if (pixel_format.is_gray())
+            {
+                return;
+            }
+            const bool rgb = pixel_format.is_rgb();
+            const bool chroma_fits = rgb || !has_subsampled_chroma(pixel_format) ||
+                                     color.chroma_location == ChromaLocation::TopLeft;
+            if (!is_srgb(color) || color.range != ColorRange::Full || (!rgb && !is_bt601(color.matrix)) ||
+                !chroma_fits)
+            {
+                throw ConfigError(std::string("JPEG 2000 labels ") +
+                                  (rgb ? "RGB as sRGB"
+                                       : "YUV as sYCC: BT.601, full range, sRGB primaries and transfer, top-left "
+                                         "chroma") +
+                                  ", and cannot signal " + color.describe());
+            }
+        }
+
         /// Adds the caller's encoder options, which may not override one the
         /// library derived from the rate control or GOP structure.
         void add_caller_options(EncoderPlan& plan, const std::map<std::string, std::string>& caller_options)
@@ -245,7 +274,8 @@ namespace lossylab::detail
     }
 
     EncoderPlan plan_image_encode(const std::string& encoder_name, const EncodeImageOptions& options,
-                                  const PixelFormat& pixel_format, const ColorSpec& color)
+                                  const PixelFormat& pixel_format, const ColorSpec& color,
+                                  const bool has_icc_profile)
     {
         EncoderPlan plan;
         plan.setup.encoder_name = encoder_name;
@@ -346,10 +376,18 @@ namespace lossylab::detail
             {
                 throw ConfigError("encode_image() has no lossless AVIF");
             }
+            // FFmpeg's libaom wrapper labels RGB as sRGB, whatever it is.
+            if (pixel_format.is_rgb() && !has_icc_profile && !is_srgb(color))
+            {
+                throw ConfigError("encoder '" + encoder_name + "' labels RGB as sRGB, and cannot signal " +
+                                  color.describe() + " without an ICC profile");
+            }
             plan_avif(encoder_name, rate_control, plan);
+            plan.signals_chroma_location = true;
             break;
 
         case ImageCodec::Jpeg2000:
+            require_jp2_color(pixel_format, color);
             if (options.lossless)
             {
                 plan.setup.options["pred"] = "dwt53";

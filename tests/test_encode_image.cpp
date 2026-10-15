@@ -438,7 +438,8 @@ namespace
             return;
         }
         const Frame source = source_in("yuv420p", bt601_yuv(ColorRange::Limited));
-        const EncodeImageOptions options = image_options(ImageCodec::Avif, "yuv420p", 30);
+        EncodeImageOptions options = image_options(ImageCodec::Avif, "yuv420p", 30);
+        options.strict = Strict::AllowRecorded;  // AV1 cannot signal the centered chroma
         const EncodedResult encoded = encode_image(source, options);
         assert(starts_with(encoded.bytes, 4, "ftypavif"));
         assert(std::get<EncodeImageEvidence>(encoded.record.evidence).container == "avif");
@@ -590,6 +591,115 @@ namespace
         assert(encoded.record.output == source.describe());
     }
 
+    /// `frame` labeled with other primaries and transfer, samples unchanged.
+    Frame relabeled_bt2020(Frame frame)
+    {
+        ColorSpec color = frame.color();
+        color.primaries = ColorPrimaries::Bt2020;
+        color.transfer = TransferCharacteristic::Bt2020_10;
+        frame.set_color(color);
+        frame.sync_color_to_av_frame();
+        return frame;
+    }
+
+    void test_a_chroma_location_avif_does_not_keep_is_refused_or_recorded()
+    {
+        if (!capabilities().supports(ImageCodec::Avif))
+        {
+            return;
+        }
+        const Frame centered = source_in("yuv420p", bt601_yuv(ColorRange::Limited));
+        EncodeImageOptions options = image_options(ImageCodec::Avif, "yuv420p", 30);
+        expect_throw<ConversionRefused>([&] { (void)encode_image(centered, options); });
+
+        options.strict = Strict::AllowRecorded;
+        const EncodedResult encoded = encode_image(centered, options);
+        assert(probe(Source::from_memory(encoded.bytes, "avif")).streams.front().color.chroma_location ==
+               ChromaLocation::Unspecified);
+        assert(records(encoded.record, "chroma_location"));
+        assert(encoded.record.output.color.chroma_location == ChromaLocation::Unspecified);
+        assert(std::get<EncodeImageEvidence>(encoded.record.evidence).color == centered.color());
+
+        // 4:4:4 has no chroma location to lose.
+        const Frame full_chroma = source_in("yuv444p", bt601_yuv(ColorRange::Limited));
+        assert(encode_image(full_chroma, image_options(ImageCodec::Avif, "yuv444p", 30)).record.conversions.empty());
+    }
+
+    void test_avif_refuses_rgb_it_would_label_srgb()
+    {
+        if (!capabilities().supports(ImageCodec::Avif) ||
+            !capabilities().require_encoder(ImageCodec::Avif).accepts(PixelFormat::from_name("gbrp")))
+        {
+            return;
+        }
+        const EncodeImageOptions options = image_options(ImageCodec::Avif, "gbrp", 30);
+        expect_throw<ConfigError>(
+            [&] { (void)encode_image(relabeled_bt2020(source_in("gbrp", ColorSpec::srgb())), options); });
+        (void)encode_image(source_in("gbrp", ColorSpec::srgb()), options);
+    }
+
+    void test_jpeg_2000_refuses_color_its_label_misstates()
+    {
+        if (!capabilities().supports(ImageCodec::Jpeg2000))
+        {
+            return;
+        }
+        // The JP2 header labels RGB sRGB and YUV sYCC.
+        expect_throw<ConfigError>([&] {
+            (void)encode_image(relabeled_bt2020(rgb_source()), image_options(ImageCodec::Jpeg2000, "rgb24", 8));
+        });
+        expect_throw<ConfigError>([&] {
+            (void)encode_image(source_in("yuv444p", bt601_yuv(ColorRange::Limited)),
+                               image_options(ImageCodec::Jpeg2000, "yuv444p", 8));
+        });
+        expect_throw<ConfigError>([&] {
+            (void)encode_image(source_in("yuv420p", bt601_yuv(ColorRange::Full)),
+                               image_options(ImageCodec::Jpeg2000, "yuv420p", 8));
+        });
+
+        ColorSpec sycc = bt601_yuv(ColorRange::Full);
+        sycc.chroma_location = ChromaLocation::TopLeft;
+        (void)encode_image(source_in("yuv420p", sycc), image_options(ImageCodec::Jpeg2000, "yuv420p", 8));
+        (void)encode_image(source_in("yuv444p", bt601_yuv(ColorRange::Full)),
+                           image_options(ImageCodec::Jpeg2000, "yuv444p", 8));
+    }
+
+    void test_the_encoders_own_layout_is_a_repacking_of_the_requested_one()
+    {
+        struct Case
+        {
+            ImageCodec codec;
+            bool lossless;
+            double quality;
+            const char* sent_as;
+        };
+        const Frame rgb = rgb_source();
+        for (const Case& repacked : {Case{ImageCodec::WebP, true, 50, "bgra"},
+                                     Case{ImageCodec::Avif, false, 30, "gbrp"},
+                                     Case{ImageCodec::Jxl, false, 1.0, "rgb24"}})
+        {
+            if (!capabilities().supports(repacked.codec) ||
+                !capabilities().require_encoder(repacked.codec).accepts(PixelFormat::from_name(repacked.sent_as)))
+            {
+                continue;
+            }
+            EncodeImageOptions options = image_options(repacked.codec, "rgb24", repacked.quality);
+            options.lossless = repacked.lossless;
+            const EncodedResult encoded = encode_image(rgb, options);
+            assert(encoded.record.output.pixel_format.name() == repacked.sent_as);
+            assert(records(encoded.record, "pix_fmt") == (std::string_view(repacked.sent_as) != "rgb24"));
+            assert(std::get<EncodeImageOptions>(encoded.configuration).pixel_format.name() == "rgb24");
+        }
+
+        // A layout that changes values is no repacking: lossy WebP would still convert bgra itself, and
+        // libjpeg-turbo has no RGB layout at all.
+        if (capabilities().supports(ImageCodec::WebP))
+        {
+            expect_throw<ConfigError>([&] { (void)encode_image(rgb, image_options(ImageCodec::WebP, "rgb24", 80)); });
+        }
+        expect_throw<ConfigError>([&] { (void)encode_image(rgb, image_options(ImageCodec::Jpeg, "rgb24", 75)); });
+    }
+
     void test_a_non_square_pixel_turns_with_the_image()
     {
         Frame source = source_in("rgb24", ColorSpec::srgb());
@@ -635,5 +745,9 @@ int main()
     test_an_output_that_cannot_keep_the_profile_is_refused();
     test_a_frame_without_embedded_data_records_nothing();
     test_a_non_square_pixel_turns_with_the_image();
+    test_the_encoders_own_layout_is_a_repacking_of_the_requested_one();
+    test_a_chroma_location_avif_does_not_keep_is_refused_or_recorded();
+    test_avif_refuses_rgb_it_would_label_srgb();
+    test_jpeg_2000_refuses_color_its_label_misstates();
     return 0;
 }

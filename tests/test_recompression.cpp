@@ -184,6 +184,7 @@ namespace
             encode.pixel_format = PixelFormat::from_name("yuv420p");
             encode.rate_control = RateControl::quality(prior);
             encode.encoder_options = encoder_options;
+            encode.strict = Strict::AllowRecorded;  // AV1 cannot signal the centered chroma
             const RecompressionCurve ghost = recompression_curve(roundtrip(source, encode).frame, options);
             assert(ghost.evidence().estimated_prior_parameter == static_cast<double>(prior));
         }

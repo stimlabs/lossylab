@@ -12,6 +12,10 @@
 #include "lossylab/io/video_reader.hpp"
 #include "lossylab/measure/measure.hpp"
 
+extern "C" {
+#include <libavutil/pixdesc.h>
+}
+
 #include <cmath>
 #include <functional>
 #include <limits>
@@ -320,18 +324,83 @@ namespace lossylab
             }
         }
 
-        void require_accepted_format(const CodecInfo& encoder, const PixelFormat& pixel_format)
+        /// Whether `to` holds exactly the sample values of `from`, laid out
+        /// differently: in another component order, planar instead of packed
+        /// or the reverse, or in the other byte order. `to` may add an alpha
+        /// channel `from` lacks, which is then opaque. The yuvj formats are
+        /// left out, since FFmpeg reads a range into them.
+        bool is_repacking(const PixelFormat& from, const PixelFormat& to)
         {
-            if (!encoder.accepts(pixel_format))
+            const AVPixFmtDescriptor* from_layout = av_pix_fmt_desc_get(static_cast<AVPixelFormat>(from.raw()));
+            const AVPixFmtDescriptor* to_layout = av_pix_fmt_desc_get(static_cast<AVPixelFormat>(to.raw()));
+            if (from_layout == nullptr || to_layout == nullptr || from.name().starts_with("yuvj") ||
+                to.name().starts_with("yuvj"))
             {
-                throw ConfigError("encoder '" + encoder.name + "' does not accept " + pixel_format.name() +
-                                  "; convert explicitly before encoding");
+                return false;
             }
+            constexpr std::uint64_t unpackable = AV_PIX_FMT_FLAG_PAL | AV_PIX_FMT_FLAG_BITSTREAM |
+                                                 AV_PIX_FMT_FLAG_HWACCEL | AV_PIX_FMT_FLAG_BAYER;
+            constexpr std::uint64_t sample_kind = AV_PIX_FMT_FLAG_RGB | AV_PIX_FMT_FLAG_FLOAT | unpackable;
+            if ((from_layout->flags & unpackable) != 0 ||
+                (from_layout->flags & sample_kind) != (to_layout->flags & sample_kind) ||
+                from_layout->log2_chroma_w != to_layout->log2_chroma_w ||
+                from_layout->log2_chroma_h != to_layout->log2_chroma_h || (from.has_alpha() && !to.has_alpha()))
+            {
+                return false;
+            }
+            const int color_components = from_layout->nb_components - (from.has_alpha() ? 1 : 0);
+            if (to_layout->nb_components - (to.has_alpha() ? 1 : 0) != color_components)
+            {
+                return false;
+            }
+            for (int index = 0; index < from_layout->nb_components; ++index)
+            {
+                if (from_layout->comp[index].depth != to_layout->comp[index].depth)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /// The format the encoder receives for the `requested` one: that
+        /// format when the encoder accepts it, and otherwise the first one it
+        /// accepts that only repacks it, preferably without adding alpha.
+        PixelFormat encoder_format(const CodecInfo& encoder, const PixelFormat& requested)
+        {
+            if (encoder.accepts(requested))
+            {
+                return requested;
+            }
+            std::optional<PixelFormat> with_alpha;
+            std::string accepted;
+            for (const PixelFormat& candidate : encoder.pixel_formats)
+            {
+                if (is_repacking(requested, candidate))
+                {
+                    if (candidate.has_alpha() == requested.has_alpha())
+                    {
+                        return candidate;
+                    }
+                    if (!with_alpha.has_value())
+                    {
+                        with_alpha = candidate;
+                    }
+                }
+                accepted += (accepted.empty() ? "" : ", ") + candidate.name();
+            }
+            if (with_alpha.has_value())
+            {
+                return *with_alpha;
+            }
+            throw ConfigError("encoder '" + encoder.name + "' takes neither " + requested.name() +
+                              " nor another layout of it; set pixel_format to one of " + accepted);
         }
 
         /// The frames in the pixel format and color the encoder is to receive.
-        /// Frames already in them pass through; any other conversion is
-        /// refused under Strict::Refuse and recorded otherwise.
+        /// Frames already in them pass through, and frames that only need
+        /// repacking are repacked in either strict mode; any other conversion
+        /// is refused under Strict::Refuse. Each change is recorded.
         std::vector<Frame> fit_to_encoder(const std::vector<Frame>& frames, const PixelFormat& pixel_format,
                                           const std::optional<ColorSpec>& color, const KernelSpec& chroma_down,
                                           const Strict strict, ConversionList& conversions, const std::string& what)
@@ -347,7 +416,8 @@ namespace lossylab
                 throw ConfigError(what + " converts " + first.pixel_format().name() + " to " + pixel_format.name() +
                                   ", which needs the color to encode in; set color");
             }
-            if (strict == Strict::Refuse)
+            const bool repacking = first.color() == target_color && is_repacking(first.pixel_format(), pixel_format);
+            if (strict == Strict::Refuse && !repacking)
             {
                 throw ConversionRefused(first.describe().pixel_format.name() + " " + first.color().describe(),
                                         pixel_format.name() + " " + target_color.describe(),
@@ -467,6 +537,45 @@ namespace lossylab
             }
         }
 
+        /// Reads back the chroma location of an encode whose output can carry
+        /// one, for a frame with subsampled chroma at a known location. A
+        /// location the output lost is refused under Strict::Refuse and
+        /// recorded otherwise, and `output` is set to what the output holds.
+        void account_for_chroma_location(const Frame& frame, const std::vector<std::uint8_t>& bytes,
+                                         const std::string& extension, const std::string& encoder_name,
+                                         const Strict strict, StageRecord& record, const std::string& what)
+        {
+            const ChromaLocation location = frame.color().chroma_location;
+            const PixelFormat& pixel_format = frame.pixel_format();
+            if (location == ChromaLocation::Unspecified ||
+                (pixel_format.log2_chroma_width() == 0 && pixel_format.log2_chroma_height() == 0))
+            {
+                return;
+            }
+
+            const ProbeResult written = probe(Source::from_memory(bytes, extension));
+            const StreamInfo* stream = written.primary_video_stream();
+            if (stream == nullptr)
+            {
+                throw Error(what + ": the encoded output holds no picture to check");
+            }
+            const ChromaLocation written_location = stream->color.chroma_location;
+            if (written_location == location)
+            {
+                return;
+            }
+            if (written_location != ChromaLocation::Unspecified)
+            {
+                throw Error(what + ": encoder '" + encoder_name + "' wrote chroma location " +
+                            to_string(written_location) + " for a frame at " + to_string(location));
+            }
+            record_or_refuse(strict, record.conversions, "chroma_location", to_string(location), "dropped",
+                             ConversionCause::CodecConstraint, encoder_name,
+                             what + ", whose output cannot signal it; set the color's chroma location to "
+                                    "unspecified to drop it");
+            record.output.color.chroma_location = written_location;
+        }
+
         /// One FrameStats per input frame, from the packets that coded it,
         /// matched by timestamp.
         std::vector<FrameStats> frame_stats(const std::vector<detail::PacketPtr>& packets, const bool reports_qp)
@@ -557,11 +666,12 @@ namespace lossylab
         /// the file leaves untagged.
         FrameResult decode_encoded(const EncodedResult& encoded, const DecodeSpec& decode_spec)
         {
+            const EncodeImageEvidence& evidence = std::get<EncodeImageEvidence>(encoded.record.evidence);
             DecodeImageOptions options;
             options.conversion = decode_spec.conversion;
-            options.assumed_color = encoded.record.output.color;
+            options.assumed_color = evidence.color;
             options.strict = decode_spec.strict;
-            const std::string& extension = std::get<EncodeImageEvidence>(encoded.record.evidence).extension;
+            const std::string& extension = evidence.extension;
             DecodedImage decoded = decode_image(Source::from_memory(encoded.bytes, extension), options);
             return FrameResult{std::move(decoded.frame), std::move(decoded.record), decoded.configuration};
         }
@@ -614,7 +724,7 @@ namespace lossylab
         {
             throw NotImplemented("encode_video() with a hardware backend");
         }
-        require_accepted_format(encoder, options.pixel_format);
+        const PixelFormat pixel_format = encoder_format(encoder, options.pixel_format);
         require_known_options(encoder, options.encoder_options);
 
         StageRecord record;
@@ -623,7 +733,7 @@ namespace lossylab
         record.transform = CoordinateTransform::identity();
 
         const std::vector<Frame> encoded_frames =
-            fit_to_encoder(frames, options.pixel_format, options.color, KernelSpec{Kernel::Area, {}}, options.strict,
+            fit_to_encoder(frames, pixel_format, options.color, KernelSpec{Kernel::Area, {}}, options.strict,
                            record.conversions, "encode_video()");
         const Frame& first = encoded_frames.front();
         detail::EncoderPlan plan = detail::plan_video_encode(encoder.name, options, first.pixel_format());
@@ -667,7 +777,7 @@ namespace lossylab
         validate_common({frame}, options.pixel_format, options.thread_count, "encode_image()");
 
         const CodecInfo& encoder = capabilities().require_encoder(options.codec);
-        require_accepted_format(encoder, options.pixel_format);
+        const PixelFormat pixel_format = encoder_format(encoder, options.pixel_format);
         require_known_options(encoder, options.encoder_options);
 
         StageRecord record;
@@ -675,11 +785,12 @@ namespace lossylab
         record.input = frame.describe();
         record.transform = CoordinateTransform::identity();
 
-        const Frame encoded_frame = fit_to_encoder({frame}, options.pixel_format, options.color, options.chroma_down,
+        const Frame encoded_frame = fit_to_encoder({frame}, pixel_format, options.color, options.chroma_down,
                                                    options.strict, record.conversions, "encode_image()")
                                         .front();
         detail::EncoderPlan plan = detail::plan_image_encode(encoder.name, options, encoded_frame.pixel_format(),
-                                                             encoded_frame.color());
+                                                             encoded_frame.color(),
+                                                             encoded_frame.icc_profile() != nullptr);
         plan.setup.width = encoded_frame.width();
         plan.setup.height = encoded_frame.height();
         plan.setup.pixel_format = encoded_frame.pixel_format();
@@ -697,6 +808,11 @@ namespace lossylab
         record.output = encoded_frame.describe();
         account_for_embedded(encoded_frame, bytes, plan.extension, encoder.name, options.strict, record,
                              "encode_image()");
+        if (plan.signals_chroma_location)
+        {
+            account_for_chroma_location(encoded_frame, bytes, plan.extension, encoder.name, options.strict, record,
+                                        "encode_image()");
+        }
         record.block_grid = plan.block_grid;
         record.evidence = EncodeImageEvidence{
             plan.muxer.empty() ? std::nullopt : std::optional<std::string>(plan.muxer),
@@ -967,7 +1083,9 @@ namespace lossylab
 
         const ColorSpec color = options.color.value_or(frame.color());
         const std::optional<QualityRange> range =
-            detail::plan_image_encode(encoder.name, options, options.pixel_format, color).quality_range;
+            detail::plan_image_encode(encoder.name, options, encoder_format(encoder, options.pixel_format), color,
+                                      frame.icc_profile() != nullptr)
+                .quality_range;
         if (!range.has_value())
         {
             throw ConfigError("encode_to_target(): " + encoder.name + " has no quality parameter to search");
