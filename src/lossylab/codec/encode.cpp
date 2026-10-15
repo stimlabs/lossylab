@@ -778,7 +778,7 @@ namespace lossylab
         /// Bisects the encoder's quality range, ordered from its worst
         /// quality to its best so that bits per pixel, PSNR and SSIM all grow
         /// along it. Keeps the attempt closest to the target.
-        EncodeToTargetResult search_quality(const EncodeTarget& target, const detail::QualityRange& range,
+        EncodeToTargetResult search_quality(const EncodeTarget& target, const QualityRange& range,
                                             const std::function<EncodedResult(double)>& encode,
                                             const std::function<double(const EncodedResult&)>& achieved_by)
         {
@@ -891,6 +891,23 @@ namespace lossylab
         throw Error("encode_to_target() result has no search in its record's evidence");
     }
 
+    std::optional<QualityRange> quality_range(const EncodeImageOptions& options)
+    {
+        if (options.rate_control.mode() != RateControl::Mode::Quality)
+        {
+            return std::nullopt;
+        }
+        const CodecInfo& encoder = capabilities().require_encoder(options.codec);
+        return detail::image_quality_range(options.codec, options.lossless, encoder.name);
+    }
+
+    std::optional<QualityRange> quality_range(const EncodeVideoOptions& options)
+    {
+        const CodecInfo& encoder = capabilities().require_encoder(options.codec, options.backend);
+        return detail::video_quality_range(encoder.name, options.rate_control.mode(),
+                                           options.pixel_format.bit_depth());
+    }
+
     EncodeToTargetResult encode_to_target(const std::vector<Frame>& frames,
                                           const EncodeVideoOptions& options,
                                           const EncodeTarget& target)
@@ -904,7 +921,7 @@ namespace lossylab
             throw NotImplemented("encode_to_target() for vmaf");
         }
 
-        const std::optional<detail::QualityRange> range =
+        const std::optional<QualityRange> range =
             detail::plan_video_encode(encoder.name, options, options.pixel_format).quality_range;
         if (!range.has_value())
         {
@@ -949,7 +966,7 @@ namespace lossylab
         }
 
         const ColorSpec color = options.color.value_or(frame.color());
-        const std::optional<detail::QualityRange> range =
+        const std::optional<QualityRange> range =
             detail::plan_image_encode(encoder.name, options, options.pixel_format, color).quality_range;
         if (!range.has_value())
         {

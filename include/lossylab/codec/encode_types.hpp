@@ -94,6 +94,24 @@ namespace lossylab
         std::int64_t m_buffer_size = 0;
     };
 
+    /// The values an encoder's quality parameter takes, in the encoder's own
+    /// units.
+    struct QualityRange
+    {
+        double minimum = 0.0;
+        double maximum = 0.0;
+
+        /// Whether the parameter takes whole numbers only.
+        bool integral = true;
+        bool higher_is_better = false;
+
+        /// What the parameter is, e.g. "crf, an integer from 0 to 63, lower
+        /// is better".
+        std::string description;
+    };
+
+    LOSSYLAB_REFLECT(QualityRange, minimum, maximum, integral, higher_is_better, description);
+
     /// Group-of-pictures structure.
     ///
     /// Determines which frames are I, P or B, which is the single biggest

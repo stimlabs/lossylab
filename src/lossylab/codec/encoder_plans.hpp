@@ -13,24 +13,24 @@
 
 namespace lossylab::detail
 {
-    /// The values an encoder's quality parameter takes.
-    struct QualityRange
-    {
-        double minimum = 0.0;
-        double maximum = 0.0;
-        bool integral = true;
-        bool higher_is_better = false;
-    };
+    /// The quality parameter's range for an image encode, or empty when the
+    /// codec and `lossless` leave it none.
+    [[nodiscard]] std::optional<QualityRange> image_quality_range(ImageCodec codec, bool lossless,
+                                                                  const std::string& encoder_name);
+
+    /// The quality parameter's range for a video encoder in a rate control
+    /// mode, or empty when the mode has none. `bit_depth` is that of the
+    /// pixel format the encoder receives.
+    [[nodiscard]] std::optional<QualityRange> video_quality_range(const std::string& encoder_name,
+                                                                  RateControl::Mode mode, int bit_depth);
 
     /// One encode, translated for a specific encoder.
     struct EncoderPlan
     {
         EncoderSetup setup;
 
-        /// What the quality parameter means for this encoder, e.g. "crf,
-        /// integer 0 to 63, lower is better". Empty when the encode has no
-        /// quality parameter.
-        std::string quality_scale;
+        /// The range of the quality parameter the encode sets. Empty when the
+        /// encode has no quality parameter.
         std::optional<QualityRange> quality_range;
 
         /// Where the encoder's blocks fall, for encoders whose grid is fixed.

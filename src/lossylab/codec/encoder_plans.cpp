@@ -24,28 +24,18 @@ namespace lossylab::detail
             return text.str();
         }
 
-        /// The range and meaning of an encoder's quality parameter.
-        struct QualityScale
-        {
-            double minimum = 0.0;
-            double maximum = 0.0;
-            bool integral = true;
-            std::string description;
-            bool higher_is_better = false;
-        };
-
-        /// The rate control's value, checked against the encoder's scale.
+        /// The rate control's value, checked against the encoder's range and
+        /// recorded in the plan.
         double scaled_value(const RateControl& rate_control, const std::string& encoder_name,
-                            const QualityScale& scale, EncoderPlan& plan)
+                            const std::optional<QualityRange>& range, EncoderPlan& plan)
         {
             const double value = rate_control.value();
-            if ((scale.integral && value != std::floor(value)) || value < scale.minimum || value > scale.maximum)
+            if ((range->integral && value != std::floor(value)) || value < range->minimum || value > range->maximum)
             {
-                throw ConfigError("encoder '" + encoder_name + "' takes " + scale.description + ", not " +
+                throw ConfigError("encoder '" + encoder_name + "' takes " + range->description + ", not " +
                                   number_text(value));
             }
-            plan.quality_scale = scale.description;
-            plan.quality_range = QualityRange{scale.minimum, scale.maximum, scale.integral, scale.higher_is_better};
+            plan.quality_range = range;
             return value;
         }
 
@@ -130,30 +120,128 @@ namespace lossylab::detail
         void plan_avif(const std::string& encoder_name, const RateControl& rate_control, EncoderPlan& plan)
         {
             require_mode(rate_control, {RateControl::Mode::Quality}, encoder_name);
+            const std::optional<QualityRange> range = image_quality_range(ImageCodec::Avif, false, encoder_name);
+            if (!range.has_value())
+            {
+                throw NotImplemented("encode_image() with " + encoder_name);
+            }
+            const std::string value = number_text(scaled_value(rate_control, encoder_name, range, plan));
             if (encoder_name == "libaom-av1")
             {
-                const QualityScale scale{0, 63, true, "crf, an integer from 0 to 63, lower is better"};
-                plan.setup.options["crf"] = number_text(scaled_value(rate_control, encoder_name, scale, plan));
+                plan.setup.options["crf"] = value;
                 plan.setup.options["still-picture"] = "1";
             }
             else if (encoder_name == "libsvtav1")
             {
-                const QualityScale scale{1, 63, true, "crf, an integer from 1 to 63, lower is better"};
-                plan.setup.options["crf"] = number_text(scaled_value(rate_control, encoder_name, scale, plan));
+                plan.setup.options["crf"] = value;
                 plan.reports_qp = true;
-            }
-            else if (encoder_name == "librav1e")
-            {
-                const QualityScale scale{0, 255, true, "a quantizer, an integer from 0 to 255, lower is better"};
-                plan.setup.options["qp"] = number_text(scaled_value(rate_control, encoder_name, scale, plan));
             }
             else
             {
-                throw NotImplemented("encode_image() with " + encoder_name);
+                plan.setup.options["qp"] = value;
             }
             plan.muxer = "avif";
             plan.extension = "avif";
         }
+    }
+
+    std::optional<QualityRange> image_quality_range(const ImageCodec codec, const bool lossless,
+                                                    const std::string& encoder_name)
+    {
+        switch (codec)
+        {
+        case ImageCodec::Png:
+        case ImageCodec::Heif:
+            return std::nullopt;
+
+        case ImageCodec::Jpeg:
+            return QualityRange{1, 100, true, true, "an IJG quality, an integer from 1 to 100, higher is better"};
+
+        case ImageCodec::Mjpeg:
+            return QualityRange{1, 31, true, false, "qscale, an integer from 1 to 31, lower is better"};
+
+        case ImageCodec::WebP:
+            if (lossless)
+            {
+                return QualityRange{0, 100, false, false, "an effort from 0 to 100, higher is slower and smaller"};
+            }
+            return QualityRange{0, 100, false, true, "a quality from 0 to 100, higher is better"};
+
+        case ImageCodec::Jxl:
+            if (lossless)
+            {
+                return std::nullopt;
+            }
+            return QualityRange{0.01, 15, false, false, "a Butteraugli distance from 0.01 to 15, lower is better"};
+
+        case ImageCodec::Avif:
+            if (lossless)
+            {
+                return std::nullopt;
+            }
+            if (encoder_name == "libaom-av1")
+            {
+                return QualityRange{0, 63, true, false, "crf, an integer from 0 to 63, lower is better"};
+            }
+            if (encoder_name == "libsvtav1")
+            {
+                return QualityRange{1, 63, true, false, "crf, an integer from 1 to 63, lower is better"};
+            }
+            if (encoder_name == "librav1e")
+            {
+                return QualityRange{0, 255, true, false, "a quantizer, an integer from 0 to 255, lower is better"};
+            }
+            return std::nullopt;
+
+        case ImageCodec::Jpeg2000:
+            if (lossless)
+            {
+                return std::nullopt;
+            }
+            return QualityRange{1, 1000, true, false,
+                                "a nominal compression ratio (FFmpeg's layer_rates), an integer from 1 to 1000, "
+                                "lower is better"};
+        }
+        return std::nullopt;
+    }
+
+    std::optional<QualityRange> video_quality_range(const std::string& encoder_name, const RateControl::Mode mode,
+                                                    const int bit_depth)
+    {
+        const bool crf = mode == RateControl::Mode::Crf;
+        if (!crf && mode != RateControl::Mode::ConstantQp)
+        {
+            return std::nullopt;
+        }
+
+        if (encoder_name == "libx264" || encoder_name == "libx265")
+        {
+            // The QP range grows by 6 per bit above 8.
+            const double maximum = 51.0 + 6.0 * std::max(0, bit_depth - 8);
+            if (crf)
+            {
+                return QualityRange{0, maximum, false, false,
+                                    "crf from 0 to " + number_text(maximum) + ", lower is better"};
+            }
+            return QualityRange{0, maximum, true, false,
+                                "a QP, an integer from 0 to " + number_text(maximum) + ", lower is better"};
+        }
+        if (encoder_name == "libvpx-vp9" || encoder_name == "libaom-av1")
+        {
+            return QualityRange{0, 63, true, false,
+                                crf ? "crf, an integer from 0 to 63, lower is better"
+                                    : "a quantizer, an integer from 0 to 63, lower is better"};
+        }
+        if (encoder_name == "libsvtav1")
+        {
+            return QualityRange{1, 63, true, false,
+                                std::string(crf ? "crf" : "a QP") + ", an integer from 1 to 63, lower is better"};
+        }
+        if (encoder_name == "librav1e" && !crf)
+        {
+            return QualityRange{0, 255, true, false, "a quantizer, an integer from 0 to 255, lower is better"};
+        }
+        return std::nullopt;
     }
 
     EncoderPlan plan_image_encode(const std::string& encoder_name, const EncodeImageOptions& options,
@@ -177,9 +265,8 @@ namespace lossylab::detail
         {
             require_jpeg(options, pixel_format, color);
             require_mode(rate_control, {RateControl::Mode::Quality}, encoder_name);
-            const QualityScale scale{1, 100, true, "an IJG quality, an integer from 1 to 100, higher is better",
-                                     true};
-            plan.setup.ijg_quality = static_cast<int>(scaled_value(rate_control, encoder_name, scale, plan));
+            const auto range = image_quality_range(options.codec, options.lossless, encoder_name);
+            plan.setup.ijg_quality = static_cast<int>(scaled_value(rate_control, encoder_name, range, plan));
             plan.block_grid = BlockGrid::jpeg_mcu(pixel_format.log2_chroma_width(), pixel_format.log2_chroma_height());
             plan.extension = "jpg";
             break;
@@ -189,8 +276,8 @@ namespace lossylab::detail
         {
             require_jpeg(options, pixel_format, color);
             require_mode(rate_control, {RateControl::Mode::Quality}, encoder_name);
-            const QualityScale scale{1, 31, true, "qscale, an integer from 1 to 31, lower is better"};
-            const int qscale = static_cast<int>(scaled_value(rate_control, encoder_name, scale, plan));
+            const auto range = image_quality_range(options.codec, options.lossless, encoder_name);
+            const int qscale = static_cast<int>(scaled_value(rate_control, encoder_name, range, plan));
             plan.setup.fixed_qscale = qscale;
             plan.setup.qmin = qscale;
             plan.setup.qmax = qscale;
@@ -210,8 +297,8 @@ namespace lossylab::detail
                     throw ConfigError("lossless WebP takes bgra; libwebp would convert " + pixel_format.name() +
                                       " itself");
                 }
-                const QualityScale scale{0, 100, false, "an effort from 0 to 100, higher is slower and smaller"};
-                plan.setup.options["quality"] = number_text(scaled_value(rate_control, encoder_name, scale, plan));
+                const auto range = image_quality_range(options.codec, options.lossless, encoder_name);
+                plan.setup.options["quality"] = number_text(scaled_value(rate_control, encoder_name, range, plan));
                 plan.setup.options["lossless"] = "1";
             }
             else
@@ -228,8 +315,8 @@ namespace lossylab::detail
                                       "signal " +
                                       color.describe());
                 }
-                const QualityScale scale{0, 100, false, "a quality from 0 to 100, higher is better", true};
-                plan.setup.options["quality"] = number_text(scaled_value(rate_control, encoder_name, scale, plan));
+                const auto range = image_quality_range(options.codec, options.lossless, encoder_name);
+                plan.setup.options["quality"] = number_text(scaled_value(rate_control, encoder_name, range, plan));
                 plan.setup.options["lossless"] = "0";
                 plan.block_grid = BlockGrid::for_kind(BlockGridKind::Macroblock16);
             }
@@ -245,9 +332,8 @@ namespace lossylab::detail
             else
             {
                 require_mode(rate_control, {RateControl::Mode::Quality}, encoder_name);
-                const QualityScale scale{0.01, 15, false,
-                                         "a Butteraugli distance from 0.01 to 15, lower is better"};
-                plan.setup.options["distance"] = number_text(scaled_value(rate_control, encoder_name, scale, plan));
+                const auto range = image_quality_range(options.codec, options.lossless, encoder_name);
+                plan.setup.options["distance"] = number_text(scaled_value(rate_control, encoder_name, range, plan));
 
                 // Every variable-size transform starts on the 8x8 grid.
                 plan.block_grid = BlockGrid::for_kind(BlockGridKind::Dct8);
@@ -271,10 +357,8 @@ namespace lossylab::detail
             else
             {
                 require_mode(rate_control, {RateControl::Mode::Quality}, encoder_name);
-                const QualityScale scale{1, 1000, true,
-                                         "a nominal compression ratio (FFmpeg's layer_rates), an integer from 1 to "
-                                         "1000, lower is better"};
-                plan.setup.options["layer_rates"] = number_text(scaled_value(rate_control, encoder_name, scale, plan));
+                const auto range = image_quality_range(options.codec, options.lossless, encoder_name);
+                plan.setup.options["layer_rates"] = number_text(scaled_value(rate_control, encoder_name, range, plan));
             }
             plan.extension = "jp2";
             break;
@@ -340,9 +424,8 @@ namespace lossylab::detail
         setup.closed_gop = gop.closed_gop;
         apply_bitrate(rate_control, setup);
 
-        // x264 and x265 extend the QP range by 6 per bit above 8.
-        const double high_depth_extension = 6.0 * std::max(0, pixel_format.bit_depth() - 8);
         const RateControl::Mode mode = rate_control.mode();
+        const std::optional<QualityRange> range = video_quality_range(encoder_name, mode, pixel_format.bit_depth());
 
         if (encoder_name == "libx264" || encoder_name == "libx265")
         {
@@ -350,18 +433,13 @@ namespace lossylab::detail
                          {RateControl::Mode::Crf, RateControl::Mode::ConstantQp, RateControl::Mode::Bitrate,
                           RateControl::Mode::Constrained},
                          encoder_name);
-            const double maximum = 51.0 + high_depth_extension;
             if (mode == RateControl::Mode::Crf)
             {
-                const QualityScale scale{0, maximum, false,
-                                         "crf from 0 to " + number_text(maximum) + ", lower is better"};
-                setup.options["crf"] = number_text(scaled_value(rate_control, encoder_name, scale, plan));
+                setup.options["crf"] = number_text(scaled_value(rate_control, encoder_name, range, plan));
             }
             else if (mode == RateControl::Mode::ConstantQp)
             {
-                const QualityScale scale{0, maximum, true,
-                                         "a QP, an integer from 0 to " + number_text(maximum) + ", lower is better"};
-                setup.options["qp"] = number_text(scaled_value(rate_control, encoder_name, scale, plan));
+                setup.options["qp"] = number_text(scaled_value(rate_control, encoder_name, range, plan));
             }
             setup.max_b_frames = gop.b_frames;
             plan.reports_qp = true;
@@ -396,13 +474,11 @@ namespace lossylab::detail
             refuse_b_frames(gop, encoder_name);
             if (mode == RateControl::Mode::Crf)
             {
-                const QualityScale scale{0, 63, true, "crf, an integer from 0 to 63, lower is better"};
-                setup.options["crf"] = number_text(scaled_value(rate_control, encoder_name, scale, plan));
+                setup.options["crf"] = number_text(scaled_value(rate_control, encoder_name, range, plan));
             }
             else if (mode == RateControl::Mode::ConstantQp)
             {
-                const QualityScale scale{0, 63, true, "a quantizer, an integer from 0 to 63, lower is better"};
-                const int quantizer = static_cast<int>(scaled_value(rate_control, encoder_name, scale, plan));
+                const int quantizer = static_cast<int>(scaled_value(rate_control, encoder_name, range, plan));
                 setup.options["crf"] = std::to_string(quantizer);
                 setup.qmin = quantizer;
                 setup.qmax = quantizer;
@@ -431,12 +507,8 @@ namespace lossylab::detail
             }
             if (mode == RateControl::Mode::Crf || mode == RateControl::Mode::ConstantQp)
             {
-                const bool crf = mode == RateControl::Mode::Crf;
-                const std::string parameter = crf ? "crf" : "qp";
-                const std::string description =
-                    (crf ? "crf" : "a QP") + std::string(", an integer from 1 to 63, lower is better");
-                const QualityScale scale{1, 63, true, description};
-                setup.options[parameter] = number_text(scaled_value(rate_control, encoder_name, scale, plan));
+                const std::string parameter = mode == RateControl::Mode::Crf ? "crf" : "qp";
+                setup.options[parameter] = number_text(scaled_value(rate_control, encoder_name, range, plan));
             }
             // Low-delay prediction: without it SVT-AV1 codes hierarchical
             // mini-GOPs, B-frames in all but name.
@@ -451,8 +523,7 @@ namespace lossylab::detail
             refuse_b_frames(gop, encoder_name);
             if (mode == RateControl::Mode::ConstantQp)
             {
-                const QualityScale scale{0, 255, true, "a quantizer, an integer from 0 to 255, lower is better"};
-                setup.options["qp"] = number_text(scaled_value(rate_control, encoder_name, scale, plan));
+                setup.options["qp"] = number_text(scaled_value(rate_control, encoder_name, range, plan));
             }
             if (!gop.scene_change_detection)
             {

@@ -152,10 +152,33 @@ namespace
         {
         }
     }
+
+    void test_an_encoder_reports_its_quality_range()
+    {
+        const std::optional<QualityRange> mjpeg = quality_range(mjpeg_options());
+        assert(mjpeg.has_value());
+        assert(mjpeg->minimum == 1 && mjpeg->maximum == 31 && mjpeg->integral && !mjpeg->higher_is_better);
+
+        EncodeImageOptions png;
+        png.codec = ImageCodec::Png;
+        png.lossless = true;
+        assert(!quality_range(png).has_value());
+
+        EncodeVideoOptions video;
+        video.codec = VideoCodec::H264;
+        video.pixel_format = PixelFormat::from_name("yuv420p10le");
+        video.rate_control = RateControl::crf(23);
+        const std::optional<QualityRange> crf = quality_range(video);
+        assert(crf.has_value() && crf->maximum == 63 && !crf->integral);
+
+        video.rate_control = RateControl::bitrate(1'000'000);
+        assert(!quality_range(video).has_value());
+    }
 }
 
 int main()
 {
+    test_an_encoder_reports_its_quality_range();
     test_an_image_is_driven_to_a_bits_per_pixel_target();
     test_an_image_is_driven_to_a_psnr_target();
     test_an_unreachable_target_reports_that_it_did_not_converge();

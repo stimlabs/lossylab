@@ -9,6 +9,7 @@
 #include "lossylab/core/strict.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace lossylab
@@ -39,6 +40,17 @@ namespace lossylab
     /// is set for JPEG and JPEG XL (8x8) and lossy WebP (16x16 macroblocks).
     [[nodiscard]] EncodedResult encode_image(const Frame& frame,
                                              const EncodeImageOptions& options);
+
+    /// The range of the quality parameter that `options.rate_control` sets,
+    /// in the encoder's own units. Empty when the options have none: PNG, a
+    /// lossless JPEG XL or JPEG 2000 encode, or a mode that is not
+    /// RateControl::quality().
+    [[nodiscard]] std::optional<QualityRange> quality_range(const EncodeImageOptions& options);
+
+    /// As above for video, where the pixel format's bit depth widens x264's
+    /// and x265's range, and only CRF and constant QP have a quality
+    /// parameter.
+    [[nodiscard]] std::optional<QualityRange> quality_range(const EncodeVideoOptions& options);
 
     /// Encode then decode, entirely in memory.
     ///

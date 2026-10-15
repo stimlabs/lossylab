@@ -43,6 +43,8 @@ namespace lossylab::pybind
             .def("to_dict", [](const RateControl& self) { return to_python(self.to_json()); })
             .def_static("from_dict", [](nb::dict value) { return RateControl::from_json(to_json(value)); });
 
+        bind_reflected<QualityRange>(m, "QualityRange");
+
         bind_reflected_rw<GopStructure>(m, "GopStructure")
             .def_static("intra_only", &GopStructure::intra_only)
             .def_static("from_dict", [](nb::dict value) { return GopStructure::from_json(to_json(value)); });
@@ -90,6 +92,10 @@ namespace lossylab::pybind
             .def_prop_ro("search", &EncodeToTargetResult::search, nb::rv_policy::reference_internal,
                          "Every attempt, the quality settled on, what it achieved, and whether it converged.");
 
+        m.def("quality_range", nb::overload_cast<const EncodeImageOptions&>(&quality_range), "options"_a,
+              "The range of the quality parameter the options' rate control sets, in the encoder's own units, or "
+              "None when there is none.");
+        m.def("quality_range", nb::overload_cast<const EncodeVideoOptions&>(&quality_range), "options"_a);
         m.def("encode_video", &encode_video, "frames"_a, "options"_a, nb::call_guard<nb::gil_scoped_release>());
         m.def("encode_image", &encode_image, "frame"_a, "options"_a, nb::call_guard<nb::gil_scoped_release>());
         m.def("roundtrip",

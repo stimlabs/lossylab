@@ -133,6 +133,19 @@ def test_encode_to_target_reaches_a_bits_per_pixel_target():
     assert result.configuration.rate_control.quality_parameter() == result.search.quality_parameter
 
 
+def test_quality_range_is_the_encoders_native_scale():
+    jpeg = lossylab.quality_range(jpeg_options(75, "yuvj420p"))
+    assert (jpeg.minimum, jpeg.maximum, jpeg.integral, jpeg.higher_is_better) == (1, 100, True, True)
+    mjpeg = lossylab.quality_range(mjpeg_options(10))
+    assert (mjpeg.minimum, mjpeg.maximum, mjpeg.higher_is_better) == (1, 31, False)
+    assert "qscale" in mjpeg.description
+
+    lossless = lossylab.EncodeImageOptions()
+    lossless.codec = lossylab.ImageCodec.Png
+    lossless.lossless = True
+    assert lossylab.quality_range(lossless) is None
+
+
 def test_rate_control_round_trips_through_a_dict():
     control = lossylab.RateControl.constrained(1_000_000, 2_000_000, 500_000)
     assert lossylab.RateControl.from_dict(control.to_dict()).describe() == control.describe()
